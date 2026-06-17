@@ -296,6 +296,44 @@ static void editor_enter(void) {
   cursor_target_col = 0;
 }
 
+static void ensure_cursor_visible(void);
+
+/* ---- search state ---- */
+static int   search_active = 0;
+static char  search_buf[256] = "";
+static int   search_len = 0;
+static int   search_match_line = -1;  /* current match logical line */
+static int   search_match_col = -1;   /* current match column */
+
+static void search_find_next(int from_line, int from_col) {
+  if (search_len == 0) { search_match_line = -1; return; }
+  /* search from (from_line, from_col+1) forward, wrapping around */
+  for (int pass = 0; pass < 2; pass++) {
+    int start_ln = (pass == 0) ? from_line : 0;
+    int end_ln   = (pass == 0) ? line_count : from_line + 1;
+    for (int ln = start_ln; ln < end_ln; ln++) {
+      Line *l = &lines[ln];
+      int start_col = (pass == 0 && ln == from_line) ? from_col + 1 : 0;
+      for (int c = start_col; c <= l->len - search_len; c++) {
+        if (strncasecmp(l->text + c, search_buf, search_len) == 0) {
+          search_match_line = ln;
+          search_match_col = c;
+          cursor_line = ln;
+          cursor_col = c;
+          cursor_target_col = c;
+          ensure_cursor_visible();
+          return;
+        }
+      }
+    }
+  }
+  search_match_line = -1;
+}
+
+static void search_find_first(void) {
+  search_find_next(0, -1);
+}
+
 /* ---- scroll state ---- */
 static float scroll_y = 0;
 static int   scrollbar_dragging = 0;
@@ -410,6 +448,25 @@ static void process_frame(mu_Context *ctx) {
         mu_draw_text(ctx, NULL, display, -1,
                      mu_vec2(page_margin(), py),
                      ctx->style->colors[MU_COLOR_TEXT]);
+      }
+
+      /* draw search highlights on this visual row */
+      if (search_active && search_len > 0 && row_end > row_start) {
+        for (int sc = row_start; sc <= row_end - search_len; sc++) {
+          if (strncasecmp(l->text + sc, search_buf, search_len) == 0) {
+            int hx = page_margin() + r_get_text_width(l->text + row_start, sc - row_start);
+            int hw = r_get_text_width(l->text + sc, search_len);
+            int font_h = r_get_text_height();
+            /* current match gets brighter highlight */
+            if (ln == search_match_line && sc == search_match_col) {
+              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
+                           mu_color(200, 150, 0, 180));
+            } else {
+              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
+                           mu_color(120, 90, 0, 120));
+            }
+          }
+        }
       }
 
       /* draw cursor if it falls on this visual row */
@@ -530,6 +587,43 @@ static void do_render(void) {
     }
   }
 
+  /* search bar */
+  if (search_active) {
+    r_set_font_size(14.0f);
+    int bar_h = 28;
+    int bar_y = TOP_PADDING - bar_h - 2;
+    /* background */
+    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
+    r_draw_rect(mu_rect(0, bar_y, win_w(), bar_h), mu_color(45, 45, 47, 255));
+    /* bottom border */
+    r_draw_rect(mu_rect(0, bar_y + bar_h, win_w(), 1), mu_color(60, 60, 62, 255));
+    /* search icon / label */
+    r_draw_text("Find:", mu_vec2(12, bar_y + 6), mu_color(120, 120, 120, 255));
+    /* search text */
+    int label_w = r_get_text_width("Find: ", 6);
+    r_draw_text(search_buf, mu_vec2(12 + label_w, bar_y + 6), mu_color(204, 200, 195, 255));
+    /* blinking cursor in search box */
+    if ((SDL_GetTicks() / 500) % 2 == 0) {
+      int cx = 12 + label_w + r_get_text_width(search_buf, search_len);
+      r_draw_rect(mu_rect(cx, bar_y + 5, 1, 16), mu_color(90, 200, 250, 255));
+    }
+    /* match count */
+    if (search_len > 0) {
+      int match_count = 0;
+      for (int i = 0; i < line_count; i++) {
+        Line *l = &lines[i];
+        for (int c = 0; c <= l->len - search_len; c++) {
+          if (strncasecmp(l->text + c, search_buf, search_len) == 0) match_count++;
+        }
+      }
+      char count_buf[32];
+      snprintf(count_buf, sizeof(count_buf), "%d matches", match_count);
+      int cw = r_get_text_width(count_buf, strlen(count_buf));
+      r_draw_text(count_buf, mu_vec2(win_w() - cw - 12, bar_y + 6), mu_color(120, 120, 120, 255));
+    }
+    r_set_font_size(font_size);
+  }
+
   /* info bar bottom-right */
   r_set_font_size(13.0f);
   char info[64];
@@ -599,7 +693,16 @@ int main(int argc, char **argv) {
         case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
 
         case SDL_TEXTINPUT:
-          if (!(SDL_GetModState() & KMOD_CTRL)) {
+          if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI)) break;
+          if (search_active) {
+            int tlen = strlen(e.text.text);
+            if (search_len + tlen < (int)sizeof(search_buf) - 1) {
+              memcpy(search_buf + search_len, e.text.text, tlen);
+              search_len += tlen;
+              search_buf[search_len] = '\0';
+              search_find_first();
+            }
+          } else {
             editor_insert_char(e.text.text);
             ensure_cursor_visible();
           }
@@ -626,6 +729,43 @@ int main(int argc, char **argv) {
 
           if (e.type == SDL_KEYDOWN) {
             int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
+            int cmd  = !!(e.key.keysym.mod & KMOD_GUI);
+
+            /* Cmd+F: toggle search */
+            if (cmd && e.key.keysym.sym == SDLK_f) {
+              search_active = !search_active;
+              if (search_active) {
+                search_buf[0] = '\0';
+                search_len = 0;
+                search_match_line = -1;
+              }
+              break;
+            }
+
+            /* search mode key handling */
+            if (search_active) {
+              if (e.key.keysym.sym == SDLK_ESCAPE) {
+                search_active = 0;
+                search_match_line = -1;
+              }
+              else if (e.key.keysym.sym == SDLK_RETURN) {
+                /* jump to next match */
+                if (search_match_line >= 0) {
+                  search_find_next(search_match_line, search_match_col);
+                } else {
+                  search_find_first();
+                }
+              }
+              else if (e.key.keysym.sym == SDLK_BACKSPACE) {
+                if (search_len > 0) {
+                  search_len--;
+                  search_buf[search_len] = '\0';
+                  if (search_len > 0) search_find_first();
+                  else search_match_line = -1;
+                }
+              }
+              break;
+            }
             int sym = e.key.keysym.sym;
 
             if (sym == SDLK_BACKSPACE) {
