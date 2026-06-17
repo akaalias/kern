@@ -117,7 +117,7 @@ struct ViewState {
   char   minibuf_prompt[64];
   char   minibuf_text[1024];
   int    minibuf_len;
-  void (*minibuf_callback)(EditorState *ed, ViewState *vs, const char *text);
+  void (*minibuf_callback)(const char *text);
 
   /* status echo area */
   char   status_msg[256];

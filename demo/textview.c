@@ -7,7 +7,52 @@
 #include "macos_style.h"
 #include "editor_types.h"
 
-/* constants now in editor_types.h */
+/* ---- two struct instances hold all mutable state ---- */
+static EditorState g_ed = {0};
+static ViewState   g_vs = {0};
+
+/* shims: map old global names to struct fields */
+#define lines           g_ed.lines
+#define line_count      g_ed.line_count
+#define line_cap        g_ed.line_cap
+#define cursor_line     g_ed.cursor_line
+#define cursor_col      g_ed.cursor_col
+#define cursor_target_col g_ed.cursor_target_col
+#define mark_active     g_ed.mark_active
+#define mark_line       g_ed.mark_line
+#define mark_col        g_ed.mark_col
+#define kill_buf        g_ed.kill_buf
+#define kill_len        g_ed.kill_len
+#define kill_cap        g_ed.kill_cap
+#define last_kill_was_k g_ed.last_kill_was_k
+#define font_size       g_vs.font_size
+#define scroll_y        g_vs.scroll_y
+#define scrollbar_dragging g_vs.scrollbar_dragging
+#define drag_offset     g_vs.drag_offset
+#define g_content_y     g_vs.content_y
+#define g_content_h     g_vs.content_h
+#define g_vis_rows      g_vs.vis_rows
+#define g_vis_row_count g_vs.vis_row_count
+#define g_cursor_x      g_vs.cursor_x
+#define ctrl_x_prefix   g_vs.ctrl_x_prefix
+#define esc_prefix      g_vs.esc_prefix
+#define suppress_next_text g_vs.suppress_next_text
+#define search_active   g_vs.search_active
+#define search_direction g_vs.search_direction
+#define search_buf      g_vs.search_buf
+#define search_len      g_vs.search_len
+#define search_match_line g_vs.search_match_line
+#define search_match_col g_vs.search_match_col
+#define minibuf_active  g_vs.minibuf_active
+#define minibuf_prompt  g_vs.minibuf_prompt
+#define minibuf_text    g_vs.minibuf_text
+#define minibuf_len     g_vs.minibuf_len
+#define status_msg      g_vs.status_msg
+#define status_time     g_vs.status_time
+#define g_ctx           g_vs.ctx
+#define minibuf_callback g_vs.minibuf_callback
+#define g_filename      g_ed.filename
+#define g_filepath      g_ed.filepath
 
 static int win_w(void) { int w, h; r_get_size(&w, &h); return w; }
 static int win_h(void) { int w, h; r_get_size(&w, &h); return h; }
@@ -29,13 +74,6 @@ static int line_height(void) {
 }
 
 /* Line type defined in editor_types.h */
-
-static Line  *lines     = NULL;
-static int    line_count = 0;
-static int    line_cap   = 0;
-static float  font_size  = 26.0f;
-static const char *g_filename = "*scratch*";
-static char g_filepath[1024] = "";  /* full path to current file */
 
 static void line_ensure_cap(Line *l, int need) {
   if (need + 1 > l->cap) {
@@ -119,10 +157,7 @@ static void load_file(const char *path) {
 static void invalidate_all_wraps(void);
 static void status_set(const char *msg);
 
-static int cursor_line = 0;
-static int cursor_col = 0;
-static int cursor_target_col = 0;
-static float scroll_y = 0;
+/* cursor and scroll variables now in g_ed / g_vs via shims */
 
 static void free_all_lines(void) {
   for (int i = 0; i < line_count; i++) free(lines[i].text);
@@ -384,9 +419,6 @@ static void editor_enter(void) {
 static void ensure_cursor_visible(void);
 
 /* ---- kill buffer ---- */
-static char *kill_buf = NULL;
-static int   kill_len = 0;
-static int   kill_cap = 0;
 
 static void kill_set(const char *text, int len) {
   if (len + 1 > kill_cap) {
@@ -409,9 +441,6 @@ static void kill_append(const char *text, int len) {
 }
 
 /* ---- mark / region ---- */
-static int mark_active = 0;
-static int mark_line = 0;
-static int mark_col  = 0;
 
 static void mark_set(void) {
   mark_active = 1;
@@ -436,10 +465,10 @@ static void region_ordered(int *sl, int *sc, int *el, int *ec) {
 /* MAX_UNDO defined in editor_types.h */
 
 typedef struct {
-  char **lines_text;  /* array of line texts */
-  int   *lines_len;
-  int    line_count;
-  int    cursor_line, cursor_col;
+  char **snap_lines_text;
+  int   *snap_lines_len;
+  int    snap_line_count;
+  int    snap_cursor_line, snap_cursor_col;
 } UndoSnapshot;
 
 static UndoSnapshot undo_stack[MAX_UNDO];
@@ -447,29 +476,29 @@ static int undo_top = 0;
 static int undo_count = 0;
 
 static void undo_free_snapshot(UndoSnapshot *s) {
-  if (s->lines_text) {
-    for (int i = 0; i < s->line_count; i++) free(s->lines_text[i]);
-    free(s->lines_text);
-    free(s->lines_len);
+  if (s->snap_lines_text) {
+    for (int i = 0; i < s->snap_line_count; i++) free(s->snap_lines_text[i]);
+    free(s->snap_lines_text);
+    free(s->snap_lines_len);
   }
-  s->lines_text = NULL;
-  s->lines_len = NULL;
-  s->line_count = 0;
+  s->snap_lines_text = NULL;
+  s->snap_lines_len = NULL;
+  s->snap_line_count = 0;
 }
 
 static void undo_push(void) {
   UndoSnapshot *s = &undo_stack[undo_top % MAX_UNDO];
   undo_free_snapshot(s);
-  s->line_count = line_count;
-  s->lines_text = malloc(line_count * sizeof(char*));
-  s->lines_len  = malloc(line_count * sizeof(int));
+  s->snap_line_count = line_count;
+  s->snap_lines_text = malloc(line_count * sizeof(char*));
+  s->snap_lines_len  = malloc(line_count * sizeof(int));
   for (int i = 0; i < line_count; i++) {
-    s->lines_text[i] = malloc(lines[i].len + 1);
-    memcpy(s->lines_text[i], lines[i].text, lines[i].len + 1);
-    s->lines_len[i] = lines[i].len;
+    s->snap_lines_text[i] = malloc(lines[i].len + 1);
+    memcpy(s->snap_lines_text[i], lines[i].text, lines[i].len + 1);
+    s->snap_lines_len[i] = lines[i].len;
   }
-  s->cursor_line = cursor_line;
-  s->cursor_col = cursor_col;
+  s->snap_cursor_line = cursor_line;
+  s->snap_cursor_col = cursor_col;
   undo_top++;
   if (undo_top > MAX_UNDO) undo_top = MAX_UNDO;
   undo_count = undo_top;
@@ -482,40 +511,27 @@ static void editor_undo(void) {
   /* free current lines */
   for (int i = 0; i < line_count; i++) free(lines[i].text);
   /* restore from snapshot */
-  ensure_lines_cap(s->line_count);
-  line_count = s->line_count;
+  ensure_lines_cap(s->snap_line_count);
+  line_count = s->snap_line_count;
   for (int i = 0; i < line_count; i++) {
-    lines[i].len = s->lines_len[i];
-    lines[i].cap = s->lines_len[i] + 16;
+    lines[i].len = s->snap_lines_len[i];
+    lines[i].cap = s->snap_lines_len[i] + 16;
     lines[i].text = malloc(lines[i].cap);
-    memcpy(lines[i].text, s->lines_text[i], s->lines_len[i] + 1);
+    memcpy(lines[i].text, s->snap_lines_text[i], s->snap_lines_len[i] + 1);
     lines[i].wrap_count = -1;
   }
-  cursor_line = s->cursor_line;
-  cursor_col = s->cursor_col;
+  cursor_line = s->snap_cursor_line;
+  cursor_col = s->snap_cursor_col;
   cursor_clamp();
 }
 
 /* ---- emacs commands ---- */
 
 /* ctrl-k: kill to end of line */
-static int last_kill_was_k = 0;
-static int ctrl_x_prefix = 0;  /* for C-x chords */
-static int esc_prefix = 0;        /* Esc as Meta prefix */
-static int minibuf_active = 0;    /* minibuffer input mode */
-static char minibuf_prompt[64] = "";
-static char minibuf_text[1024] = "";
-static int  minibuf_len = 0;
-static void (*minibuf_callback)(const char *) = NULL;
-static int suppress_next_text = 0; /* suppress TEXTINPUT after handled key combo */
 
 /* declared here so status_get can reference them */
-static int search_active = 0;
-static int search_direction = 1;
 
 /* ---- status message (emacs echo area) ---- */
-static char status_msg[256] = "";
-static Uint32 status_time = 0;  /* when the message was set */
 /* STATUS_DURATION defined in editor_types.h */
 
 static void status_set(const char *msg) {
@@ -655,10 +671,6 @@ static void emacs_backward_word(void) {
 
 /* ---- search state ---- */
 /* search_active already declared above */
-static char  search_buf[256] = "";
-static int   search_len = 0;
-static int   search_match_line = -1;
-static int   search_match_col = -1;
 /* search_direction already declared above */
 
 static void search_find_next(int from_line, int from_col) {
@@ -733,15 +745,9 @@ static void search_find_current_dir(void) {
 
 /* ---- scroll state ---- */
 /* scroll_y declared above */
-static int   scrollbar_dragging = 0;
-static float drag_offset = 0;
 
-static int g_content_y;   /* top of content area */
 
 /* VisRow and MAX_VIS_ROWS defined in editor_types.h */
-static VisRow g_vis_rows[MAX_VIS_ROWS];
-static int g_vis_row_count = 0;
-static int g_content_h;   /* height of content area */
 
 static void ensure_cursor_visible(void) {
   int lh = line_height();
@@ -794,7 +800,6 @@ static void click_to_cursor(int mx, int my) {
 /* ---- markdown-aware text drawing ---- */
 
 /* cursor x position computed during markdown draw, -1 if not on current row */
-static int g_cursor_x = -1;
 
 /* check if a logical line is a list item, return indent in pixels (0 if not) */
 static int list_indent(Line *l) {
@@ -1168,7 +1173,6 @@ static int text_height(mu_Font font) {
 
 
 /* ---- render pass (callable from main loop and resize watcher) ---- */
-static mu_Context *g_ctx = NULL;
 
 static void do_render(void) {
   mu_Context *ctx = g_ctx;
