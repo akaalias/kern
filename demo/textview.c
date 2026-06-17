@@ -44,7 +44,8 @@ static Line  *lines     = NULL;
 static int    line_count = 0;
 static int    line_cap   = 0;
 static float  font_size  = 26.0f;
-static const char *g_filename = "";
+static const char *g_filename = "*scratch*";
+static char g_filepath[1024] = "";  /* full path to current file */
 
 static void line_ensure_cap(Line *l, int need) {
   if (need + 1 > l->cap) {
@@ -122,6 +123,76 @@ static void load_file(const char *path) {
   }
 
   free(buf);
+}
+
+/* forward declarations for functions used by open/save */
+static void invalidate_all_wraps(void);
+static void status_set(const char *msg);
+
+static int cursor_line = 0;
+static int cursor_col = 0;
+static int cursor_target_col = 0;
+static float scroll_y = 0;
+
+static void free_all_lines(void) {
+  for (int i = 0; i < line_count; i++) free(lines[i].text);
+  line_count = 0;
+}
+
+static void init_empty_buffer(void) {
+  if (lines) free_all_lines();
+  else { line_cap = 4096; lines = malloc(line_cap * sizeof(Line)); }
+  ensure_lines_cap(1);
+  line_init(&lines[0], "", 0);
+  line_count = 1;
+  cursor_line = 0;
+  cursor_col = 0;
+  cursor_target_col = 0;
+  scroll_y = 0;
+}
+
+static void open_or_create_file(const char *path) {
+  /* store filepath */
+  snprintf(g_filepath, sizeof(g_filepath), "%s", path);
+  const char *slash = strrchr(path, '/');
+  g_filename = slash ? slash + 1 : path;
+
+  FILE *f = fopen(path, "rb");
+  if (f) {
+    fclose(f);
+    if (lines) free_all_lines();
+    load_file(path);
+  } else {
+    /* new file — start with empty buffer */
+    init_empty_buffer();
+  }
+  cursor_line = 0;
+  cursor_col = 0;
+  cursor_target_col = 0;
+  scroll_y = 0;
+  invalidate_all_wraps();
+  r_set_title(g_filename);
+  char msg[256];
+  snprintf(msg, sizeof(msg), f ? "Opened %s" : "New file %s", g_filename);
+  status_set(msg);
+}
+
+static void save_to_path(const char *path) {
+  snprintf(g_filepath, sizeof(g_filepath), "%s", path);
+  const char *slash = strrchr(path, '/');
+  g_filename = slash ? slash + 1 : path;
+  FILE *f = fopen(g_filepath, "wb");
+  if (f) {
+    for (int i = 0; i < line_count; i++) {
+      fwrite(lines[i].text, 1, lines[i].len, f);
+      if (i < line_count - 1) fwrite("\n", 1, 1, f);
+    }
+    fclose(f);
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
+    status_set(msg);
+    r_set_title(g_filename);
+  }
 }
 
 static void invalidate_all_wraps(void) {
@@ -221,10 +292,7 @@ static int cursor_to_visual(int cline, int ccol) {
   return base;
 }
 
-/* ---- cursor ---- */
-static int cursor_line = 0;
-static int cursor_col  = 0;
-static int cursor_target_col = 0;
+/* ---- cursor (variables declared above) ---- */
 
 static void cursor_clamp(void) {
   if (cursor_line < 0) cursor_line = 0;
@@ -444,6 +512,11 @@ static void editor_undo(void) {
 static int last_kill_was_k = 0;
 static int ctrl_x_prefix = 0;  /* for C-x chords */
 static int esc_prefix = 0;        /* Esc as Meta prefix */
+static int minibuf_active = 0;    /* minibuffer input mode */
+static char minibuf_prompt[64] = "";
+static char minibuf_text[1024] = "";
+static int  minibuf_len = 0;
+static void (*minibuf_callback)(const char *) = NULL;
 static int suppress_next_text = 0; /* suppress TEXTINPUT after handled key combo */
 
 /* declared here so status_get can reference them */
@@ -461,6 +534,7 @@ static void status_set(const char *msg) {
 }
 
 static const char *status_get(void) {
+  if (minibuf_active) return minibuf_prompt;
   if (esc_prefix) return "ESC-";
   if (ctrl_x_prefix) return "C-x -";
   if (mark_active) return "Mark active";
@@ -668,7 +742,7 @@ static void search_find_current_dir(void) {
 }
 
 /* ---- scroll state ---- */
-static float scroll_y = 0;
+/* scroll_y declared above */
 static int   scrollbar_dragging = 0;
 static float drag_offset = 0;
 
@@ -925,7 +999,7 @@ static void process_frame(mu_Context *ctx) {
 
     int lh = line_height();
     g_content_y = TOP_PADDING;
-    int status_bar_h = r_get_text_height() + 8;
+    int status_bar_h = r_get_text_height() + 16;
     g_content_h = win_h() - TOP_PADDING - status_bar_h;
 
     /* content area */
@@ -1154,7 +1228,7 @@ static void do_render(void) {
   /* emacs-style status bar (monospace) */
   r_set_font_size(font_size);
   r_set_font_style(FONT_MONO);
-  int bar_h = r_get_text_height() + 8;
+  int bar_h = r_get_text_height() + 16;
   int bar_y = win_h() - bar_h;
   r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
 
@@ -1163,18 +1237,22 @@ static void do_render(void) {
   /* top border */
   r_draw_rect(mu_rect(0, bar_y, win_w(), 1), mu_color(55, 55, 57, 255));
 
-  /* left: status message or isearch prompt */
-  if (search_active) {
+  /* left: minibuffer input, isearch, or status message */
+  if (minibuf_active) {
+    r_draw_text(minibuf_prompt, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+    int lw = r_get_text_width(minibuf_prompt, strlen(minibuf_prompt));
+    r_draw_text(minibuf_text, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
+    int cx = 10 + lw + r_get_text_width(minibuf_text, minibuf_len);
+    int fh = r_get_text_height();
+    r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
+  } else if (search_active) {
     const char *label = (search_direction == 1) ? "I-search: " : "I-search backward: ";
     r_draw_text(label, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
     int lw = r_get_text_width(label, strlen(label));
     r_draw_text(search_buf, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
-    /* cursor */
-    {
-      int cx = 10 + lw + r_get_text_width(search_buf, search_len);
-      int fh = r_get_text_height();
-      r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
-    }
+    int cx = 10 + lw + r_get_text_width(search_buf, search_len);
+    int fh = r_get_text_height();
+    r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
   } else {
     const char *status = status_get();
     if (status[0]) {
@@ -1206,18 +1284,16 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    fprintf(stderr, "usage: textview <file>\n");
-    return 1;
+  if (argc >= 2) {
+    load_file(argv[1]);
+    snprintf(g_filepath, sizeof(g_filepath), "%s", argv[1]);
+    g_filename = argv[1];
+    const char *slash = strrchr(argv[1], '/');
+    if (slash) g_filename = slash + 1;
+    printf("loaded %d lines\n", line_count);
+  } else {
+    init_empty_buffer();
   }
-
-  load_file(argv[1]);
-  /* extract filename from path */
-  g_filename = argv[1];
-  const char *slash = strrchr(argv[1], '/');
-  if (slash) g_filename = slash + 1;
-
-  printf("loaded %d lines\n", line_count);
 
   SDL_Init(SDL_INIT_EVERYTHING);
   r_init();
@@ -1253,7 +1329,14 @@ int main(int argc, char **argv) {
         case SDL_TEXTINPUT:
           if (suppress_next_text) { suppress_next_text = 0; break; }
           if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
-          if (search_active) {
+          if (minibuf_active) {
+            int tlen = strlen(e.text.text);
+            if (minibuf_len + tlen < (int)sizeof(minibuf_text) - 1) {
+              memcpy(minibuf_text + minibuf_len, e.text.text, tlen);
+              minibuf_len += tlen;
+              minibuf_text[minibuf_len] = '\0';
+            }
+          } else if (search_active) {
             int tlen = strlen(e.text.text);
             if (search_len + tlen < (int)sizeof(search_buf) - 1) {
               memcpy(search_buf + search_len, e.text.text, tlen);
@@ -1299,6 +1382,27 @@ int main(int argc, char **argv) {
           if (e.type == SDL_KEYDOWN) {
             int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
             int cmd  = !!(e.key.keysym.mod & KMOD_GUI);
+
+            /* minibuffer input mode */
+            if (minibuf_active) {
+              if (e.key.keysym.sym == SDLK_RETURN) {
+                minibuf_active = 0;
+                if (minibuf_callback) minibuf_callback(minibuf_text);
+                minibuf_callback = NULL;
+              }
+              else if (e.key.keysym.sym == SDLK_ESCAPE || (ctrl && e.key.keysym.sym == SDLK_g)) {
+                minibuf_active = 0;
+                minibuf_callback = NULL;
+                status_set("Quit");
+              }
+              else if (e.key.keysym.sym == SDLK_BACKSPACE) {
+                if (minibuf_len > 0) {
+                  minibuf_len--;
+                  minibuf_text[minibuf_len] = '\0';
+                }
+              }
+              break;
+            }
 
             /* search mode key handling */
             if (search_active) {
@@ -1355,24 +1459,38 @@ int main(int argc, char **argv) {
               ctrl_x_prefix = 0;
               if (ctrl && sym == SDLK_s) {
                 /* C-x C-s: save */
-                if (argc >= 2) {
-                  FILE *f = fopen(argv[1], "wb");
+                if (g_filepath[0]) {
+                  FILE *f = fopen(g_filepath, "wb");
                   if (f) {
                     for (int i = 0; i < line_count; i++) {
                       fwrite(lines[i].text, 1, lines[i].len, f);
                       if (i < line_count - 1) fwrite("\n", 1, 1, f);
                     }
                     fclose(f);
-                    printf("saved %s (%d lines)\n", argv[1], line_count);
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "Wrote %s", argv[1]);
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
                     status_set(msg);
                   }
+                } else {
+                  /* no file path yet — prompt for one then save */
+                  minibuf_active = 1;
+                  snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file: ");
+                  minibuf_text[0] = '\0';
+                  minibuf_len = 0;
+                  minibuf_callback = save_to_path;
                 }
               }
               else if (ctrl && sym == SDLK_c) {
                 /* C-x C-c: quit */
                 exit(EXIT_SUCCESS);
+              }
+              else if (ctrl && sym == SDLK_f) {
+                /* C-x C-f: find file */
+                minibuf_active = 1;
+                snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file: ");
+                minibuf_text[0] = '\0';
+                minibuf_len = 0;
+                minibuf_callback = open_or_create_file;
               }
               break;
             }
