@@ -415,6 +415,7 @@ static void editor_undo(void) {
 
 /* ctrl-k: kill to end of line */
 static int last_kill_was_k = 0;
+static int ctrl_x_prefix = 0;  /* for C-x chords */
 
 static void emacs_kill_line(void) {
   Line *l = &lines[cursor_line];
@@ -1040,6 +1041,34 @@ int main(int argc, char **argv) {
             /* any non-ctrl/alt key clears last_kill_was_k */
             if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
 
+            /* --- C-x chords --- */
+            if (ctrl_x_prefix) {
+              ctrl_x_prefix = 0;
+              if (ctrl && sym == SDLK_s) {
+                /* C-x C-s: save */
+                if (argc >= 2) {
+                  FILE *f = fopen(argv[1], "wb");
+                  if (f) {
+                    for (int i = 0; i < line_count; i++) {
+                      fwrite(lines[i].text, 1, lines[i].len, f);
+                      if (i < line_count - 1) fwrite("\n", 1, 1, f);
+                    }
+                    fclose(f);
+                    printf("saved %s (%d lines)\n", argv[1], line_count);
+                  }
+                }
+              }
+              else if (ctrl && sym == SDLK_c) {
+                /* C-x C-c: quit */
+                exit(EXIT_SUCCESS);
+              }
+              break;
+            }
+            if (ctrl && sym == SDLK_x) {
+              ctrl_x_prefix = 1;
+              break;
+            }
+
             /* --- emacs ctrl bindings --- */
             if (ctrl && sym == SDLK_a) {
               /* beginning of line */
@@ -1170,19 +1199,6 @@ int main(int argc, char **argv) {
               r_set_font_size(font_size);
               invalidate_all_wraps();
               ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_s) {
-              if (argc >= 2) {
-                FILE *f = fopen(argv[1], "wb");
-                if (f) {
-                  for (int i = 0; i < line_count; i++) {
-                    fwrite(lines[i].text, 1, lines[i].len, f);
-                    if (i < line_count - 1) fwrite("\n", 1, 1, f);
-                  }
-                  fclose(f);
-                  printf("saved %s (%d lines)\n", argv[1], line_count);
-                }
-              }
             }
             /* --- basic editing keys --- */
             else if (sym == SDLK_BACKSPACE) {
