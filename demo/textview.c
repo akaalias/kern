@@ -792,12 +792,11 @@ int main(int argc, char **argv) {
 
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
-          /* suppress macOS system beep: stop text input on any modifier press,
-             restart only when all modifiers are released */
-          if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL | KMOD_ALT))) {
+          /* suppress macOS system beep for ctrl combos */
+          if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL)) {
             SDL_StopTextInput();
           }
-          if (e.type == SDL_KEYUP && !(SDL_GetModState() & (KMOD_CTRL | KMOD_ALT))) {
+          if (e.type == SDL_KEYUP && !(SDL_GetModState() & KMOD_CTRL)) {
             SDL_StartTextInput();
           }
 
