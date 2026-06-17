@@ -417,6 +417,27 @@ static void editor_undo(void) {
 static int last_kill_was_k = 0;
 static int ctrl_x_prefix = 0;  /* for C-x chords */
 
+/* search_active declared here so status_get can reference it */
+static int search_active = 0;
+
+/* ---- status message (emacs echo area) ---- */
+static char status_msg[256] = "";
+static Uint32 status_time = 0;  /* when the message was set */
+#define STATUS_DURATION 3000    /* ms to show a message */
+
+static void status_set(const char *msg) {
+  snprintf(status_msg, sizeof(status_msg), "%s", msg);
+  status_time = SDL_GetTicks();
+}
+
+static const char *status_get(void) {
+  if (ctrl_x_prefix) return "C-x -";
+  if (mark_active) return "Mark active";
+  if (search_active) return "I-search";
+  if (status_msg[0] && (SDL_GetTicks() - status_time) < STATUS_DURATION) return status_msg;
+  return "";
+}
+
 static void emacs_kill_line(void) {
   Line *l = &lines[cursor_line];
   if (cursor_col < l->len) {
@@ -538,7 +559,7 @@ static void emacs_backward_word(void) {
 }
 
 /* ---- search state ---- */
-static int   search_active = 0;
+/* search_active already declared above */
 static char  search_buf[256] = "";
 static int   search_len = 0;
 static int   search_match_line = -1;  /* current match logical line */
@@ -641,7 +662,7 @@ static void process_frame(mu_Context *ctx) {
 
     int lh = line_height();
     g_content_y = TOP_PADDING;
-    g_content_h = win_h() - TOP_PADDING;
+    g_content_h = win_h() - TOP_PADDING - 24; /* 24 = status bar height */
 
     /* content area */
     int total_vis = total_visual_lines();
@@ -885,12 +906,28 @@ static void do_render(void) {
     r_set_font_size(font_size);
   }
 
-  /* info bar bottom-right */
-  r_set_font_size(13.0f);
+  /* emacs-style status bar */
+  r_set_font_size(14.0f);
+  int bar_h = 24;
+  int bar_y = win_h() - bar_h;
+  r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
+
+  /* background */
+  r_draw_rect(mu_rect(0, bar_y, win_w(), bar_h), mu_color(40, 40, 42, 255));
+  /* top border */
+  r_draw_rect(mu_rect(0, bar_y, win_w(), 1), mu_color(55, 55, 57, 255));
+
+  /* left: status message */
+  const char *status = status_get();
+  if (status[0]) {
+    r_draw_text(status, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+  }
+
+  /* right: line, col, font size */
   char info[64];
-  snprintf(info, sizeof(info), "Ln %d, Col %d  |  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
+  snprintf(info, sizeof(info), "(%d,%d)  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
   int info_w = r_get_text_width(info, strlen(info));
-  r_draw_text(info, mu_vec2(win_w() - info_w - 12, win_h() - 18), mu_color(80, 80, 80, 255));
+  r_draw_text(info, mu_vec2(win_w() - info_w - 10, bar_y + 5), mu_color(120, 120, 120, 255));
   r_set_font_size(font_size);
 
   r_present();
@@ -1055,6 +1092,9 @@ int main(int argc, char **argv) {
                     }
                     fclose(f);
                     printf("saved %s (%d lines)\n", argv[1], line_count);
+                  char msg[128];
+                  snprintf(msg, sizeof(msg), "Wrote %s", argv[1]);
+                  status_set(msg);
                   }
                 }
               }
@@ -1122,38 +1162,37 @@ int main(int argc, char **argv) {
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_k) {
-              /* kill line */
               mark_clear();
               undo_push();
               emacs_kill_line();
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_y) {
-              /* yank */
               mark_clear();
               undo_push();
               emacs_yank();
+              status_set("Yanked");
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_w) {
-              /* kill region */
               undo_push();
               emacs_kill_region();
+              status_set("Region killed");
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_SLASH) {
-              /* undo */
               mark_clear();
               editor_undo();
+              status_set("Undo");
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_SPACE) {
-              /* set mark */
               mark_set();
+              status_set("Mark set");
             }
             else if (ctrl && sym == SDLK_g) {
-              /* cancel: clear mark */
               mark_clear();
+              status_set("Quit");
             }
             /* --- alt bindings --- */
             else if (alt && sym == SDLK_f) {
