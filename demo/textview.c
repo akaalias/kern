@@ -841,6 +841,13 @@ static float draw_md_text(const char *text, int start, int end,
   int saved_style = r_get_font_style();
   int i = start;
 
+  /* helper: track cursor within a span from col 'from' to 'to', with x starting at span_x */
+  #define TRACK_CURSOR_SPAN(from, to, span_x) do { \
+    if (track_cursor_col >= (from) && track_cursor_col < (to)) { \
+      g_cursor_x = (int)(span_x) + r_get_text_width(text + (from), track_cursor_col - (from)); \
+    } \
+  } while(0)
+
   if (heading) r_set_font_style(FONT_BOLD);
 
   while (i < end) {
@@ -852,20 +859,20 @@ static float draw_md_text(const char *text, int start, int end,
         if (text[j] == '*' && text[j+1] == '*') { close = j; break; }
       }
       if (close > 0) {
-        /* draw ** markers in dim */
         char mk[3] = "**";
+        TRACK_CURSOR_SPAN(i, i + 2, x);
         r_draw_text(mk, mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width(mk, 2);
-        /* draw bold content */
         r_set_font_style(FONT_BOLD);
         char buf[512];
         int blen = close - (i + 2);
         if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
         memcpy(buf, text + i + 2, blen); buf[blen] = '\0';
+        TRACK_CURSOR_SPAN(i + 2, close, x);
         r_draw_text(buf, mu_vec2((int)x, (int)y), base_color);
         x += r_get_text_width(buf, blen);
         if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
-        /* draw closing ** */
+        TRACK_CURSOR_SPAN(close, close + 2, x);
         r_draw_text(mk, mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width(mk, 2);
         i = close + 2;
@@ -879,19 +886,19 @@ static float draw_md_text(const char *text, int start, int end,
         if (text[j] == '_') { close = j; break; }
       }
       if (close > i + 1) {
-        /* draw _ marker dim */
+        TRACK_CURSOR_SPAN(i, i + 1, x);
         r_draw_text("_", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width("_", 1);
-        /* draw italic content */
         r_set_font_style(FONT_ITALIC);
         char buf[512];
         int blen = close - (i + 1);
         if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
         memcpy(buf, text + i + 1, blen); buf[blen] = '\0';
+        TRACK_CURSOR_SPAN(i + 1, close, x);
         r_draw_text(buf, mu_vec2((int)x, (int)y), base_color);
         x += r_get_text_width(buf, blen);
         if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
-        /* draw closing _ */
+        TRACK_CURSOR_SPAN(close, close + 1, x);
         r_draw_text("_", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width("_", 1);
         i = close + 1;
@@ -905,19 +912,19 @@ static float draw_md_text(const char *text, int start, int end,
         if (text[j] == '`') { close = j; break; }
       }
       if (close > i) {
-        /* draw ` dim */
+        TRACK_CURSOR_SPAN(i, i + 1, x);
         r_draw_text("`", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width("`", 1);
-        /* draw code in mono */
         r_set_font_style(FONT_MONO);
         char buf[512];
         int blen = close - (i + 1);
         if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
         memcpy(buf, text + i + 1, blen); buf[blen] = '\0';
+        TRACK_CURSOR_SPAN(i + 1, close, x);
         r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 140, 100, 255));
         x += r_get_text_width(buf, blen);
         if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
-        /* draw closing ` */
+        TRACK_CURSOR_SPAN(close, close + 1, x);
         r_draw_text("`", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
         x += r_get_text_width("`", 1);
         i = close + 1;
@@ -936,13 +943,13 @@ static float draw_md_text(const char *text, int start, int end,
           if (text[j] == ')') { paren_close = j; break; }
         }
         if (paren_close > 0) {
-          /* draw entire [text](url) with purple bg */
           char buf[512];
           int blen = paren_close + 1 - i;
           if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
           memcpy(buf, text + i, blen); buf[blen] = '\0';
           int link_w = r_get_text_width(buf, blen);
           int font_h = r_get_text_height();
+          TRACK_CURSOR_SPAN(i, paren_close + 1, x);
           r_draw_rect(mu_rect((int)x, (int)y, link_w, font_h), mu_color(80, 50, 120, 255));
           r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 160, 220, 255));
           x += link_w;
@@ -963,6 +970,7 @@ static float draw_md_text(const char *text, int start, int end,
           memcpy(buf, text + i, blen); buf[blen] = '\0';
           int link_w = r_get_text_width(buf, blen);
           int font_h = r_get_text_height();
+          TRACK_CURSOR_SPAN(i, close + 2, x);
           r_draw_rect(mu_rect((int)x, (int)y, link_w, font_h), mu_color(80, 50, 120, 255));
           r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 160, 220, 255));
           x += link_w;
@@ -982,6 +990,7 @@ static float draw_md_text(const char *text, int start, int end,
 
   if (track_cursor_col >= 0 && track_cursor_col >= end) g_cursor_x = (int)x;
 
+  #undef TRACK_CURSOR_SPAN
   r_set_font_style(saved_style);
   return x;
 }
