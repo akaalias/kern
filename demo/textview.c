@@ -6,6 +6,7 @@
 #include "microui.h"
 #include "macos_style.h"
 #include "editor_types.h"
+#include "buffer.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -54,6 +55,17 @@ static ViewState   g_vs = {0};
 #define g_filename      g_ed.filename
 #define g_filepath      g_ed.filepath
 
+/* function shims: old names → new buf_* API */
+#define ensure_lines_cap(n) buf_ensure_lines_cap(&g_ed, (n))
+#define insert_line_at(i,s,l) buf_insert_line_at(&g_ed, (i), (s), (l))
+#define delete_line_at(i) buf_delete_line_at(&g_ed, (i))
+#define invalidate_all_wraps() buf_invalidate_all_wraps(&g_ed)
+#define kill_set(t,l) buf_kill_set(&g_ed, (t), (l))
+#define kill_append(t,l) buf_kill_append(&g_ed, (t), (l))
+#define mark_set() buf_mark_set(&g_ed)
+#define mark_clear() buf_mark_clear(&g_ed)
+#define region_ordered(sl,sc,el,ec) buf_region_ordered(&g_ed, (sl),(sc),(el),(ec))
+
 static int win_w(void) { int w, h; r_get_size(&w, &h); return w; }
 static int win_h(void) { int w, h; r_get_size(&w, &h); return h; }
 
@@ -73,111 +85,14 @@ static int line_height(void) {
   return (int)(r_get_text_height() * LINE_HEIGHT_MULT + 0.5f);
 }
 
-/* Line type defined in editor_types.h */
+/* buffer operations now in buffer.c/buffer.h */
 
-static void line_ensure_cap(Line *l, int need) {
-  if (need + 1 > l->cap) {
-    l->cap = (need + 1) * 2;
-    l->text = realloc(l->text, l->cap);
-  }
-}
-
-static void line_init(Line *l, const char *s, int len) {
-  l->cap = len + 16;
-  l->text = malloc(l->cap);
-  memcpy(l->text, s, len);
-  l->text[len] = '\0';
-  l->len = len;
-  l->wrap_count = -1;
-}
-
-static void line_dirty(Line *l) { l->wrap_count = -1; }
-
-static void ensure_lines_cap(int need) {
-  if (need > line_cap) {
-    line_cap = need * 2;
-    lines = realloc(lines, line_cap * sizeof(Line));
-  }
-}
-
-static void insert_line_at(int idx, const char *s, int len) {
-  ensure_lines_cap(line_count + 1);
-  memmove(&lines[idx + 1], &lines[idx], (line_count - idx) * sizeof(Line));
-  line_init(&lines[idx], s, len);
-  line_count++;
-}
-
-static void delete_line_at(int idx) {
-  free(lines[idx].text);
-  memmove(&lines[idx], &lines[idx + 1], (line_count - idx - 1) * sizeof(Line));
-  line_count--;
-}
-
-static void load_file(const char *path) {
-  FILE *f = fopen(path, "rb");
-  if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
-  fseek(f, 0, SEEK_END);
-  long sz = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  char *buf = malloc(sz + 1);
-  fread(buf, 1, sz, f);
-  buf[sz] = '\0';
-  fclose(f);
-
-  line_cap = 4096;
-  lines = malloc(line_cap * sizeof(Line));
-  line_count = 0;
-
-  char *p = buf;
-  while (*p) {
-    char *nl = strchr(p, '\n');
-    int len;
-    if (nl) {
-      len = nl - p;
-      if (len > 0 && p[len - 1] == '\r') len--;
-    } else {
-      len = strlen(p);
-    }
-    ensure_lines_cap(line_count + 1);
-    line_init(&lines[line_count], p, len);
-    line_count++;
-    if (nl) p = nl + 1; else break;
-  }
-
-  if (line_count == 0) {
-    ensure_lines_cap(1);
-    line_init(&lines[0], "", 0);
-    line_count = 1;
-  }
-
-  free(buf);
-}
-
-/* forward declarations for functions used by open/save */
-static void invalidate_all_wraps(void);
+/* forward declaration */
 static void status_set(const char *msg);
 
-/* cursor and scroll variables now in g_ed / g_vs via shims */
-
-static void free_all_lines(void) {
-  for (int i = 0; i < line_count; i++) free(lines[i].text);
-  line_count = 0;
-}
-
-static void init_empty_buffer(void) {
-  if (lines) free_all_lines();
-  else { line_cap = 4096; lines = malloc(line_cap * sizeof(Line)); }
-  ensure_lines_cap(1);
-  line_init(&lines[0], "", 0);
-  line_count = 1;
-  cursor_line = 0;
-  cursor_col = 0;
-  cursor_target_col = 0;
-  scroll_y = 0;
-}
+/* ---- file operations (glue — uses status_set and r_set_title) ---- */
 
 static void open_or_create_file(const char *path) {
-  /* store filepath */
   snprintf(g_filepath, sizeof(g_filepath), "%s", path);
   const char *slash = strrchr(path, '/');
   g_filename = slash ? slash + 1 : path;
@@ -185,11 +100,10 @@ static void open_or_create_file(const char *path) {
   FILE *f = fopen(path, "rb");
   if (f) {
     fclose(f);
-    if (lines) free_all_lines();
-    load_file(path);
+    buf_free_all_lines(&g_ed);
+    buf_load_file(&g_ed, path);
   } else {
-    /* new file — start with empty buffer */
-    init_empty_buffer();
+    buf_init_empty(&g_ed);
   }
   cursor_line = 0;
   cursor_col = 0;
@@ -198,7 +112,7 @@ static void open_or_create_file(const char *path) {
   invalidate_all_wraps();
   r_set_title(g_filename);
   char msg[256];
-  snprintf(msg, sizeof(msg), f ? "Opened %s" : "New file %s", g_filename);
+  snprintf(msg, sizeof(msg), "Opened %s", g_filename);
   status_set(msg);
 }
 
@@ -206,22 +120,11 @@ static void save_to_path(const char *path) {
   snprintf(g_filepath, sizeof(g_filepath), "%s", path);
   const char *slash = strrchr(path, '/');
   g_filename = slash ? slash + 1 : path;
-  FILE *f = fopen(g_filepath, "wb");
-  if (f) {
-    for (int i = 0; i < line_count; i++) {
-      fwrite(lines[i].text, 1, lines[i].len, f);
-      if (i < line_count - 1) fwrite("\n", 1, 1, f);
-    }
-    fclose(f);
-    char msg[256];
-    snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
-    status_set(msg);
-    r_set_title(g_filename);
-  }
-}
-
-static void invalidate_all_wraps(void) {
-  for (int i = 0; i < line_count; i++) lines[i].wrap_count = -1;
+  buf_save(&g_ed, g_filepath);
+  char msg[256];
+  snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
+  status_set(msg);
+  r_set_title(g_filename);
 }
 
 /* ---- word wrapping ---- */
@@ -418,48 +321,7 @@ static void editor_enter(void) {
 
 static void ensure_cursor_visible(void);
 
-/* ---- kill buffer ---- */
-
-static void kill_set(const char *text, int len) {
-  if (len + 1 > kill_cap) {
-    kill_cap = (len + 1) * 2;
-    kill_buf = realloc(kill_buf, kill_cap);
-  }
-  memcpy(kill_buf, text, len);
-  kill_buf[len] = '\0';
-  kill_len = len;
-}
-
-static void kill_append(const char *text, int len) {
-  if (kill_len + len + 1 > kill_cap) {
-    kill_cap = (kill_len + len + 1) * 2;
-    kill_buf = realloc(kill_buf, kill_cap);
-  }
-  memcpy(kill_buf + kill_len, text, len);
-  kill_len += len;
-  kill_buf[kill_len] = '\0';
-}
-
-/* ---- mark / region ---- */
-
-static void mark_set(void) {
-  mark_active = 1;
-  mark_line = cursor_line;
-  mark_col = cursor_col;
-}
-
-static void mark_clear(void) {
-  mark_active = 0;
-}
-
-/* get region as (start_line, start_col, end_line, end_col) ordered */
-static void region_ordered(int *sl, int *sc, int *el, int *ec) {
-  if (mark_line < cursor_line || (mark_line == cursor_line && mark_col <= cursor_col)) {
-    *sl = mark_line; *sc = mark_col; *el = cursor_line; *ec = cursor_col;
-  } else {
-    *sl = cursor_line; *sc = cursor_col; *el = mark_line; *ec = mark_col;
-  }
-}
+/* kill buffer, mark/region now in buffer.c (accessed via shims) */
 
 /* ---- undo (snapshot-based) ---- */
 /* MAX_UNDO defined in editor_types.h */
@@ -1286,14 +1148,14 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
 
 int main(int argc, char **argv) {
   if (argc >= 2) {
-    load_file(argv[1]);
+    buf_load_file(&g_ed, argv[1]);
     snprintf(g_filepath, sizeof(g_filepath), "%s", argv[1]);
     g_filename = argv[1];
     const char *slash = strrchr(argv[1], '/');
     if (slash) g_filename = slash + 1;
     printf("loaded %d lines\n", line_count);
   } else {
-    init_empty_buffer();
+    buf_init_empty(&g_ed);
   }
 
   SDL_Init(SDL_INIT_EVERYTHING);
