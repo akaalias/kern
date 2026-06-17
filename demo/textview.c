@@ -10,6 +10,7 @@
 #include "navigation.h"
 #include "editing.h"
 #include "md_render.h"
+#include "undo.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -148,69 +149,7 @@ static void save_to_path(const char *path) {
 /* word wrapping, cursor navigation, editing, and markdown rendering
    now in navigation.c, editing.c, md_render.c (accessed via shims above) */
 
-/* ---- undo (snapshot-based) ---- */
-/* MAX_UNDO defined in editor_types.h */
-
-typedef struct {
-  char **snap_lines_text;
-  int   *snap_lines_len;
-  int    snap_line_count;
-  int    snap_cursor_line, snap_cursor_col;
-} UndoSnapshot;
-
-static UndoSnapshot undo_stack[MAX_UNDO];
-static int undo_top = 0;
-static int undo_count = 0;
-
-static void undo_free_snapshot(UndoSnapshot *s) {
-  if (s->snap_lines_text) {
-    for (int i = 0; i < s->snap_line_count; i++) free(s->snap_lines_text[i]);
-    free(s->snap_lines_text);
-    free(s->snap_lines_len);
-  }
-  s->snap_lines_text = NULL;
-  s->snap_lines_len = NULL;
-  s->snap_line_count = 0;
-}
-
-static void undo_push(void) {
-  UndoSnapshot *s = &undo_stack[undo_top % MAX_UNDO];
-  undo_free_snapshot(s);
-  s->snap_line_count = line_count;
-  s->snap_lines_text = malloc(line_count * sizeof(char*));
-  s->snap_lines_len  = malloc(line_count * sizeof(int));
-  for (int i = 0; i < line_count; i++) {
-    s->snap_lines_text[i] = malloc(lines[i].len + 1);
-    memcpy(s->snap_lines_text[i], lines[i].text, lines[i].len + 1);
-    s->snap_lines_len[i] = lines[i].len;
-  }
-  s->snap_cursor_line = cursor_line;
-  s->snap_cursor_col = cursor_col;
-  undo_top++;
-  if (undo_top > MAX_UNDO) undo_top = MAX_UNDO;
-  undo_count = undo_top;
-}
-
-static void editor_undo(void) {
-  if (undo_top == 0) return;
-  undo_top--;
-  UndoSnapshot *s = &undo_stack[undo_top % MAX_UNDO];
-  /* free current lines */
-  for (int i = 0; i < line_count; i++) free(lines[i].text);
-  /* restore from snapshot */
-  ensure_lines_cap(s->snap_line_count);
-  line_count = s->snap_line_count;
-  for (int i = 0; i < line_count; i++) {
-    lines[i].len = s->snap_lines_len[i];
-    lines[i].cap = s->snap_lines_len[i] + 16;
-    lines[i].text = malloc(lines[i].cap);
-    memcpy(lines[i].text, s->snap_lines_text[i], s->snap_lines_len[i] + 1);
-    lines[i].wrap_count = -1;
-  }
-  cursor_line = s->snap_cursor_line;
-  cursor_col = s->snap_cursor_col;
-  cursor_clamp();
-}
+/* ---- undo is now in undo.c (operation-based) ---- */
 
 /* ---- frame ---- */
 static void process_frame(mu_Context *ctx) {
@@ -576,7 +515,6 @@ int main(int argc, char **argv) {
               search_find_current_dir();
             }
           } else {
-            undo_push();
             editor_insert_char(e.text.text);
             ensure_cursor_visible();
           }
@@ -860,26 +798,23 @@ int main(int argc, char **argv) {
             }
             else if (ctrl && sym == SDLK_k) {
               mark_clear();
-              undo_push();
               emacs_kill_line();
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_y) {
               mark_clear();
-              undo_push();
               emacs_yank();
               status_set("Yanked");
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_w) {
-              undo_push();
               emacs_kill_region();
               status_set("Region killed");
               ensure_cursor_visible();
             }
             else if (ctrl && sym == SDLK_SLASH) {
               mark_clear();
-              editor_undo();
+              undo_perform(&g_ed);
               status_set("Undo");
               ensure_cursor_visible();
             }
@@ -972,18 +907,15 @@ int main(int argc, char **argv) {
             /* --- basic editing keys --- */
             else if (sym == SDLK_BACKSPACE) {
               mark_clear();
-              undo_push();
               editor_backspace();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_DELETE) {
               mark_clear();
-              undo_push();
               editor_delete();
             }
             else if (sym == SDLK_RETURN) {
               mark_clear();
-              undo_push();
               editor_enter();
               ensure_cursor_visible();
             }

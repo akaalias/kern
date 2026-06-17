@@ -5,11 +5,14 @@
 #include <string.h>
 #include "editing.h"
 #include "buffer.h"
+#include "undo.h"
 
 /* ---- basic editing ---- */
 
 void ed_insert_char(EditorState *ed, const char *text) {
   int tlen = strlen(text);
+  int ins_line = ed->cursor_line;
+  int ins_col = ed->cursor_col;
   Line *l = &ed->lines[ed->cursor_line];
   line_ensure_cap(l, l->len + tlen);
   memmove(l->text + ed->cursor_col + tlen, l->text + ed->cursor_col, l->len - ed->cursor_col + 1);
@@ -18,11 +21,14 @@ void ed_insert_char(EditorState *ed, const char *text) {
   ed->cursor_col += tlen;
   ed->cursor_target_col = ed->cursor_col;
   line_dirty(l);
+  undo_push_op(ed, UNDO_INSERT, ins_line, ins_col, text, tlen);
 }
 
 void ed_backspace(EditorState *ed) {
   if (ed->cursor_col > 0) {
     Line *l = &ed->lines[ed->cursor_line];
+    char deleted = l->text[ed->cursor_col - 1];
+    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col - 1, &deleted, 1);
     memmove(l->text + ed->cursor_col - 1, l->text + ed->cursor_col, l->len - ed->cursor_col + 1);
     l->len--;
     ed->cursor_col--;
@@ -30,6 +36,7 @@ void ed_backspace(EditorState *ed) {
   } else if (ed->cursor_line > 0) {
     int prev = ed->cursor_line - 1;
     int new_col = ed->lines[prev].len;
+    undo_push_op(ed, UNDO_JOIN_LINE, prev, new_col, NULL, 0);
     line_ensure_cap(&ed->lines[prev], ed->lines[prev].len + ed->lines[ed->cursor_line].len);
     memcpy(ed->lines[prev].text + ed->lines[prev].len, ed->lines[ed->cursor_line].text, ed->lines[ed->cursor_line].len + 1);
     ed->lines[prev].len += ed->lines[ed->cursor_line].len;
@@ -44,11 +51,14 @@ void ed_backspace(EditorState *ed) {
 void ed_delete(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
   if (ed->cursor_col < l->len) {
+    char deleted = l->text[ed->cursor_col];
+    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col, &deleted, 1);
     memmove(l->text + ed->cursor_col, l->text + ed->cursor_col + 1, l->len - ed->cursor_col);
     l->len--;
     line_dirty(l);
   } else if (ed->cursor_line < ed->line_count - 1) {
     int next = ed->cursor_line + 1;
+    undo_push_op(ed, UNDO_JOIN_LINE, ed->cursor_line, l->len, NULL, 0);
     line_ensure_cap(l, l->len + ed->lines[next].len);
     memcpy(l->text + l->len, ed->lines[next].text, ed->lines[next].len + 1);
     l->len += ed->lines[next].len;
@@ -77,6 +87,14 @@ void ed_enter(EditorState *ed) {
     }
   }
 
+  /* push undo ops (grouped if there's a list prefix) */
+  if (prefix_len > 0) undo_begin_group(ed);
+  undo_push_op(ed, UNDO_SPLIT_LINE, ed->cursor_line, ed->cursor_col, NULL, 0);
+  if (prefix_len > 0) {
+    undo_push_op(ed, UNDO_INSERT, ed->cursor_line + 1, 0, prefix, prefix_len);
+    undo_end_group(ed);
+  }
+
   int rest_len = l->len - ed->cursor_col;
   /* build new line: prefix + rest of current line */
   int new_len = prefix_len + rest_len;
@@ -101,8 +119,10 @@ void ed_enter(EditorState *ed) {
 
 void ed_emacs_kill_line(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
+  undo_begin_group(ed);
   if (ed->cursor_col < l->len) {
     int kill_count = l->len - ed->cursor_col;
+    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col, l->text + ed->cursor_col, kill_count);
     if (ed->last_kill_was_k) {
       buf_kill_append(ed, l->text + ed->cursor_col, kill_count);
     } else {
@@ -112,6 +132,7 @@ void ed_emacs_kill_line(EditorState *ed) {
     l->text[l->len] = '\0';
     line_dirty(l);
   } else if (ed->cursor_line < ed->line_count - 1) {
+    undo_push_op(ed, UNDO_JOIN_LINE, ed->cursor_line, ed->cursor_col, NULL, 0);
     if (ed->last_kill_was_k) {
       buf_kill_append(ed, "\n", 1);
     } else {
@@ -124,11 +145,13 @@ void ed_emacs_kill_line(EditorState *ed) {
     buf_delete_line_at(ed, ed->cursor_line + 1);
     line_dirty(l);
   }
+  undo_end_group(ed);
   ed->last_kill_was_k = 1;
 }
 
 void ed_emacs_yank(EditorState *ed) {
   if (!ed->kill_buf || ed->kill_len == 0) return;
+  undo_begin_group(ed);
   for (int i = 0; i < ed->kill_len; i++) {
     if (ed->kill_buf[i] == '\n') {
       ed_enter(ed);
@@ -137,6 +160,7 @@ void ed_emacs_yank(EditorState *ed) {
       ed_insert_char(ed, ch);
     }
   }
+  undo_end_group(ed);
 }
 
 void ed_emacs_kill_region(EditorState *ed) {
@@ -163,6 +187,12 @@ void ed_emacs_kill_region(EditorState *ed) {
   }
   region[pos] = '\0';
   buf_kill_set(ed, region, total);
+
+  /* push undo: record the entire deleted region (may contain newlines) */
+  undo_begin_group(ed);
+  undo_push_op(ed, UNDO_DELETE, sl, sc, region, total);
+  undo_end_group(ed);
+
   free(region);
 
   /* delete region */
