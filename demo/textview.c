@@ -958,7 +958,7 @@ static void process_frame(mu_Context *ctx) {
       }
 
       /* store row info for post-render markdown drawing */
-      if (row_end > row_start && g_vis_row_count < MAX_VIS_ROWS) {
+      if (g_vis_row_count < MAX_VIS_ROWS) {
         g_vis_rows[g_vis_row_count].ln = ln;
         g_vis_rows[g_vis_row_count].row_start = row_start;
         g_vis_rows[g_vis_row_count].row_end = row_end;
