@@ -5,16 +5,12 @@
 #include "renderer.h"
 #include "microui.h"
 #include "macos_style.h"
+#include "editor_types.h"
 
-/* ---- constants ---- */
-#define TOP_PADDING  82
-#define LINE_HEIGHT_MULT 1.5f
-#define CHARS_PER_LINE 70
+/* constants now in editor_types.h */
 
 static int win_w(void) { int w, h; r_get_size(&w, &h); return w; }
 static int win_h(void) { int w, h; r_get_size(&w, &h); return h; }
-
-#define MIN_MARGIN 20
 
 static int page_w(void) {
   int ideal = r_get_text_width("n", 1) * CHARS_PER_LINE;
@@ -32,13 +28,7 @@ static int line_height(void) {
   return (int)(r_get_text_height() * LINE_HEIGHT_MULT + 0.5f);
 }
 
-/* ---- line buffer (mutable) ---- */
-typedef struct {
-  char *text;
-  int   len;
-  int   cap;
-  int   wrap_count;   /* cached visual line count, -1 = dirty */
-} Line;
+/* Line type defined in editor_types.h */
 
 static Line  *lines     = NULL;
 static int    line_count = 0;
@@ -443,7 +433,7 @@ static void region_ordered(int *sl, int *sc, int *el, int *ec) {
 }
 
 /* ---- undo (snapshot-based) ---- */
-#define MAX_UNDO 64
+/* MAX_UNDO defined in editor_types.h */
 
 typedef struct {
   char **lines_text;  /* array of line texts */
@@ -526,7 +516,7 @@ static int search_direction = 1;
 /* ---- status message (emacs echo area) ---- */
 static char status_msg[256] = "";
 static Uint32 status_time = 0;  /* when the message was set */
-#define STATUS_DURATION 3000    /* ms to show a message */
+/* STATUS_DURATION defined in editor_types.h */
 
 static void status_set(const char *msg) {
   snprintf(status_msg, sizeof(status_msg), "%s", msg);
@@ -748,9 +738,7 @@ static float drag_offset = 0;
 
 static int g_content_y;   /* top of content area */
 
-/* visible rows for post-render markdown drawing */
-#define MAX_VIS_ROWS 200
-typedef struct { int ln; int row_start; int row_end; int py; int heading; } VisRow;
+/* VisRow and MAX_VIS_ROWS defined in editor_types.h */
 static VisRow g_vis_rows[MAX_VIS_ROWS];
 static int g_vis_row_count = 0;
 static int g_content_h;   /* height of content area */
