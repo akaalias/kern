@@ -14,14 +14,18 @@
 static int win_w(void) { int w, h; r_get_size(&w, &h); return w; }
 static int win_h(void) { int w, h; r_get_size(&w, &h); return h; }
 
+#define MIN_MARGIN 20
+
 static int page_w(void) {
-  return r_get_text_width("n", 1) * CHARS_PER_LINE;
+  int ideal = r_get_text_width("n", 1) * CHARS_PER_LINE;
+  int max_w = win_w() - 2 * MIN_MARGIN;
+  return ideal < max_w ? ideal : max_w;
 }
 
 static int page_margin(void) {
   int pw = page_w();
   int m = (win_w() - pw) / 2;
-  return m > 20 ? m : 20;
+  return m > MIN_MARGIN ? m : MIN_MARGIN;
 }
 
 static int line_height(void) {
@@ -126,45 +130,15 @@ static void invalidate_all_wraps(void) {
 
 /* ---- word wrapping ---- */
 
+/* forward declaration */
+static int get_wrap_breaks(Line *l, int *starts, int max_starts);
+
 /* count how many visual lines a logical line produces */
 static int count_wraps(Line *l) {
   if (l->wrap_count >= 0) return l->wrap_count;
-  if (l->len == 0) { l->wrap_count = 1; return 1; }
-
-  int count = 1;
-  int x = 0;
-  int last_break = 0;  /* col after last word boundary */
-  int i = 0;
-
-  while (i < l->len) {
-    int cw = r_get_text_width(l->text + i, 1);
-
-    if (x + cw > page_w() && i > last_break) {
-      /* wrap: if we have a word boundary, break there; otherwise break here */
-      count++;
-      x = 0;
-      /* re-measure from last_break if we found a space-based break */
-      /* find the last space before i */
-      int brk = i;
-      for (int j = i - 1; j > last_break; j--) {
-        if (l->text[j] == ' ') { brk = j + 1; break; }
-      }
-      if (brk != i) {
-        /* wrap at word boundary */
-        i = brk;
-        last_break = brk;
-        continue;
-      }
-      last_break = i;
-    }
-
-    if (l->text[i] == ' ') last_break = i + 1;
-    x += cw;
-    i++;
-  }
-
-  l->wrap_count = count;
-  return count;
+  int starts[256];
+  l->wrap_count = get_wrap_breaks(l, starts, 256);
+  return l->wrap_count;
 }
 
 /* get visual rows for a line: fills starts[] and returns count.
@@ -403,7 +377,7 @@ static void process_frame(mu_Context *ctx) {
     float y_offset = scroll_y - (first_vis * lh);
 
     /* how many visual lines fit on screen */
-    int vis_on_screen = g_content_h / lh + 2;
+    int vis_on_screen = g_content_h / lh + 4;
 
     /* clip to content area */
     mu_push_clip_rect(ctx, mu_rect(0, g_content_y, win_w(), g_content_h));
