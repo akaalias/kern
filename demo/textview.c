@@ -285,15 +285,42 @@ static void editor_delete(void) {
 
 static void editor_enter(void) {
   Line *l = &lines[cursor_line];
+
+  /* detect list prefix on current line */
+  char prefix[32] = "";
+  int prefix_len = 0;
+  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
+    prefix[0] = '-'; prefix[1] = ' '; prefix_len = 2;
+  } else {
+    /* check for "N. " numbered list */
+    int ni = 0;
+    while (ni < l->len && l->text[ni] >= '0' && l->text[ni] <= '9') ni++;
+    if (ni > 0 && ni + 1 < l->len && l->text[ni] == '.' && l->text[ni+1] == ' ') {
+      /* parse the number and increment */
+      int num = 0;
+      for (int j = 0; j < ni; j++) num = num * 10 + (l->text[j] - '0');
+      prefix_len = snprintf(prefix, sizeof(prefix), "%d. ", num + 1);
+    }
+  }
+
   int rest_len = l->len - cursor_col;
-  insert_line_at(cursor_line + 1, l->text + cursor_col, rest_len);
+  /* build new line: prefix + rest of current line */
+  int new_len = prefix_len + rest_len;
+  char *new_text = malloc(new_len + 1);
+  memcpy(new_text, prefix, prefix_len);
+  memcpy(new_text + prefix_len, l->text + cursor_col, rest_len);
+  new_text[new_len] = '\0';
+
+  insert_line_at(cursor_line + 1, new_text, new_len);
+  free(new_text);
+
   l = &lines[cursor_line];
   l->len = cursor_col;
   l->text[l->len] = '\0';
   line_dirty(l);
   cursor_line++;
-  cursor_col = 0;
-  cursor_target_col = 0;
+  cursor_col = prefix_len;
+  cursor_target_col = cursor_col;
 }
 
 static void ensure_cursor_visible(void);
@@ -1142,10 +1169,11 @@ static void do_render(void) {
     r_draw_text(label, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
     int lw = r_get_text_width(label, strlen(label));
     r_draw_text(search_buf, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
-    /* blinking cursor */
-    if ((SDL_GetTicks() / 500) % 2 == 0) {
+    /* cursor */
+    {
       int cx = 10 + lw + r_get_text_width(search_buf, search_len);
-      r_draw_rect(mu_rect(cx, bar_y + 4, 1, 16), mu_color(90, 200, 250, 255));
+      int fh = r_get_text_height();
+      r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
     }
   } else {
     const char *status = status_get();
