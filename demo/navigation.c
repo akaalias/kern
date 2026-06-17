@@ -180,6 +180,7 @@ void nav_search_find_next(EditorState *ed, ViewState *vs, int from_line, int fro
     for (int ln = start_ln; ln < end_ln; ln++) {
       Line *l = &ed->lines[ln];
       int start_col = (pass == 0 && ln == from_line) ? from_col + 1 : 0;
+      if (l->len < vs->search_len) continue;
       for (int c = start_col; c <= l->len - vs->search_len; c++) {
         if (strncasecmp(l->text + c, vs->search_buf, vs->search_len) == 0) {
           vs->search_match_line = ln;
@@ -203,8 +204,10 @@ void nav_search_find_prev(EditorState *ed, ViewState *vs, int from_line, int fro
     int end_ln   = (pass == 0) ? -1 : from_line - 1;
     for (int ln = start_ln; ln > end_ln; ln--) {
       Line *l = &ed->lines[ln];
-      int start_col = (pass == 0 && ln == from_line) ? from_col - 1 : l->len - vs->search_len;
-      if (start_col > l->len - vs->search_len) start_col = l->len - vs->search_len;
+      if (l->len < vs->search_len) continue;
+      int max_col = l->len - vs->search_len;
+      int start_col = (pass == 0 && ln == from_line) ? from_col - 1 : max_col;
+      if (start_col > max_col) start_col = max_col;
       for (int c = start_col; c >= 0; c--) {
         if (strncasecmp(l->text + c, vs->search_buf, vs->search_len) == 0) {
           vs->search_match_line = ln;

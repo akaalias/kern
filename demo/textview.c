@@ -234,7 +234,7 @@ static void process_frame(mu_Context *ctx) {
       }
 
       /* draw search highlights on this visual row */
-      if (search_active && search_len > 0 && row_end > row_start) {
+      if (search_active && search_len > 0 && row_end > row_start && (row_end - row_start) >= search_len) {
         for (int sc = row_start; sc <= row_end - search_len; sc++) {
           if (strncasecmp(l->text + sc, search_buf, search_len) == 0) {
             int hx = page_margin() + r_get_text_width(l->text + row_start, sc - row_start);

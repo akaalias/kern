@@ -28,7 +28,9 @@ void line_dirty(Line *l) { l->wrap_count = -1; }
 void buf_ensure_lines_cap(EditorState *ed, int need) {
   if (need > ed->line_cap) {
     ed->line_cap = need * 2;
-    ed->lines = realloc(ed->lines, ed->line_cap * sizeof(Line));
+    Line *tmp = realloc(ed->lines, ed->line_cap * sizeof(Line));
+    if (!tmp) { fprintf(stderr, "out of memory\n"); exit(1); }
+    ed->lines = tmp;
   }
 }
 
@@ -52,14 +54,17 @@ void buf_load_file(EditorState *ed, const char *path) {
   if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
+  if (sz < 0) { fclose(f); fprintf(stderr, "cannot read %s\n", path); exit(1); }
   fseek(f, 0, SEEK_SET);
-  char *buf = malloc(sz + 1);
-  fread(buf, 1, sz, f);
-  buf[sz] = '\0';
+  char *buf = malloc((size_t)sz + 1);
+  if (!buf) { fclose(f); fprintf(stderr, "out of memory loading %s\n", path); exit(1); }
+  size_t nread = fread(buf, 1, (size_t)sz, f);
+  buf[nread] = '\0';
   fclose(f);
 
   ed->line_cap = 4096;
   ed->lines = malloc(ed->line_cap * sizeof(Line));
+  if (!ed->lines) { free(buf); fprintf(stderr, "out of memory\n"); exit(1); }
   ed->line_count = 0;
 
   char *p = buf;
@@ -118,7 +123,9 @@ void buf_save(EditorState *ed, const char *path) {
 void buf_kill_set(EditorState *ed, const char *text, int len) {
   if (len + 1 > ed->kill_cap) {
     ed->kill_cap = (len + 1) * 2;
-    ed->kill_buf = realloc(ed->kill_buf, ed->kill_cap);
+    char *tmp = realloc(ed->kill_buf, ed->kill_cap);
+    if (!tmp) return;
+    ed->kill_buf = tmp;
   }
   memcpy(ed->kill_buf, text, len);
   ed->kill_buf[len] = '\0';
@@ -128,7 +135,9 @@ void buf_kill_set(EditorState *ed, const char *text, int len) {
 void buf_kill_append(EditorState *ed, const char *text, int len) {
   if (ed->kill_len + len + 1 > ed->kill_cap) {
     ed->kill_cap = (ed->kill_len + len + 1) * 2;
-    ed->kill_buf = realloc(ed->kill_buf, ed->kill_cap);
+    char *tmp = realloc(ed->kill_buf, ed->kill_cap);
+    if (!tmp) return;
+    ed->kill_buf = tmp;
   }
   memcpy(ed->kill_buf + ed->kill_len, text, len);
   ed->kill_len += len;
