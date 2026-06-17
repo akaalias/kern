@@ -984,6 +984,13 @@ int main(int argc, char **argv) {
 
         case SDL_KEYDOWN:
         case SDL_KEYUP: {
+          /* suppress macOS system beep for ctrl/alt combos */
+          if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL | KMOD_ALT))) {
+            SDL_StopTextInput();
+          } else if (e.type == SDL_KEYUP) {
+            SDL_StartTextInput();
+          }
+
           int c = key_map[e.key.keysym.sym & 0xff];
           if (c && e.type == SDL_KEYDOWN) { mu_input_keydown(ctx, c); }
           if (c && e.type ==   SDL_KEYUP) { mu_input_keyup(ctx, c);   }
