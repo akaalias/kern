@@ -306,6 +306,263 @@ static void process_frame(mu_Context *ctx) {
 }
 
 
+/* ---- key binding table and command functions ---- */
+
+typedef struct {
+  int mod;     /* required modifier: KMOD_CTRL, KMOD_ALT, KMOD_GUI, 0 for none */
+  int sym;     /* SDL key symbol */
+  void (*action)(void);  /* command function */
+} KeyBinding;
+
+static void cmd_beginning_of_line(void) {
+  cursor_col = 0; cursor_target_col = 0; ensure_cursor_visible();
+}
+static void cmd_end_of_line(void) {
+  cursor_col = lines[cursor_line].len; cursor_target_col = cursor_col; ensure_cursor_visible();
+}
+static void cmd_forward_char(void) {
+  if (cursor_col < lines[cursor_line].len) { cursor_col++; }
+  else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
+  cursor_target_col = cursor_col; ensure_cursor_visible();
+}
+static void cmd_backward_char(void) {
+  if (cursor_col > 0) { cursor_col--; }
+  else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
+  cursor_target_col = cursor_col; ensure_cursor_visible();
+}
+static void cmd_next_line(void) {
+  if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
+  ensure_cursor_visible();
+}
+static void cmd_previous_line(void) {
+  if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
+  ensure_cursor_visible();
+}
+static void cmd_kill_line(void) {
+  mark_clear(); emacs_kill_line(); ensure_cursor_visible();
+}
+static void cmd_yank(void) {
+  mark_clear(); emacs_yank(); status_set("Yanked"); ensure_cursor_visible();
+}
+static void cmd_kill_region(void) {
+  emacs_kill_region(); status_set("Region killed"); ensure_cursor_visible();
+}
+static void cmd_undo(void) {
+  mark_clear(); undo_perform(&g_ed); status_set("Undo"); ensure_cursor_visible();
+}
+static void cmd_set_mark(void) {
+  mark_set(); status_set("Mark set");
+}
+static void cmd_keyboard_quit(void) {
+  mark_clear(); status_set("Quit");
+}
+static void cmd_forward_word_alt(void) {
+  emacs_forward_word(); ensure_cursor_visible();
+}
+static void cmd_backward_word_alt(void) {
+  emacs_backward_word(); ensure_cursor_visible();
+}
+static void cmd_end_of_buffer_alt(void) {
+  cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
+  cursor_target_col = cursor_col; ensure_cursor_visible(); suppress_next_text = 1;
+}
+static void cmd_beginning_of_buffer_alt(void) {
+  cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
+  ensure_cursor_visible(); suppress_next_text = 1;
+}
+static void cmd_font_increase(void) {
+  font_size += 2.0f; if (font_size > 72.0f) font_size = 72.0f;
+  r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
+}
+static void cmd_font_decrease(void) {
+  font_size -= 2.0f; if (font_size < 8.0f) font_size = 8.0f;
+  r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
+}
+static void cmd_backspace(void) {
+  mark_clear(); editor_backspace(); ensure_cursor_visible();
+}
+static void cmd_delete(void) {
+  mark_clear(); editor_delete();
+}
+static void cmd_enter(void) {
+  mark_clear(); editor_enter(); ensure_cursor_visible();
+}
+
+/* Alt+Shift+. and Alt+Shift+, need KMOD_ALT but the sym check uses SDLK_PERIOD/SDLK_COMMA
+   plus shift — handled specially via check_binding which checks extra shift for those entries */
+
+static const KeyBinding normal_bindings[] = {
+  { KMOD_CTRL, SDLK_a,      cmd_beginning_of_line },
+  { KMOD_CTRL, SDLK_e,      cmd_end_of_line },
+  { KMOD_CTRL, SDLK_f,      cmd_forward_char },
+  { KMOD_CTRL, SDLK_b,      cmd_backward_char },
+  { KMOD_CTRL, SDLK_n,      cmd_next_line },
+  { KMOD_CTRL, SDLK_p,      cmd_previous_line },
+  { KMOD_CTRL, SDLK_k,      cmd_kill_line },
+  { KMOD_CTRL, SDLK_y,      cmd_yank },
+  { KMOD_CTRL, SDLK_w,      cmd_kill_region },
+  { KMOD_CTRL, SDLK_SLASH,  cmd_undo },
+  { KMOD_CTRL, SDLK_SPACE,  cmd_set_mark },
+  { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
+  { KMOD_ALT,  SDLK_f,      cmd_forward_word_alt },
+  { KMOD_ALT,  SDLK_b,      cmd_backward_word_alt },
+  { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
+  { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
+  { 0, SDLK_BACKSPACE,      cmd_backspace },
+  { 0, SDLK_DELETE,         cmd_delete },
+  { 0, SDLK_RETURN,         cmd_enter },
+  { 0, 0, NULL }  /* sentinel */
+};
+
+static int check_binding(const KeyBinding *b, int kmod, int sym) {
+  if (b->sym != sym) return 0;
+  if (b->mod == 0) {
+    /* no modifier required — but reject if ctrl/alt/gui are held */
+    if (kmod & (KMOD_CTRL | KMOD_ALT | KMOD_GUI)) return 0;
+    return 1;
+  }
+  /* check that the required modifier is active */
+  if (!(kmod & b->mod)) return 0;
+  return 1;
+}
+
+/* ---- modal key handlers ---- */
+
+static int handle_minibuf_key(int sym, int ctrl) {
+  if (sym == SDLK_RETURN) {
+    minibuf_active = 0;
+    if (minibuf_callback) minibuf_callback(minibuf_text);
+    minibuf_callback = NULL;
+    return 1;
+  }
+  if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {
+    minibuf_active = 0;
+    minibuf_callback = NULL;
+    status_set("Quit");
+    return 1;
+  }
+  if (sym == SDLK_BACKSPACE) {
+    if (minibuf_len > 0) {
+      minibuf_len--;
+      minibuf_text[minibuf_len] = '\0';
+    }
+    return 1;
+  }
+  return 0;
+}
+
+static int handle_search_key(int sym, int ctrl) {
+  if (sym == SDLK_ESCAPE || sym == SDLK_RETURN) {
+    search_active = 0;
+    return 1;
+  }
+  if (ctrl && sym == SDLK_s) {
+    search_direction = 1;
+    if (search_match_line >= 0) search_find_next(search_match_line, search_match_col);
+    else search_find_first();
+    return 1;
+  }
+  if (ctrl && (sym == SDLK_r || sym == SDLK_b)) {
+    search_direction = -1;
+    if (search_match_line >= 0) search_find_prev(search_match_line, search_match_col);
+    else search_find_first();
+    return 1;
+  }
+  if (ctrl && sym == SDLK_f) {
+    search_direction = 1;
+    if (search_match_line >= 0) search_find_next(search_match_line, search_match_col);
+    else search_find_first();
+    return 1;
+  }
+  if (ctrl && sym == SDLK_g) {
+    search_active = 0;
+    search_match_line = -1;
+    return 1;
+  }
+  if (sym == SDLK_BACKSPACE) {
+    if (search_len > 0) {
+      search_len--;
+      search_buf[search_len] = '\0';
+      if (search_len > 0) search_find_current_dir();
+      else search_match_line = -1;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+static int handle_esc_prefix_key(int sym, int shift) {
+  esc_prefix = 0;
+  SDL_StartTextInput();
+  if (shift && sym == SDLK_PERIOD) {
+    /* M-> : end of buffer, set mark first */
+    mark_set();
+    cursor_line = line_count - 1;
+    cursor_col = lines[cursor_line].len;
+    cursor_target_col = cursor_col;
+    ensure_cursor_visible();
+    status_set("Mark set");
+    suppress_next_text = 1;
+    return 1;
+  }
+  if (shift && sym == SDLK_COMMA) {
+    /* M-< : beginning of buffer, set mark first */
+    mark_set();
+    cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
+    ensure_cursor_visible();
+    status_set("Mark set");
+    suppress_next_text = 1;
+    return 1;
+  }
+  if (sym == SDLK_f) {
+    emacs_forward_word(); ensure_cursor_visible(); return 1;
+  }
+  if (sym == SDLK_b) {
+    emacs_backward_word(); ensure_cursor_visible(); return 1;
+  }
+  return 1; /* consume even if unrecognized — prefix is cleared */
+}
+
+static int handle_cx_prefix_key(int sym, int ctrl) {
+  ctrl_x_prefix = 0;
+  if (ctrl && sym == SDLK_s) {
+    /* C-x C-s: save */
+    if (g_filepath[0]) {
+      FILE *f = fopen(g_filepath, "wb");
+      if (f) {
+        for (int i = 0; i < line_count; i++) {
+          fwrite(lines[i].text, 1, lines[i].len, f);
+          if (i < line_count - 1) fwrite("\n", 1, 1, f);
+        }
+        fclose(f);
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
+        status_set(msg);
+      }
+    } else {
+      minibuf_active = 1;
+      snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file: ");
+      minibuf_text[0] = '\0';
+      minibuf_len = 0;
+      minibuf_callback = save_to_path;
+    }
+    return 1;
+  }
+  if (ctrl && sym == SDLK_c) {
+    exit(EXIT_SUCCESS);
+    return 1;
+  }
+  if (ctrl && sym == SDLK_f) {
+    minibuf_active = 1;
+    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file: ");
+    minibuf_text[0] = '\0';
+    minibuf_len = 0;
+    minibuf_callback = open_or_create_file;
+    return 1;
+  }
+  return 1; /* consume even if unrecognized — prefix is cleared */
+}
+
 /* ---- SDL boilerplate ---- */
 
 static const char button_map[256] = {
@@ -465,7 +722,7 @@ int main(int argc, char **argv) {
   search_match_line = -1;
   search_match_col = -1;
   g_cursor_x = -1;
-  g_filename = "*scratch*";
+  if (!g_filename) g_filename = "*scratch*";
   r_init();
   r_set_font_size(font_size);
   r_set_title(g_filename);
@@ -550,125 +807,23 @@ int main(int argc, char **argv) {
 
           if (e.type == SDL_KEYDOWN) {
             int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
-            int cmd  = !!(e.key.keysym.mod & KMOD_GUI);
-
-            /* minibuffer input mode */
-            if (minibuf_active) {
-              if (e.key.keysym.sym == SDLK_RETURN) {
-                minibuf_active = 0;
-                if (minibuf_callback) minibuf_callback(minibuf_text);
-                minibuf_callback = NULL;
-              }
-              else if (e.key.keysym.sym == SDLK_ESCAPE || (ctrl && e.key.keysym.sym == SDLK_g)) {
-                minibuf_active = 0;
-                minibuf_callback = NULL;
-                status_set("Quit");
-              }
-              else if (e.key.keysym.sym == SDLK_BACKSPACE) {
-                if (minibuf_len > 0) {
-                  minibuf_len--;
-                  minibuf_text[minibuf_len] = '\0';
-                }
-              }
-              break;
-            }
-
-            /* search mode key handling */
-            if (search_active) {
-              if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_RETURN) {
-                search_active = 0;
-              }
-              else if (ctrl && e.key.keysym.sym == SDLK_s) {
-                /* C-s while searching: next match forward */
-                search_direction = 1;
-                if (search_match_line >= 0)
-                  search_find_next(search_match_line, search_match_col);
-                else
-                  search_find_first();
-              }
-              else if (ctrl && (e.key.keysym.sym == SDLK_r || e.key.keysym.sym == SDLK_b)) {
-                /* C-r or C-b while searching: next match backward */
-                search_direction = -1;
-                if (search_match_line >= 0)
-                  search_find_prev(search_match_line, search_match_col);
-                else
-                  search_find_first();
-              }
-              else if (ctrl && e.key.keysym.sym == SDLK_f) {
-                /* C-f while searching: next match forward */
-                search_direction = 1;
-                if (search_match_line >= 0)
-                  search_find_next(search_match_line, search_match_col);
-                else
-                  search_find_first();
-              }
-              else if (ctrl && e.key.keysym.sym == SDLK_g) {
-                /* C-g: cancel search */
-                search_active = 0;
-                search_match_line = -1;
-              }
-              else if (e.key.keysym.sym == SDLK_BACKSPACE) {
-                if (search_len > 0) {
-                  search_len--;
-                  search_buf[search_len] = '\0';
-                  if (search_len > 0) search_find_current_dir();
-                  else search_match_line = -1;
-                }
-              }
-              break;
-            }
-            int alt  = !!(e.key.keysym.mod & KMOD_ALT);
             int sym = e.key.keysym.sym;
 
-            /* any non-ctrl/alt key clears last_kill_was_k */
-            if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
+            /* 1. Modal handlers (consume and break) */
+            if (minibuf_active && handle_minibuf_key(sym, ctrl)) break;
+            if (search_active && handle_search_key(sym, ctrl)) break;
+            if (ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
+            if (esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
 
-            /* --- C-x chords (must be before C-s isearch) --- */
-            if (ctrl_x_prefix) {
-              ctrl_x_prefix = 0;
-              if (ctrl && sym == SDLK_s) {
-                /* C-x C-s: save */
-                if (g_filepath[0]) {
-                  FILE *f = fopen(g_filepath, "wb");
-                  if (f) {
-                    for (int i = 0; i < line_count; i++) {
-                      fwrite(lines[i].text, 1, lines[i].len, f);
-                      if (i < line_count - 1) fwrite("\n", 1, 1, f);
-                    }
-                    fclose(f);
-                    char msg[256];
-                    snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
-                    status_set(msg);
-                  }
-                } else {
-                  /* no file path yet — prompt for one then save */
-                  minibuf_active = 1;
-                  snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file: ");
-                  minibuf_text[0] = '\0';
-                  minibuf_len = 0;
-                  minibuf_callback = save_to_path;
-                }
-              }
-              else if (ctrl && sym == SDLK_c) {
-                /* C-x C-c: quit */
-                exit(EXIT_SUCCESS);
-              }
-              else if (ctrl && sym == SDLK_f) {
-                /* C-x C-f: find file */
-                minibuf_active = 1;
-                snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file: ");
-                minibuf_text[0] = '\0';
-                minibuf_len = 0;
-                minibuf_callback = open_or_create_file;
-              }
-              break;
-            }
-            if (ctrl && sym == SDLK_x) {
-              ctrl_x_prefix = 1;
+            /* 2. Prefix starters */
+            if (ctrl && sym == SDLK_x) { ctrl_x_prefix = 1; break; }
+            if (sym == SDLK_ESCAPE && !search_active) {
+              if (mark_active) { mark_clear(); status_set("Quit"); }
+              else { esc_prefix = 1; SDL_StopTextInput(); }
               break;
             }
 
-            /* --- C-s / C-r: isearch --- */
+            /* 3. C-s / C-r isearch start/continue */
             if (ctrl && sym == SDLK_s) {
               search_direction = 1;
               if (!search_active) {
@@ -696,165 +851,40 @@ int main(int argc, char **argv) {
               break;
             }
 
-            /* --- Esc prefix (Meta) --- */
-            if (esc_prefix) {
-              esc_prefix = 0;
-              SDL_StartTextInput();
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if (shift && sym == SDLK_PERIOD) {
-                /* M-> : end of buffer, set mark first */
-                mark_set();
-                cursor_line = line_count - 1;
-                cursor_col = lines[cursor_line].len;
-                cursor_target_col = cursor_col;
-                ensure_cursor_visible();
-                status_set("Mark set");
-                suppress_next_text = 1;
+            /* any non-C-k key clears last_kill_was_k */
+            if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
+
+            /* 4. Command table lookup */
+            {
+              int matched = 0;
+              for (int i = 0; normal_bindings[i].action; i++) {
+                if (check_binding(&normal_bindings[i], e.key.keysym.mod, sym)) {
+                  normal_bindings[i].action();
+                  matched = 1;
+                  break;
+                }
               }
-              else if (shift && sym == SDLK_COMMA) {
-                /* M-< : beginning of buffer, set mark first */
-                mark_set();
-                cursor_line = 0;
-                cursor_col = 0;
-                cursor_target_col = 0;
-                ensure_cursor_visible();
-                status_set("Mark set");
-                suppress_next_text = 1;
-              }
-              else if (sym == SDLK_f) {
-                /* M-f: forward word */
-                emacs_forward_word();
-                ensure_cursor_visible();
-              }
-              else if (sym == SDLK_b) {
-                /* M-b: backward word */
-                emacs_backward_word();
-                ensure_cursor_visible();
-              }
-              break;
-            }
-            if (sym == SDLK_ESCAPE && !search_active) {
-              if (mark_active) {
-                mark_clear();
-                status_set("Quit");
-              } else {
-                esc_prefix = 1;
-                SDL_StopTextInput();
-              }
-              break;
+              if (matched) break;
             }
 
-            /* --- emacs ctrl bindings --- */
-            if (ctrl && sym == SDLK_a) {
-              /* beginning of line */
-              cursor_col = 0;
-              cursor_target_col = 0;
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_e) {
-              /* end of line */
-              cursor_col = lines[cursor_line].len;
-              cursor_target_col = cursor_col;
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_f) {
-              /* forward char */
-              if (cursor_col < lines[cursor_line].len) {
-                cursor_col++;
-              } else if (cursor_line < line_count - 1) {
-                cursor_line++; cursor_col = 0;
-              }
-              cursor_target_col = cursor_col;
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_b) {
-              /* backward char */
-              if (cursor_col > 0) {
-                cursor_col--;
-              } else if (cursor_line > 0) {
-                cursor_line--;
-                cursor_col = lines[cursor_line].len;
-              }
-              cursor_target_col = cursor_col;
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_n) {
-              /* next line */
-              if (cursor_line < line_count - 1) {
-                cursor_line++;
-                cursor_col = cursor_target_col;
-                cursor_clamp();
-              }
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_p) {
-              /* previous line */
-              if (cursor_line > 0) {
-                cursor_line--;
-                cursor_col = cursor_target_col;
-                cursor_clamp();
-              }
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_k) {
-              mark_clear();
-              emacs_kill_line();
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_y) {
-              mark_clear();
-              emacs_yank();
-              status_set("Yanked");
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_w) {
-              emacs_kill_region();
-              status_set("Region killed");
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_SLASH) {
-              mark_clear();
-              undo_perform(&g_ed);
-              status_set("Undo");
-              ensure_cursor_visible();
-            }
-            else if (ctrl && sym == SDLK_SPACE) {
-              mark_set();
-              status_set("Mark set");
-            }
-            else if (ctrl && sym == SDLK_g) {
-              mark_clear();
-              status_set("Quit");
-            }
-            /* --- alt bindings --- */
-            else if (alt && sym == SDLK_f) {
-              emacs_forward_word();
-              ensure_cursor_visible();
-            }
-            else if (alt && sym == SDLK_b) {
-              emacs_backward_word();
-              ensure_cursor_visible();
-            }
-            else if (alt && sym == SDLK_PERIOD && (e.key.keysym.mod & KMOD_SHIFT)) {
-              /* M-> (Alt+Shift+.): end of buffer */
-              cursor_line = line_count - 1;
-              cursor_col = lines[cursor_line].len;
-              cursor_target_col = cursor_col;
-              ensure_cursor_visible();
-              suppress_next_text = 1;
-            }
-            else if (alt && sym == SDLK_COMMA && (e.key.keysym.mod & KMOD_SHIFT)) {
-              /* M-< (Alt+Shift+,): beginning of buffer */
-              cursor_line = 0;
-              cursor_col = 0;
-              cursor_target_col = 0;
-              ensure_cursor_visible();
-              suppress_next_text = 1;
-            }
-            /* --- arrow keys --- */
-            /* shift+arrow starts selection; plain arrow moves without clearing existing mark */
-            else if (sym == SDLK_LEFT) {
+            /* 5. Alt+Shift+. / Alt+Shift+, (need shift check, not in table) */
+            {
+              int alt = !!(e.key.keysym.mod & KMOD_ALT);
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (alt && shift && sym == SDLK_PERIOD) {
+                cmd_end_of_buffer_alt();
+                break;
+              }
+              if (alt && shift && sym == SDLK_COMMA) {
+                cmd_beginning_of_buffer_alt();
+                break;
+              }
+            }
+
+            /* 6. Arrow keys (need shift detection for selection) */
+            if (sym == SDLK_LEFT) {
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              int alt = !!(e.key.keysym.mod & KMOD_ALT);
               if (shift && !mark_active) mark_set();
               if (ctrl || alt) {
                 emacs_backward_word();
@@ -864,9 +894,11 @@ int main(int argc, char **argv) {
                 cursor_target_col = cursor_col;
               }
               ensure_cursor_visible();
+              break;
             }
-            else if (sym == SDLK_RIGHT) {
+            if (sym == SDLK_RIGHT) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              int alt = !!(e.key.keysym.mod & KMOD_ALT);
               if (shift && !mark_active) mark_set();
               if (ctrl || alt) {
                 emacs_forward_word();
@@ -876,51 +908,21 @@ int main(int argc, char **argv) {
                 cursor_target_col = cursor_col;
               }
               ensure_cursor_visible();
+              break;
             }
-            else if (sym == SDLK_UP) {
+            if (sym == SDLK_UP) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if (shift && !mark_active) mark_set();
               if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
               ensure_cursor_visible();
+              break;
             }
-            else if (sym == SDLK_DOWN) {
+            if (sym == SDLK_DOWN) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if (shift && !mark_active) mark_set();
               if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
               ensure_cursor_visible();
-            }
-            /* --- cmd bindings (macOS) --- */
-            else if (cmd && sym == SDLK_EQUALS) {
-              font_size += 2.0f;
-              if (font_size > 72.0f) font_size = 72.0f;
-              r_set_font_size(font_size);
-              invalidate_all_wraps();
-              ensure_cursor_visible();
-            }
-            else if (cmd && sym == SDLK_MINUS) {
-              font_size -= 2.0f;
-              if (font_size < 8.0f) font_size = 8.0f;
-              r_set_font_size(font_size);
-              invalidate_all_wraps();
-              ensure_cursor_visible();
-            }
-            /* --- basic editing keys --- */
-            else if (sym == SDLK_BACKSPACE) {
-              mark_clear();
-              editor_backspace();
-              ensure_cursor_visible();
-            }
-            else if (sym == SDLK_DELETE) {
-              mark_clear();
-              editor_delete();
-            }
-            else if (sym == SDLK_RETURN) {
-              mark_clear();
-              editor_enter();
-              ensure_cursor_visible();
-            }
-            else if (sym == SDLK_ESCAPE) {
-              mark_clear();
+              break;
             }
           }
           break;
