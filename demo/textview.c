@@ -298,6 +298,244 @@ static void editor_enter(void) {
 
 static void ensure_cursor_visible(void);
 
+/* ---- kill buffer ---- */
+static char *kill_buf = NULL;
+static int   kill_len = 0;
+static int   kill_cap = 0;
+
+static void kill_set(const char *text, int len) {
+  if (len + 1 > kill_cap) {
+    kill_cap = (len + 1) * 2;
+    kill_buf = realloc(kill_buf, kill_cap);
+  }
+  memcpy(kill_buf, text, len);
+  kill_buf[len] = '\0';
+  kill_len = len;
+}
+
+static void kill_append(const char *text, int len) {
+  if (kill_len + len + 1 > kill_cap) {
+    kill_cap = (kill_len + len + 1) * 2;
+    kill_buf = realloc(kill_buf, kill_cap);
+  }
+  memcpy(kill_buf + kill_len, text, len);
+  kill_len += len;
+  kill_buf[kill_len] = '\0';
+}
+
+/* ---- mark / region ---- */
+static int mark_active = 0;
+static int mark_line = 0;
+static int mark_col  = 0;
+
+static void mark_set(void) {
+  mark_active = 1;
+  mark_line = cursor_line;
+  mark_col = cursor_col;
+}
+
+static void mark_clear(void) {
+  mark_active = 0;
+}
+
+/* get region as (start_line, start_col, end_line, end_col) ordered */
+static void region_ordered(int *sl, int *sc, int *el, int *ec) {
+  if (mark_line < cursor_line || (mark_line == cursor_line && mark_col <= cursor_col)) {
+    *sl = mark_line; *sc = mark_col; *el = cursor_line; *ec = cursor_col;
+  } else {
+    *sl = cursor_line; *sc = cursor_col; *el = mark_line; *ec = mark_col;
+  }
+}
+
+/* ---- undo (snapshot-based) ---- */
+#define MAX_UNDO 64
+
+typedef struct {
+  char **lines_text;  /* array of line texts */
+  int   *lines_len;
+  int    line_count;
+  int    cursor_line, cursor_col;
+} UndoSnapshot;
+
+static UndoSnapshot undo_stack[MAX_UNDO];
+static int undo_top = 0;
+static int undo_count = 0;
+
+static void undo_free_snapshot(UndoSnapshot *s) {
+  if (s->lines_text) {
+    for (int i = 0; i < s->line_count; i++) free(s->lines_text[i]);
+    free(s->lines_text);
+    free(s->lines_len);
+  }
+  s->lines_text = NULL;
+  s->lines_len = NULL;
+  s->line_count = 0;
+}
+
+static void undo_push(void) {
+  UndoSnapshot *s = &undo_stack[undo_top % MAX_UNDO];
+  undo_free_snapshot(s);
+  s->line_count = line_count;
+  s->lines_text = malloc(line_count * sizeof(char*));
+  s->lines_len  = malloc(line_count * sizeof(int));
+  for (int i = 0; i < line_count; i++) {
+    s->lines_text[i] = malloc(lines[i].len + 1);
+    memcpy(s->lines_text[i], lines[i].text, lines[i].len + 1);
+    s->lines_len[i] = lines[i].len;
+  }
+  s->cursor_line = cursor_line;
+  s->cursor_col = cursor_col;
+  undo_top++;
+  if (undo_top > MAX_UNDO) undo_top = MAX_UNDO;
+  undo_count = undo_top;
+}
+
+static void editor_undo(void) {
+  if (undo_top == 0) return;
+  undo_top--;
+  UndoSnapshot *s = &undo_stack[undo_top % MAX_UNDO];
+  /* free current lines */
+  for (int i = 0; i < line_count; i++) free(lines[i].text);
+  /* restore from snapshot */
+  ensure_lines_cap(s->line_count);
+  line_count = s->line_count;
+  for (int i = 0; i < line_count; i++) {
+    lines[i].len = s->lines_len[i];
+    lines[i].cap = s->lines_len[i] + 16;
+    lines[i].text = malloc(lines[i].cap);
+    memcpy(lines[i].text, s->lines_text[i], s->lines_len[i] + 1);
+    lines[i].wrap_count = -1;
+  }
+  cursor_line = s->cursor_line;
+  cursor_col = s->cursor_col;
+  cursor_clamp();
+}
+
+/* ---- emacs commands ---- */
+
+/* ctrl-k: kill to end of line */
+static int last_kill_was_k = 0;
+
+static void emacs_kill_line(void) {
+  Line *l = &lines[cursor_line];
+  if (cursor_col < l->len) {
+    /* kill from cursor to end of line */
+    int kill_count = l->len - cursor_col;
+    if (last_kill_was_k) {
+      kill_append(l->text + cursor_col, kill_count);
+    } else {
+      kill_set(l->text + cursor_col, kill_count);
+    }
+    l->len = cursor_col;
+    l->text[l->len] = '\0';
+    line_dirty(l);
+  } else if (cursor_line < line_count - 1) {
+    /* at end of line: kill the newline (join with next line) */
+    if (last_kill_was_k) {
+      kill_append("\n", 1);
+    } else {
+      kill_set("\n", 1);
+    }
+    Line *next = &lines[cursor_line + 1];
+    line_ensure_cap(l, l->len + next->len);
+    memcpy(l->text + l->len, next->text, next->len + 1);
+    l->len += next->len;
+    delete_line_at(cursor_line + 1);
+    line_dirty(l);
+  }
+  last_kill_was_k = 1;
+}
+
+/* ctrl-y: yank */
+static void emacs_yank(void) {
+  if (!kill_buf || kill_len == 0) return;
+  for (int i = 0; i < kill_len; i++) {
+    if (kill_buf[i] == '\n') {
+      editor_enter();
+    } else {
+      char ch[2] = { kill_buf[i], 0 };
+      editor_insert_char(ch);
+    }
+  }
+}
+
+/* ctrl-w: kill region */
+static void emacs_kill_region(void) {
+  if (!mark_active) return;
+  int sl, sc, el, ec;
+  region_ordered(&sl, &sc, &el, &ec);
+
+  /* collect region text */
+  int total = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : lines[ln].len;
+    total += ce - cs;
+    if (ln < el) total++; /* newline */
+  }
+  char *region = malloc(total + 1);
+  int pos = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : lines[ln].len;
+    memcpy(region + pos, lines[ln].text + cs, ce - cs);
+    pos += ce - cs;
+    if (ln < el) region[pos++] = '\n';
+  }
+  region[pos] = '\0';
+  kill_set(region, total);
+  free(region);
+
+  /* delete region: position cursor at start, delete forward */
+  cursor_line = sl; cursor_col = sc;
+  /* delete from end backwards to start */
+  if (sl == el) {
+    /* single line */
+    Line *l = &lines[sl];
+    memmove(l->text + sc, l->text + ec, l->len - ec + 1);
+    l->len -= (ec - sc);
+    line_dirty(l);
+  } else {
+    /* multi-line: keep start of first line + end of last line */
+    Line *first = &lines[sl];
+    Line *last  = &lines[el];
+    int new_len = sc + (last->len - ec);
+    line_ensure_cap(first, new_len);
+    memmove(first->text + sc, last->text + ec, last->len - ec + 1);
+    first->len = new_len;
+    line_dirty(first);
+    for (int i = el; i > sl; i--) delete_line_at(i);
+  }
+
+  cursor_clamp();
+  mark_clear();
+}
+
+/* alt-f: forward word */
+static void emacs_forward_word(void) {
+  Line *l = &lines[cursor_line];
+  /* skip non-space, then skip space */
+  while (cursor_col < l->len && l->text[cursor_col] != ' ') cursor_col++;
+  while (cursor_col < l->len && l->text[cursor_col] == ' ') cursor_col++;
+  if (cursor_col >= l->len && cursor_line < line_count - 1) {
+    cursor_line++; cursor_col = 0;
+  }
+  cursor_target_col = cursor_col;
+}
+
+/* alt-b: backward word */
+static void emacs_backward_word(void) {
+  if (cursor_col == 0 && cursor_line > 0) {
+    cursor_line--;
+    cursor_col = lines[cursor_line].len;
+  }
+  Line *l = &lines[cursor_line];
+  /* skip space backwards, then skip non-space */
+  while (cursor_col > 0 && l->text[cursor_col - 1] == ' ') cursor_col--;
+  while (cursor_col > 0 && l->text[cursor_col - 1] != ' ') cursor_col--;
+  cursor_target_col = cursor_col;
+}
+
 /* ---- search state ---- */
 static int   search_active = 0;
 static char  search_buf[256] = "";
@@ -437,6 +675,28 @@ static void process_frame(mu_Context *ctx) {
       int nrows = get_wrap_breaks(l, starts, 256);
       int row_start = starts[wrap_off];
       int row_end = (wrap_off + 1 < nrows) ? starts[wrap_off + 1] : l->len;
+
+      /* draw mark region highlight */
+      if (mark_active && row_end > row_start) {
+        int sl, sc, el, ec;
+        region_ordered(&sl, &sc, &el, &ec);
+        if (ln >= sl && ln <= el) {
+          int hl_start = (ln == sl) ? sc : 0;
+          int hl_end   = (ln == el) ? ec : lines[ln].len;
+          /* clamp to this visual row */
+          if (hl_start < row_end && hl_end > row_start) {
+            int hs = hl_start < row_start ? row_start : hl_start;
+            int he = hl_end > row_end ? row_end : hl_end;
+            if (he > hs) {
+              int hx = page_margin() + r_get_text_width(l->text + row_start, hs - row_start);
+              int hw = r_get_text_width(l->text + hs, he - hs);
+              int font_h = r_get_text_height();
+              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
+                           mu_color(60, 100, 160, 180));
+            }
+          }
+        }
+      }
 
       /* draw text for this visual row */
       if (row_end > row_start) {
@@ -693,7 +953,7 @@ int main(int argc, char **argv) {
         case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
 
         case SDL_TEXTINPUT:
-          if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI)) break;
+          if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
           if (search_active) {
             int tlen = strlen(e.text.text);
             if (search_len + tlen < (int)sizeof(search_buf) - 1) {
@@ -703,6 +963,7 @@ int main(int argc, char **argv) {
               search_find_first();
             }
           } else {
+            undo_push();
             editor_insert_char(e.text.text);
             ensure_cursor_visible();
           }
@@ -766,20 +1027,37 @@ int main(int argc, char **argv) {
               }
               break;
             }
+            int alt  = !!(e.key.keysym.mod & KMOD_ALT);
             int sym = e.key.keysym.sym;
 
-            if (sym == SDLK_BACKSPACE) {
-              editor_backspace();
+            /* any non-ctrl/alt key clears last_kill_was_k */
+            if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
+
+            /* --- emacs ctrl bindings --- */
+            if (ctrl && sym == SDLK_a) {
+              /* beginning of line */
+              cursor_col = 0;
+              cursor_target_col = 0;
               ensure_cursor_visible();
             }
-            else if (sym == SDLK_DELETE) {
-              editor_delete();
-            }
-            else if (sym == SDLK_RETURN) {
-              editor_enter();
+            else if (ctrl && sym == SDLK_e) {
+              /* end of line */
+              cursor_col = lines[cursor_line].len;
+              cursor_target_col = cursor_col;
               ensure_cursor_visible();
             }
-            else if (sym == SDLK_LEFT) {
+            else if (ctrl && sym == SDLK_f) {
+              /* forward char */
+              if (cursor_col < lines[cursor_line].len) {
+                cursor_col++;
+              } else if (cursor_line < line_count - 1) {
+                cursor_line++; cursor_col = 0;
+              }
+              cursor_target_col = cursor_col;
+              ensure_cursor_visible();
+            }
+            else if (ctrl && sym == SDLK_b) {
+              /* backward char */
               if (cursor_col > 0) {
                 cursor_col--;
               } else if (cursor_line > 0) {
@@ -789,25 +1067,8 @@ int main(int argc, char **argv) {
               cursor_target_col = cursor_col;
               ensure_cursor_visible();
             }
-            else if (sym == SDLK_RIGHT) {
-              if (cursor_col < lines[cursor_line].len) {
-                cursor_col++;
-              } else if (cursor_line < line_count - 1) {
-                cursor_line++;
-                cursor_col = 0;
-              }
-              cursor_target_col = cursor_col;
-              ensure_cursor_visible();
-            }
-            else if (sym == SDLK_UP) {
-              if (cursor_line > 0) {
-                cursor_line--;
-                cursor_col = cursor_target_col;
-                cursor_clamp();
-              }
-              ensure_cursor_visible();
-            }
-            else if (sym == SDLK_DOWN) {
+            else if (ctrl && sym == SDLK_n) {
+              /* next line */
               if (cursor_line < line_count - 1) {
                 cursor_line++;
                 cursor_col = cursor_target_col;
@@ -815,25 +1076,88 @@ int main(int argc, char **argv) {
               }
               ensure_cursor_visible();
             }
-            else if (ctrl && sym == SDLK_h) {
-              scroll_y = 0;
-              cursor_line = 0; cursor_col = 0;
-              cursor_target_col = 0;
+            else if (ctrl && sym == SDLK_p) {
+              /* previous line */
+              if (cursor_line > 0) {
+                cursor_line--;
+                cursor_col = cursor_target_col;
+                cursor_clamp();
+              }
+              ensure_cursor_visible();
             }
-            else if (ctrl && sym == SDLK_e) {
-              cursor_line = line_count - 1;
-              cursor_col = lines[cursor_line].len;
+            else if (ctrl && sym == SDLK_k) {
+              /* kill line */
+              mark_clear();
+              undo_push();
+              emacs_kill_line();
+              ensure_cursor_visible();
+            }
+            else if (ctrl && sym == SDLK_y) {
+              /* yank */
+              mark_clear();
+              undo_push();
+              emacs_yank();
+              ensure_cursor_visible();
+            }
+            else if (ctrl && sym == SDLK_w) {
+              /* kill region */
+              undo_push();
+              emacs_kill_region();
+              ensure_cursor_visible();
+            }
+            else if (ctrl && sym == SDLK_SLASH) {
+              /* undo */
+              mark_clear();
+              editor_undo();
+              ensure_cursor_visible();
+            }
+            else if (ctrl && sym == SDLK_SPACE) {
+              /* set mark */
+              mark_set();
+            }
+            else if (ctrl && sym == SDLK_g) {
+              /* cancel: clear mark */
+              mark_clear();
+            }
+            /* --- alt bindings --- */
+            else if (alt && sym == SDLK_f) {
+              emacs_forward_word();
+              ensure_cursor_visible();
+            }
+            else if (alt && sym == SDLK_b) {
+              emacs_backward_word();
+              ensure_cursor_visible();
+            }
+            /* --- arrow keys (still work) --- */
+            else if (sym == SDLK_LEFT) {
+              if (cursor_col > 0) cursor_col--;
+              else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
               cursor_target_col = cursor_col;
               ensure_cursor_visible();
             }
-            else if (ctrl && sym == SDLK_EQUALS) {
+            else if (sym == SDLK_RIGHT) {
+              if (cursor_col < lines[cursor_line].len) cursor_col++;
+              else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
+              cursor_target_col = cursor_col;
+              ensure_cursor_visible();
+            }
+            else if (sym == SDLK_UP) {
+              if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
+              ensure_cursor_visible();
+            }
+            else if (sym == SDLK_DOWN) {
+              if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
+              ensure_cursor_visible();
+            }
+            /* --- cmd bindings (macOS) --- */
+            else if (cmd && sym == SDLK_EQUALS) {
               font_size += 2.0f;
               if (font_size > 72.0f) font_size = 72.0f;
               r_set_font_size(font_size);
               invalidate_all_wraps();
               ensure_cursor_visible();
             }
-            else if (ctrl && sym == SDLK_MINUS) {
+            else if (cmd && sym == SDLK_MINUS) {
               font_size -= 2.0f;
               if (font_size < 8.0f) font_size = 8.0f;
               r_set_font_size(font_size);
@@ -852,6 +1176,27 @@ int main(int argc, char **argv) {
                   printf("saved %s (%d lines)\n", argv[1], line_count);
                 }
               }
+            }
+            /* --- basic editing keys --- */
+            else if (sym == SDLK_BACKSPACE) {
+              mark_clear();
+              undo_push();
+              editor_backspace();
+              ensure_cursor_visible();
+            }
+            else if (sym == SDLK_DELETE) {
+              mark_clear();
+              undo_push();
+              editor_delete();
+            }
+            else if (sym == SDLK_RETURN) {
+              mark_clear();
+              undo_push();
+              editor_enter();
+              ensure_cursor_visible();
+            }
+            else if (sym == SDLK_ESCAPE) {
+              mark_clear();
             }
           }
           break;
