@@ -43,7 +43,7 @@ typedef struct {
 static Line  *lines     = NULL;
 static int    line_count = 0;
 static int    line_cap   = 0;
-static float  font_size  = 20.0f;
+static float  font_size  = 26.0f;
 static const char *g_filename = "";
 
 static void line_ensure_cap(Line *l, int need) {
@@ -801,8 +801,7 @@ static void process_frame(mu_Context *ctx) {
       if (ln == cursor_line && cursor_col >= row_start && cursor_col <= row_end) {
         /* only draw on the correct row (cursor at row_end belongs to next row unless it's the last) */
         if (cursor_col >= row_start && (cursor_col < row_end || wrap_off == nrows - 1)) {
-          int blink = (SDL_GetTicks() / 500) % 2;
-          if (blink == 0) {
+          {
             int cx = page_margin();
             if (cursor_col > row_start) {
               cx += r_get_text_width(l->text + row_start, cursor_col - row_start);

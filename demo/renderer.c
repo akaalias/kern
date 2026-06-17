@@ -226,8 +226,14 @@ static void push_quad_icon(mu_Rect dst, mu_Rect src, mu_Color color) {
 
 
 void r_init(void) {
+  /* use usable screen area on launch (excludes menu bar / dock) */
+  SDL_Rect usable = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height};
+  SDL_GetDisplayUsableBounds(0, &usable);
+  int pad = 25;
+  width = usable.w - 2 * pad;
+  height = usable.h - 2 * pad;
   window = SDL_CreateWindow(
-    NULL, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+    NULL, usable.x + pad, usable.y + pad,
     width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
   SDL_GL_CreateContext(window);
 
