@@ -29,6 +29,9 @@ float md_draw_text(const char *text, int start, int end,
   int saved_style = r_get_font_style();
   int i = start;
 
+  /* max chars to scan forward for a closing delimiter (prevents O(n²) on pathological input) */
+  #define MD_MAX_SCAN 1024
+
   #define TRACK_CURSOR_SPAN(from, to, span_x) do { \
     if (track_cursor_col >= (from) && track_cursor_col < (to)) { \
       *out_cursor_x = (int)(span_x) + r_get_text_width(text + (from), track_cursor_col - (from)); \
@@ -42,7 +45,7 @@ float md_draw_text(const char *text, int start, int end,
     /* check for **bold** */
     if (i + 1 < end && text[i] == '*' && text[i+1] == '*') {
       int close = -1;
-      for (int j = i + 2; j + 1 < end; j++) {
+      for (int j = i + 2; j + 1 < end && j < i + MD_MAX_SCAN; j++) {
         if (text[j] == '*' && text[j+1] == '*') { close = j; break; }
       }
       if (close > 0) {
@@ -69,7 +72,7 @@ float md_draw_text(const char *text, int start, int end,
     /* check for _italic_ */
     if (text[i] == '_' && i + 1 < end && text[i+1] != ' ') {
       int close = -1;
-      for (int j = i + 1; j < end; j++) {
+      for (int j = i + 1; j < end && j < i + MD_MAX_SCAN; j++) {
         if (text[j] == '_') { close = j; break; }
       }
       if (close > i + 1) {
@@ -95,7 +98,7 @@ float md_draw_text(const char *text, int start, int end,
     /* check for `inline code` */
     if (text[i] == '`') {
       int close = -1;
-      for (int j = i + 1; j < end; j++) {
+      for (int j = i + 1; j < end && j < i + MD_MAX_SCAN; j++) {
         if (text[j] == '`') { close = j; break; }
       }
       if (close > i) {
@@ -121,12 +124,12 @@ float md_draw_text(const char *text, int start, int end,
     /* check for [text](url) */
     if (text[i] == '[') {
       int bracket_close = -1;
-      for (int j = i + 1; j < end; j++) {
+      for (int j = i + 1; j < end && j < i + MD_MAX_SCAN; j++) {
         if (text[j] == ']') { bracket_close = j; break; }
       }
       if (bracket_close > 0 && bracket_close + 1 < end && text[bracket_close + 1] == '(') {
         int paren_close = -1;
-        for (int j = bracket_close + 2; j < end; j++) {
+        for (int j = bracket_close + 2; j < end && j < bracket_close + MD_MAX_SCAN; j++) {
           if (text[j] == ')') { paren_close = j; break; }
         }
         if (paren_close > 0) {
@@ -147,7 +150,7 @@ float md_draw_text(const char *text, int start, int end,
       /* check for [[wikilink]] */
       if (i + 1 < end && text[i+1] == '[') {
         int close = -1;
-        for (int j = i + 2; j + 1 < end; j++) {
+        for (int j = i + 2; j + 1 < end && j < i + MD_MAX_SCAN; j++) {
           if (text[j] == ']' && text[j+1] == ']') { close = j; break; }
         }
         if (close > 0) {

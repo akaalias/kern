@@ -13,6 +13,7 @@
 #define MIN_MARGIN        20
 #define MAX_UNDO          256
 #define MAX_VIS_ROWS      200
+#define MAX_LINE_LEN      65536  /* split lines longer than this on load */
 #define STATUS_DURATION   3000   /* ms to show a transient status message */
 
 /* ---- line ---- */

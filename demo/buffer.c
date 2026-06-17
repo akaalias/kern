@@ -77,6 +77,14 @@ void buf_load_file(EditorState *ed, const char *path) {
     } else {
       len = strlen(p);
     }
+    /* split overlong lines to prevent pathological wrapping/rendering */
+    while (len > MAX_LINE_LEN) {
+      buf_ensure_lines_cap(ed, ed->line_count + 1);
+      line_init(&ed->lines[ed->line_count], p, MAX_LINE_LEN);
+      ed->line_count++;
+      p += MAX_LINE_LEN;
+      len -= MAX_LINE_LEN;
+    }
     buf_ensure_lines_cap(ed, ed->line_count + 1);
     line_init(&ed->lines[ed->line_count], p, len);
     ed->line_count++;
