@@ -1159,6 +1159,12 @@ int main(int argc, char **argv) {
   }
 
   SDL_Init(SDL_INIT_EVERYTHING);
+  font_size = 26.0f;
+  search_direction = 1;
+  search_match_line = -1;
+  search_match_col = -1;
+  g_cursor_x = -1;
+  g_filename = "*scratch*";
   r_init();
   r_set_font_size(font_size);
   r_set_title(g_filename);
@@ -1549,6 +1555,7 @@ int main(int argc, char **argv) {
               suppress_next_text = 1;
             }
             /* --- arrow keys --- */
+            /* shift+arrow starts selection; plain arrow moves without clearing existing mark */
             else if (sym == SDLK_LEFT) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if (shift && !mark_active) mark_set();
@@ -1559,7 +1566,6 @@ int main(int argc, char **argv) {
                 else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
                 cursor_target_col = cursor_col;
               }
-              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_RIGHT) {
@@ -1572,21 +1578,18 @@ int main(int argc, char **argv) {
                 else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
                 cursor_target_col = cursor_col;
               }
-              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_UP) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if (shift && !mark_active) mark_set();
               if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
-              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_DOWN) {
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if (shift && !mark_active) mark_set();
               if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
-              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             /* --- cmd bindings (macOS) --- */
