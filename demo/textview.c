@@ -1151,9 +1151,9 @@ static void do_render(void) {
     }
   }
 
-  /* emacs-style status bar (same font size as editor) */
+  /* emacs-style status bar (monospace) */
   r_set_font_size(font_size);
-  r_set_font_style(FONT_REGULAR);
+  r_set_font_style(FONT_MONO);
   int bar_h = r_get_text_height() + 8;
   int bar_y = win_h() - bar_h;
   r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));

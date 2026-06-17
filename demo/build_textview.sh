@@ -19,3 +19,9 @@ fi
 CFLAGS="-I../src -I/opt/homebrew/include -Wall `sdl2-config --libs` $GLFLAG $OBJC_FLAGS -lm -O3 -g"
 
 gcc -std=c11 -pedantic textview.c renderer.c ../src/microui.c $CFLAGS $OBJC_SRC -o textview
+
+# rebuild .app bundle if on macOS (skip if already bundling)
+if [ $OS_NAME == "Darwin" ] && [ -z "$BUNDLING" ]; then
+    export BUNDLING=1
+    bash bundle_app.sh
+fi
