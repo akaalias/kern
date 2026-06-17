@@ -807,7 +807,7 @@ static void process_frame(mu_Context *ctx) {
               cx += r_get_text_width(l->text + row_start, cursor_col - row_start);
             }
             int font_h = r_get_text_height();
-            mu_draw_rect(ctx, mu_rect(cx, py, 2, font_h),
+            mu_draw_rect(ctx, mu_rect(cx, py, 3, font_h),
                          mu_color(90, 200, 250, 255));
           }
         }
@@ -1206,8 +1206,13 @@ int main(int argc, char **argv) {
               break;
             }
             if (sym == SDLK_ESCAPE && !search_active) {
-              esc_prefix = 1;
-              SDL_StopTextInput();
+              if (mark_active) {
+                mark_clear();
+                status_set("Quit");
+              } else {
+                esc_prefix = 1;
+                SDL_StopTextInput();
+              }
               break;
             }
 
