@@ -7,20 +7,20 @@
 #include "macos_style.h"
 
 /* ---- constants ---- */
-#define WIN_W       800
-#define WIN_H       600
 #define TOP_PADDING  82
 #define LINE_HEIGHT_MULT 1.5f
 #define CHARS_PER_LINE 70
 
+static int win_w(void) { int w, h; r_get_size(&w, &h); return w; }
+static int win_h(void) { int w, h; r_get_size(&w, &h); return h; }
+
 static int page_w(void) {
-  /* width of 'n' is a good average character width for proportional fonts */
   return r_get_text_width("n", 1) * CHARS_PER_LINE;
 }
 
 static int page_margin(void) {
   int pw = page_w();
-  int m = (WIN_W - pw) / 2;
+  int m = (win_w() - pw) / 2;
   return m > 20 ? m : 20;
 }
 
@@ -335,7 +335,7 @@ static void ensure_cursor_visible(void) {
   int vis = cursor_to_visual(cursor_line, cursor_col);
   float cursor_top = vis * lh;
   float cursor_bot = cursor_top + lh;
-  int view_h = g_content_h > 0 ? g_content_h : (WIN_H);
+  int view_h = g_content_h > 0 ? g_content_h : (win_h());
   if (cursor_top < scroll_y) scroll_y = cursor_top;
   if (cursor_bot > scroll_y + view_h) scroll_y = cursor_bot - view_h;
 }
@@ -383,14 +383,14 @@ static void process_frame(mu_Context *ctx) {
   mu_begin(ctx);
 
   if (mu_begin_window_ex(ctx, "Writer",
-        mu_rect(0, 0, WIN_W, WIN_H),
+        mu_rect(0, 0, win_w(), win_h()),
         MU_OPT_NOTITLE | MU_OPT_NORESIZE | MU_OPT_NOCLOSE | MU_OPT_NOSCROLL)) {
     mu_Container *win = mu_get_current_container(ctx);
-    win->rect = mu_rect(0, 0, WIN_W, WIN_H);
+    win->rect = mu_rect(0, 0, win_w(), win_h());
 
     int lh = line_height();
     g_content_y = TOP_PADDING;
-    g_content_h = WIN_H - TOP_PADDING;
+    g_content_h = win_h() - TOP_PADDING;
 
     /* content area */
     int total_vis = total_visual_lines();
@@ -406,7 +406,7 @@ static void process_frame(mu_Context *ctx) {
     int vis_on_screen = g_content_h / lh + 2;
 
     /* clip to content area */
-    mu_push_clip_rect(ctx, mu_rect(0, g_content_y, WIN_W, g_content_h));
+    mu_push_clip_rect(ctx, mu_rect(0, g_content_y, win_w(), g_content_h));
 
     /* render visible visual lines */
     for (int vi = 0; vi < vis_on_screen; vi++) {
@@ -460,7 +460,7 @@ static void process_frame(mu_Context *ctx) {
 
     /* scrollbar */
     if (max_scroll > 0) {
-      int sb_x = WIN_W - 8;
+      int sb_x = win_w() - 8;
       int sb_w = 6;
       int sb_h = g_content_h;
       float thumb_ratio = (float)g_content_h / (total_vis * lh);
@@ -536,6 +536,50 @@ static int text_height(mu_Font font) {
 }
 
 
+/* ---- render pass (callable from main loop and resize watcher) ---- */
+static mu_Context *g_ctx = NULL;
+
+static void do_render(void) {
+  mu_Context *ctx = g_ctx;
+  if (!ctx) return;
+
+  process_frame(ctx);
+
+  r_clear(mu_color(30, 30, 32, 255));
+  mu_Command *cmd = NULL;
+  while (mu_next_command(ctx, &cmd)) {
+    switch (cmd->type) {
+      case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
+      case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
+      case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
+      case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
+    }
+  }
+
+  /* info bar bottom-right */
+  r_set_font_size(13.0f);
+  char info[64];
+  snprintf(info, sizeof(info), "Ln %d, Col %d  |  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
+  int info_w = r_get_text_width(info, strlen(info));
+  r_draw_text(info, mu_vec2(win_w() - info_w - 12, win_h() - 18), mu_color(80, 80, 80, 255));
+  r_set_font_size(font_size);
+
+  r_present();
+}
+
+static int resize_event_watcher(void *data, SDL_Event *event) {
+  (void)data;
+  if (event->type == SDL_WINDOWEVENT &&
+      (event->window.event == SDL_WINDOWEVENT_RESIZED ||
+       event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+    /* just update GL viewport so the clear color fills correctly, but don't reflow */
+    r_handle_resize();
+    r_clear(mu_color(30, 30, 32, 255));
+    r_present();
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr, "usage: textview <file>\n");
@@ -559,14 +603,24 @@ int main(int argc, char **argv) {
   mu_init(ctx);
   ctx->text_width = text_width;
   ctx->text_height = text_height;
-  /* iA Writer-style warm text color */
   ctx->style->colors[MU_COLOR_TEXT] = mu_color(204, 200, 195, 255);
+
+  /* store ctx globally so the resize watcher can trigger a re-render */
+  g_ctx = ctx;
+  SDL_AddEventWatch(resize_event_watcher, NULL);
 
   for (;;) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
         case SDL_QUIT: exit(EXIT_SUCCESS); break;
+        case SDL_WINDOWEVENT:
+          if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
+              e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+            r_handle_resize();
+            invalidate_all_wraps();
+          }
+          break;
         case SDL_MOUSEMOTION: mu_input_mousemove(ctx, e.motion.x, e.motion.y); break;
         case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
 
@@ -582,7 +636,7 @@ int main(int argc, char **argv) {
           int b = button_map[e.button.button & 0xff];
           if (b && e.type == SDL_MOUSEBUTTONDOWN) {
             mu_input_mousedown(ctx, e.button.x, e.button.y, b);
-            if (b == MU_MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < WIN_W - 12) {
+            if (b == MU_MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < win_w() - 12) {
               click_to_cursor(e.button.x, e.button.y);
             }
           }
@@ -691,28 +745,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    process_frame(ctx);
-
-    r_clear(mu_color(30, 30, 32, 255));
-    mu_Command *cmd = NULL;
-    while (mu_next_command(ctx, &cmd)) {
-      switch (cmd->type) {
-        case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
-        case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
-        case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
-        case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
-      }
-    }
-
-    /* info bar bottom-right */
-    char info[64];
-    snprintf(info, sizeof(info), "Ln %d, Col %d  |  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
-    int info_w = r_get_text_width(info, strlen(info));
-    r_draw_text(info, mu_vec2(WIN_W - info_w - 12, WIN_H - 18), mu_color(80, 80, 80, 255));
-
-    r_set_font_size(font_size);
-
-    r_present();
+    do_render();
   }
 
   return 0;

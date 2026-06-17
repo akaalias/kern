@@ -16,5 +16,7 @@ void r_present(void);
 void r_set_font_size(float size);
 void r_set_title(const char *title);
 SDL_Window* r_get_window(void);
+void r_handle_resize(void);
+void r_get_size(int *w, int *h);
 
 #endif

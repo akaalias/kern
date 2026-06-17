@@ -228,7 +228,7 @@ static void push_quad_icon(mu_Rect dst, mu_Rect src, mu_Color color) {
 void r_init(void) {
   window = SDL_CreateWindow(
     NULL, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-    width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
+    width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
   SDL_GL_CreateContext(window);
 
   /* detect retina scale */
@@ -352,6 +352,17 @@ void r_set_title(const char *title) {
 
 SDL_Window* r_get_window(void) {
   return window;
+}
+
+void r_handle_resize(void) {
+  SDL_GetWindowSize(window, &width, &height);
+  SDL_GL_GetDrawableSize(window, &draw_width, &draw_height);
+  dpi_scale = (float)draw_width / (float)width;
+}
+
+void r_get_size(int *w, int *h) {
+  *w = width;
+  *h = height;
 }
 
 void r_present(void) {
