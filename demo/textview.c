@@ -416,9 +416,12 @@ static void editor_undo(void) {
 /* ctrl-k: kill to end of line */
 static int last_kill_was_k = 0;
 static int ctrl_x_prefix = 0;  /* for C-x chords */
+static int esc_prefix = 0;        /* Esc as Meta prefix */
+static int suppress_next_text = 0; /* suppress TEXTINPUT after handled key combo */
 
-/* search_active declared here so status_get can reference it */
+/* declared here so status_get can reference them */
 static int search_active = 0;
+static int search_direction = 1;
 
 /* ---- status message (emacs echo area) ---- */
 static char status_msg[256] = "";
@@ -431,9 +434,10 @@ static void status_set(const char *msg) {
 }
 
 static const char *status_get(void) {
+  if (esc_prefix) return "ESC-";
   if (ctrl_x_prefix) return "C-x -";
   if (mark_active) return "Mark active";
-  if (search_active) return "I-search";
+  if (search_active) return (search_direction == 1) ? "I-search:" : "I-search backward:";
   if (status_msg[0] && (SDL_GetTicks() - status_time) < STATUS_DURATION) return status_msg;
   return "";
 }
@@ -562,12 +566,12 @@ static void emacs_backward_word(void) {
 /* search_active already declared above */
 static char  search_buf[256] = "";
 static int   search_len = 0;
-static int   search_match_line = -1;  /* current match logical line */
-static int   search_match_col = -1;   /* current match column */
+static int   search_match_line = -1;
+static int   search_match_col = -1;
+/* search_direction already declared above */
 
 static void search_find_next(int from_line, int from_col) {
   if (search_len == 0) { search_match_line = -1; return; }
-  /* search from (from_line, from_col+1) forward, wrapping around */
   for (int pass = 0; pass < 2; pass++) {
     int start_ln = (pass == 0) ? from_line : 0;
     int end_ln   = (pass == 0) ? line_count : from_line + 1;
@@ -590,8 +594,50 @@ static void search_find_next(int from_line, int from_col) {
   search_match_line = -1;
 }
 
+static void search_find_prev(int from_line, int from_col) {
+  if (search_len == 0) { search_match_line = -1; return; }
+  for (int pass = 0; pass < 2; pass++) {
+    int start_ln = (pass == 0) ? from_line : line_count - 1;
+    int end_ln   = (pass == 0) ? -1 : from_line - 1;
+    for (int ln = start_ln; ln > end_ln; ln--) {
+      Line *l = &lines[ln];
+      int start_col = (pass == 0 && ln == from_line) ? from_col - 1 : l->len - search_len;
+      if (start_col > l->len - search_len) start_col = l->len - search_len;
+      for (int c = start_col; c >= 0; c--) {
+        if (strncasecmp(l->text + c, search_buf, search_len) == 0) {
+          search_match_line = ln;
+          search_match_col = c;
+          cursor_line = ln;
+          cursor_col = c;
+          cursor_target_col = c;
+          ensure_cursor_visible();
+          return;
+        }
+      }
+    }
+  }
+  search_match_line = -1;
+}
+
 static void search_find_first(void) {
-  search_find_next(0, -1);
+  if (search_direction == 1)
+    search_find_next(0, -1);
+  else
+    search_find_prev(line_count - 1, lines[line_count - 1].len);
+}
+
+static void search_find_current_dir(void) {
+  if (search_direction == 1) {
+    if (search_match_line >= 0)
+      search_find_next(search_match_line, search_match_col);
+    else
+      search_find_next(cursor_line, cursor_col - 1);
+  } else {
+    if (search_match_line >= 0)
+      search_find_prev(search_match_line, search_match_col);
+    else
+      search_find_prev(cursor_line, cursor_col + 1);
+  }
 }
 
 /* ---- scroll state ---- */
@@ -869,43 +915,6 @@ static void do_render(void) {
     }
   }
 
-  /* search bar */
-  if (search_active) {
-    r_set_font_size(14.0f);
-    int bar_h = 28;
-    int bar_y = TOP_PADDING - bar_h - 2;
-    /* background */
-    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
-    r_draw_rect(mu_rect(0, bar_y, win_w(), bar_h), mu_color(45, 45, 47, 255));
-    /* bottom border */
-    r_draw_rect(mu_rect(0, bar_y + bar_h, win_w(), 1), mu_color(60, 60, 62, 255));
-    /* search icon / label */
-    r_draw_text("Find:", mu_vec2(12, bar_y + 6), mu_color(120, 120, 120, 255));
-    /* search text */
-    int label_w = r_get_text_width("Find: ", 6);
-    r_draw_text(search_buf, mu_vec2(12 + label_w, bar_y + 6), mu_color(204, 200, 195, 255));
-    /* blinking cursor in search box */
-    if ((SDL_GetTicks() / 500) % 2 == 0) {
-      int cx = 12 + label_w + r_get_text_width(search_buf, search_len);
-      r_draw_rect(mu_rect(cx, bar_y + 5, 1, 16), mu_color(90, 200, 250, 255));
-    }
-    /* match count */
-    if (search_len > 0) {
-      int match_count = 0;
-      for (int i = 0; i < line_count; i++) {
-        Line *l = &lines[i];
-        for (int c = 0; c <= l->len - search_len; c++) {
-          if (strncasecmp(l->text + c, search_buf, search_len) == 0) match_count++;
-        }
-      }
-      char count_buf[32];
-      snprintf(count_buf, sizeof(count_buf), "%d matches", match_count);
-      int cw = r_get_text_width(count_buf, strlen(count_buf));
-      r_draw_text(count_buf, mu_vec2(win_w() - cw - 12, bar_y + 6), mu_color(120, 120, 120, 255));
-    }
-    r_set_font_size(font_size);
-  }
-
   /* emacs-style status bar */
   r_set_font_size(14.0f);
   int bar_h = 24;
@@ -917,10 +926,22 @@ static void do_render(void) {
   /* top border */
   r_draw_rect(mu_rect(0, bar_y, win_w(), 1), mu_color(55, 55, 57, 255));
 
-  /* left: status message */
-  const char *status = status_get();
-  if (status[0]) {
-    r_draw_text(status, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+  /* left: status message or isearch prompt */
+  if (search_active) {
+    const char *label = (search_direction == 1) ? "I-search: " : "I-search backward: ";
+    r_draw_text(label, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+    int lw = r_get_text_width(label, strlen(label));
+    r_draw_text(search_buf, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
+    /* blinking cursor */
+    if ((SDL_GetTicks() / 500) % 2 == 0) {
+      int cx = 10 + lw + r_get_text_width(search_buf, search_len);
+      r_draw_rect(mu_rect(cx, bar_y + 4, 1, 16), mu_color(90, 200, 250, 255));
+    }
+  } else {
+    const char *status = status_get();
+    if (status[0]) {
+      r_draw_text(status, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+    }
   }
 
   /* right: line, col, font size */
@@ -991,6 +1012,7 @@ int main(int argc, char **argv) {
         case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
 
         case SDL_TEXTINPUT:
+          if (suppress_next_text) { suppress_next_text = 0; break; }
           if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
           if (search_active) {
             int tlen = strlen(e.text.text);
@@ -998,7 +1020,7 @@ int main(int argc, char **argv) {
               memcpy(search_buf + search_len, e.text.text, tlen);
               search_len += tlen;
               search_buf[search_len] = '\0';
-              search_find_first();
+              search_find_current_dir();
             }
           } else {
             undo_push();
@@ -1037,36 +1059,45 @@ int main(int argc, char **argv) {
             int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
             int cmd  = !!(e.key.keysym.mod & KMOD_GUI);
 
-            /* Cmd+F: toggle search */
-            if (cmd && e.key.keysym.sym == SDLK_f) {
-              search_active = !search_active;
-              if (search_active) {
-                search_buf[0] = '\0';
-                search_len = 0;
-                search_match_line = -1;
-              }
-              break;
-            }
-
             /* search mode key handling */
             if (search_active) {
-              if (e.key.keysym.sym == SDLK_ESCAPE) {
+              if (e.key.keysym.sym == SDLK_ESCAPE || e.key.keysym.sym == SDLK_RETURN) {
+                search_active = 0;
+              }
+              else if (ctrl && e.key.keysym.sym == SDLK_s) {
+                /* C-s while searching: next match forward */
+                search_direction = 1;
+                if (search_match_line >= 0)
+                  search_find_next(search_match_line, search_match_col);
+                else
+                  search_find_first();
+              }
+              else if (ctrl && (e.key.keysym.sym == SDLK_r || e.key.keysym.sym == SDLK_b)) {
+                /* C-r or C-b while searching: next match backward */
+                search_direction = -1;
+                if (search_match_line >= 0)
+                  search_find_prev(search_match_line, search_match_col);
+                else
+                  search_find_first();
+              }
+              else if (ctrl && e.key.keysym.sym == SDLK_f) {
+                /* C-f while searching: next match forward */
+                search_direction = 1;
+                if (search_match_line >= 0)
+                  search_find_next(search_match_line, search_match_col);
+                else
+                  search_find_first();
+              }
+              else if (ctrl && e.key.keysym.sym == SDLK_g) {
+                /* C-g: cancel search */
                 search_active = 0;
                 search_match_line = -1;
-              }
-              else if (e.key.keysym.sym == SDLK_RETURN) {
-                /* jump to next match */
-                if (search_match_line >= 0) {
-                  search_find_next(search_match_line, search_match_col);
-                } else {
-                  search_find_first();
-                }
               }
               else if (e.key.keysym.sym == SDLK_BACKSPACE) {
                 if (search_len > 0) {
                   search_len--;
                   search_buf[search_len] = '\0';
-                  if (search_len > 0) search_find_first();
+                  if (search_len > 0) search_find_current_dir();
                   else search_match_line = -1;
                 }
               }
@@ -1078,7 +1109,7 @@ int main(int argc, char **argv) {
             /* any non-ctrl/alt key clears last_kill_was_k */
             if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
 
-            /* --- C-x chords --- */
+            /* --- C-x chords (must be before C-s isearch) --- */
             if (ctrl_x_prefix) {
               ctrl_x_prefix = 0;
               if (ctrl && sym == SDLK_s) {
@@ -1092,9 +1123,9 @@ int main(int argc, char **argv) {
                     }
                     fclose(f);
                     printf("saved %s (%d lines)\n", argv[1], line_count);
-                  char msg[128];
-                  snprintf(msg, sizeof(msg), "Wrote %s", argv[1]);
-                  status_set(msg);
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "Wrote %s", argv[1]);
+                    status_set(msg);
                   }
                 }
               }
@@ -1106,6 +1137,77 @@ int main(int argc, char **argv) {
             }
             if (ctrl && sym == SDLK_x) {
               ctrl_x_prefix = 1;
+              break;
+            }
+
+            /* --- C-s / C-r: isearch --- */
+            if (ctrl && sym == SDLK_s) {
+              search_direction = 1;
+              if (!search_active) {
+                search_active = 1;
+                search_buf[0] = '\0';
+                search_len = 0;
+                search_match_line = -1;
+              } else {
+                search_find_next(search_match_line >= 0 ? search_match_line : cursor_line,
+                                 search_match_col >= 0 ? search_match_col : cursor_col - 1);
+              }
+              break;
+            }
+            if (ctrl && sym == SDLK_r) {
+              search_direction = -1;
+              if (!search_active) {
+                search_active = 1;
+                search_buf[0] = '\0';
+                search_len = 0;
+                search_match_line = -1;
+              } else {
+                search_find_prev(search_match_line >= 0 ? search_match_line : cursor_line,
+                                 search_match_col >= 0 ? search_match_col : cursor_col + 1);
+              }
+              break;
+            }
+
+            /* --- Esc prefix (Meta) --- */
+            if (esc_prefix) {
+              esc_prefix = 0;
+              SDL_StartTextInput();
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (shift && sym == SDLK_PERIOD) {
+                /* M-> : end of buffer, set mark first */
+                mark_set();
+                cursor_line = line_count - 1;
+                cursor_col = lines[cursor_line].len;
+                cursor_target_col = cursor_col;
+                ensure_cursor_visible();
+                status_set("Mark set");
+                suppress_next_text = 1;
+              }
+              else if (shift && sym == SDLK_COMMA) {
+                /* M-< : beginning of buffer, set mark first */
+                mark_set();
+                cursor_line = 0;
+                cursor_col = 0;
+                cursor_target_col = 0;
+                ensure_cursor_visible();
+                status_set("Mark set");
+                suppress_next_text = 1;
+              }
+              else if (sym == SDLK_f) {
+                /* M-f: forward word */
+                emacs_forward_word();
+                ensure_cursor_visible();
+              }
+              else if (sym == SDLK_b) {
+                /* M-b: backward word */
+                emacs_backward_word();
+                ensure_cursor_visible();
+              }
+              break;
+            }
+            if (sym == SDLK_ESCAPE && !search_active) {
+              esc_prefix = 1;
+              SDL_StopTextInput();
               break;
             }
 
@@ -1202,6 +1304,22 @@ int main(int argc, char **argv) {
             else if (alt && sym == SDLK_b) {
               emacs_backward_word();
               ensure_cursor_visible();
+            }
+            else if (alt && sym == SDLK_PERIOD && (e.key.keysym.mod & KMOD_SHIFT)) {
+              /* M-> (Alt+Shift+.): end of buffer */
+              cursor_line = line_count - 1;
+              cursor_col = lines[cursor_line].len;
+              cursor_target_col = cursor_col;
+              ensure_cursor_visible();
+              suppress_next_text = 1;
+            }
+            else if (alt && sym == SDLK_COMMA && (e.key.keysym.mod & KMOD_SHIFT)) {
+              /* M-< (Alt+Shift+,): beginning of buffer */
+              cursor_line = 0;
+              cursor_col = 0;
+              cursor_target_col = 0;
+              ensure_cursor_visible();
+              suppress_next_text = 1;
             }
             /* --- arrow keys (still work) --- */
             else if (sym == SDLK_LEFT) {
