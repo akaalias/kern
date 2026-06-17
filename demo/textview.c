@@ -646,6 +646,12 @@ static int   scrollbar_dragging = 0;
 static float drag_offset = 0;
 
 static int g_content_y;   /* top of content area */
+
+/* visible rows for post-render markdown drawing */
+#define MAX_VIS_ROWS 200
+typedef struct { int ln; int row_start; int row_end; int py; int heading; } VisRow;
+static VisRow g_vis_rows[MAX_VIS_ROWS];
+static int g_vis_row_count = 0;
 static int g_content_h;   /* height of content area */
 
 static void ensure_cursor_visible(void) {
@@ -696,9 +702,193 @@ static void click_to_cursor(int mx, int my) {
   cursor_target_col = cursor_col;
 }
 
+/* ---- markdown-aware text drawing ---- */
+
+/* cursor x position computed during markdown draw, -1 if not on current row */
+static int g_cursor_x = -1;
+
+/* check if a logical line is a list item, return indent in pixels (0 if not) */
+static int list_indent(Line *l) {
+  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
+    return r_get_text_width("    ", 4); /* indent for unordered list */
+  }
+  /* check for "N. " numbered list */
+  int i = 0;
+  while (i < l->len && l->text[i] >= '0' && l->text[i] <= '9') i++;
+  if (i > 0 && i + 1 < l->len && l->text[i] == '.' && l->text[i+1] == ' ') {
+    return r_get_text_width("    ", 4);
+  }
+  return 0;
+}
+
+/* check if a logical line is a heading (starts with # ) */
+static int is_heading(Line *l) {
+  if (l->len < 2) return 0;
+  int i = 0;
+  while (i < l->len && l->text[i] == '#') i++;
+  return (i > 0 && i < l->len && l->text[i] == ' ');
+}
+
+/* draw a text segment with markdown inline formatting.
+   text is the full line text, start..end is the range to draw.
+   x,y is the starting position. heading = whether this line is a heading.
+   returns the x position after drawing. */
+static float draw_md_text(const char *text, int start, int end,
+                          float x, float y, mu_Color base_color, int heading,
+                          int track_cursor_col) {
+  /* track_cursor_col: if >= 0, record x position when we reach this column */
+  int saved_style = r_get_font_style();
+  int i = start;
+
+  if (heading) r_set_font_style(FONT_BOLD);
+
+  while (i < end) {
+    if (track_cursor_col >= 0 && i == track_cursor_col) g_cursor_x = (int)x;
+    /* check for **bold** */
+    if (i + 1 < end && text[i] == '*' && text[i+1] == '*') {
+      int close = -1;
+      for (int j = i + 2; j + 1 < end; j++) {
+        if (text[j] == '*' && text[j+1] == '*') { close = j; break; }
+      }
+      if (close > 0) {
+        /* draw ** markers in dim */
+        char mk[3] = "**";
+        r_draw_text(mk, mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width(mk, 2);
+        /* draw bold content */
+        r_set_font_style(FONT_BOLD);
+        char buf[512];
+        int blen = close - (i + 2);
+        if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
+        memcpy(buf, text + i + 2, blen); buf[blen] = '\0';
+        r_draw_text(buf, mu_vec2((int)x, (int)y), base_color);
+        x += r_get_text_width(buf, blen);
+        if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
+        /* draw closing ** */
+        r_draw_text(mk, mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width(mk, 2);
+        i = close + 2;
+        continue;
+      }
+    }
+    /* check for _italic_ */
+    if (text[i] == '_' && i + 1 < end && text[i+1] != ' ') {
+      int close = -1;
+      for (int j = i + 1; j < end; j++) {
+        if (text[j] == '_') { close = j; break; }
+      }
+      if (close > i + 1) {
+        /* draw _ marker dim */
+        r_draw_text("_", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width("_", 1);
+        /* draw italic content */
+        r_set_font_style(FONT_ITALIC);
+        char buf[512];
+        int blen = close - (i + 1);
+        if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
+        memcpy(buf, text + i + 1, blen); buf[blen] = '\0';
+        r_draw_text(buf, mu_vec2((int)x, (int)y), base_color);
+        x += r_get_text_width(buf, blen);
+        if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
+        /* draw closing _ */
+        r_draw_text("_", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width("_", 1);
+        i = close + 1;
+        continue;
+      }
+    }
+    /* check for `inline code` */
+    if (text[i] == '`') {
+      int close = -1;
+      for (int j = i + 1; j < end; j++) {
+        if (text[j] == '`') { close = j; break; }
+      }
+      if (close > i) {
+        /* draw ` dim */
+        r_draw_text("`", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width("`", 1);
+        /* draw code in mono */
+        r_set_font_style(FONT_MONO);
+        char buf[512];
+        int blen = close - (i + 1);
+        if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
+        memcpy(buf, text + i + 1, blen); buf[blen] = '\0';
+        r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 140, 100, 255));
+        x += r_get_text_width(buf, blen);
+        if (heading) r_set_font_style(FONT_BOLD); else r_set_font_style(FONT_REGULAR);
+        /* draw closing ` */
+        r_draw_text("`", mu_vec2((int)x, (int)y), mu_color(80, 80, 80, 255));
+        x += r_get_text_width("`", 1);
+        i = close + 1;
+        continue;
+      }
+    }
+    /* check for [text](url) */
+    if (text[i] == '[') {
+      int bracket_close = -1;
+      for (int j = i + 1; j < end; j++) {
+        if (text[j] == ']') { bracket_close = j; break; }
+      }
+      if (bracket_close > 0 && bracket_close + 1 < end && text[bracket_close + 1] == '(') {
+        int paren_close = -1;
+        for (int j = bracket_close + 2; j < end; j++) {
+          if (text[j] == ')') { paren_close = j; break; }
+        }
+        if (paren_close > 0) {
+          /* draw entire [text](url) with purple bg */
+          char buf[512];
+          int blen = paren_close + 1 - i;
+          if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
+          memcpy(buf, text + i, blen); buf[blen] = '\0';
+          int link_w = r_get_text_width(buf, blen);
+          int font_h = r_get_text_height();
+          r_draw_rect(mu_rect((int)x, (int)y, link_w, font_h), mu_color(80, 50, 120, 255));
+          r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 160, 220, 255));
+          x += link_w;
+          i = paren_close + 1;
+          continue;
+        }
+      }
+      /* check for [[wikilink]] */
+      if (i + 1 < end && text[i+1] == '[') {
+        int close = -1;
+        for (int j = i + 2; j + 1 < end; j++) {
+          if (text[j] == ']' && text[j+1] == ']') { close = j; break; }
+        }
+        if (close > 0) {
+          char buf[512];
+          int blen = close + 2 - i;
+          if (blen > (int)sizeof(buf) - 1) blen = (int)sizeof(buf) - 1;
+          memcpy(buf, text + i, blen); buf[blen] = '\0';
+          int link_w = r_get_text_width(buf, blen);
+          int font_h = r_get_text_height();
+          r_draw_rect(mu_rect((int)x, (int)y, link_w, font_h), mu_color(80, 50, 120, 255));
+          r_draw_text(buf, mu_vec2((int)x, (int)y), mu_color(180, 160, 220, 255));
+          x += link_w;
+          i = close + 2;
+          continue;
+        }
+      }
+    }
+    /* default: draw one character at a time */
+    {
+      char ch[2] = { text[i], '\0' };
+      r_draw_text(ch, mu_vec2((int)x, (int)y), base_color);
+      x += r_get_text_width(ch, 1);
+      i++;
+    }
+  }
+
+  if (track_cursor_col >= 0 && track_cursor_col >= end) g_cursor_x = (int)x;
+
+  r_set_font_style(saved_style);
+  return x;
+}
+
 /* ---- frame ---- */
 static void process_frame(mu_Context *ctx) {
   mu_begin(ctx);
+  g_vis_row_count = 0;
 
   if (mu_begin_window_ex(ctx, "Writer",
         mu_rect(0, 0, win_w(), win_h()),
@@ -708,7 +898,8 @@ static void process_frame(mu_Context *ctx) {
 
     int lh = line_height();
     g_content_y = TOP_PADDING;
-    g_content_h = win_h() - TOP_PADDING - 24; /* 24 = status bar height */
+    int status_bar_h = r_get_text_height() + 8;
+    g_content_h = win_h() - TOP_PADDING - status_bar_h;
 
     /* content area */
     int total_vis = total_visual_lines();
@@ -766,16 +957,14 @@ static void process_frame(mu_Context *ctx) {
         }
       }
 
-      /* draw text for this visual row */
-      if (row_end > row_start) {
-        char display[1024];
-        int dlen = row_end - row_start;
-        if (dlen > (int)sizeof(display) - 1) dlen = (int)sizeof(display) - 1;
-        memcpy(display, l->text + row_start, dlen);
-        display[dlen] = '\0';
-        mu_draw_text(ctx, NULL, display, -1,
-                     mu_vec2(page_margin(), py),
-                     ctx->style->colors[MU_COLOR_TEXT]);
+      /* store row info for post-render markdown drawing */
+      if (row_end > row_start && g_vis_row_count < MAX_VIS_ROWS) {
+        g_vis_rows[g_vis_row_count].ln = ln;
+        g_vis_rows[g_vis_row_count].row_start = row_start;
+        g_vis_rows[g_vis_row_count].row_end = row_end;
+        g_vis_rows[g_vis_row_count].py = py;
+        g_vis_rows[g_vis_row_count].heading = is_heading(l);
+        g_vis_row_count++;
       }
 
       /* draw search highlights on this visual row */
@@ -797,21 +986,7 @@ static void process_frame(mu_Context *ctx) {
         }
       }
 
-      /* draw cursor if it falls on this visual row */
-      if (ln == cursor_line && cursor_col >= row_start && cursor_col <= row_end) {
-        /* only draw on the correct row (cursor at row_end belongs to next row unless it's the last) */
-        if (cursor_col >= row_start && (cursor_col < row_end || wrap_off == nrows - 1)) {
-          {
-            int cx = page_margin();
-            if (cursor_col > row_start) {
-              cx += r_get_text_width(l->text + row_start, cursor_col - row_start);
-            }
-            int font_h = r_get_text_height();
-            mu_draw_rect(ctx, mu_rect(cx, py, 3, font_h),
-                         mu_color(90, 200, 250, 255));
-          }
-        }
-      }
+      /* cursor drawing moved to post-render pass (uses g_cursor_x) */
     }
 
     mu_pop_clip_rect(ctx);
@@ -914,9 +1089,45 @@ static void do_render(void) {
     }
   }
 
-  /* emacs-style status bar */
-  r_set_font_size(14.0f);
-  int bar_h = 24;
+  /* draw markdown-formatted text (direct rendering, not through microui) */
+  r_set_font_size(font_size);
+  r_set_font_style(FONT_REGULAR);
+  r_set_clip_rect(mu_rect(0, g_content_y, win_w(), g_content_h));
+  mu_Color text_color = g_ctx->style->colors[MU_COLOR_TEXT];
+  g_cursor_x = -1;
+  for (int i = 0; i < g_vis_row_count; i++) {
+    VisRow *vr = &g_vis_rows[i];
+    int indent = list_indent(&lines[vr->ln]);
+    /* track cursor if it's on this row */
+    int track = -1;
+    if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
+        (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
+      track = cursor_col;
+    }
+    draw_md_text(lines[vr->ln].text, vr->row_start, vr->row_end,
+                 page_margin() + indent, vr->py, text_color, vr->heading, track);
+    r_set_font_style(FONT_REGULAR);
+  }
+
+  /* draw cursor (post-render, uses markdown-aware x position) */
+  if (g_cursor_x >= 0) {
+    int font_h = r_get_text_height();
+    /* find the py for the cursor row */
+    for (int i = 0; i < g_vis_row_count; i++) {
+      VisRow *vr = &g_vis_rows[i];
+      if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
+          (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
+        r_draw_rect(mu_rect(g_cursor_x, vr->py, 3, font_h),
+                    mu_color(90, 200, 250, 255));
+        break;
+      }
+    }
+  }
+
+  /* emacs-style status bar (same font size as editor) */
+  r_set_font_size(font_size);
+  r_set_font_style(FONT_REGULAR);
+  int bar_h = r_get_text_height() + 8;
   int bar_y = win_h() - bar_h;
   r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
 
@@ -1326,25 +1537,45 @@ int main(int argc, char **argv) {
               ensure_cursor_visible();
               suppress_next_text = 1;
             }
-            /* --- arrow keys (still work) --- */
+            /* --- arrow keys --- */
             else if (sym == SDLK_LEFT) {
-              if (cursor_col > 0) cursor_col--;
-              else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
-              cursor_target_col = cursor_col;
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (shift && !mark_active) mark_set();
+              if (ctrl || alt) {
+                emacs_backward_word();
+              } else {
+                if (cursor_col > 0) cursor_col--;
+                else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
+                cursor_target_col = cursor_col;
+              }
+              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_RIGHT) {
-              if (cursor_col < lines[cursor_line].len) cursor_col++;
-              else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
-              cursor_target_col = cursor_col;
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (shift && !mark_active) mark_set();
+              if (ctrl || alt) {
+                emacs_forward_word();
+              } else {
+                if (cursor_col < lines[cursor_line].len) cursor_col++;
+                else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
+                cursor_target_col = cursor_col;
+              }
+              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_UP) {
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (shift && !mark_active) mark_set();
               if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
+              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             else if (sym == SDLK_DOWN) {
+              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+              if (shift && !mark_active) mark_set();
               if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
+              if (!shift) mark_clear();
               ensure_cursor_visible();
             }
             /* --- cmd bindings (macOS) --- */
