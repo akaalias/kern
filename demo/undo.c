@@ -217,10 +217,3 @@ void undo_perform(EditorState *ed) {
   if (ed->cursor_col < 0) ed->cursor_col = 0;
 }
 
-void undo_clear(EditorState *ed) {
-  for (int i = 0; i < MAX_UNDO; i++) {
-    undo_op_free(&ed->undo_stack[i]);
-  }
-  ed->undo_top = 0;
-  ed->undo_count = 0;
-}
