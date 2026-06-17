@@ -982,6 +982,7 @@ int main(int argc, char **argv) {
 
   SDL_Init(SDL_INIT_EVERYTHING);
   r_init();
+  r_set_font_size(font_size);
   r_set_title(g_filename);
   macos_style_window(r_get_window());
 
