@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "editing.h"
 #include "buffer.h"
 #include "undo.h"
@@ -191,12 +192,9 @@ void ed_emacs_copy_region(EditorState *ed) {
   free(region);
 }
 
-void ed_emacs_kill_region(EditorState *ed) {
-  if (!ed->mark_active) return;
-  int sl, sc, el, ec;
-  buf_region_ordered(ed, &sl, &sc, &el, &ec);
-
-  /* collect region text */
+/* Kill (cut to kill buffer, with undo) the ordered range [sl,sc] .. [el,ec].
+   Leaves the cursor at the start of the range. Mark is left untouched. */
+static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec) {
   int total = 0;
   for (int ln = sl; ln <= el; ln++) {
     int cs = (ln == sl) ? sc : 0;
@@ -204,7 +202,12 @@ void ed_emacs_kill_region(EditorState *ed) {
     total += ce - cs;
     if (ln < el) total++;
   }
+  if (total <= 0) {
+    ed->cursor_line = sl; ed->cursor_col = sc; ed->cursor_target_col = sc;
+    return;
+  }
   char *region = malloc(total + 1);
+  if (!region) return;
   int pos = 0;
   for (int ln = sl; ln <= el; ln++) {
     int cs = (ln == sl) ? sc : 0;
@@ -216,14 +219,11 @@ void ed_emacs_kill_region(EditorState *ed) {
   region[pos] = '\0';
   buf_kill_set(ed, region, total);
 
-  /* push undo: record the entire deleted region (may contain newlines) */
   undo_begin_group(ed);
   undo_push_op(ed, UNDO_DELETE, sl, sc, region, total);
   undo_end_group(ed);
-
   free(region);
 
-  /* delete region */
   ed->cursor_line = sl; ed->cursor_col = sc;
   if (sl == el) {
     Line *l = &ed->lines[sl];
@@ -240,13 +240,18 @@ void ed_emacs_kill_region(EditorState *ed) {
     line_dirty(first);
     for (int i = el; i > sl; i--) buf_delete_line_at(ed, i);
   }
-
-  /* clamp cursor manually (no shims here) */
   if (ed->cursor_line < 0) ed->cursor_line = 0;
   if (ed->cursor_line >= ed->line_count) ed->cursor_line = ed->line_count - 1;
   if (ed->cursor_col < 0) ed->cursor_col = 0;
   if (ed->cursor_col > ed->lines[ed->cursor_line].len) ed->cursor_col = ed->lines[ed->cursor_line].len;
+  ed->cursor_target_col = ed->cursor_col;
+}
 
+void ed_emacs_kill_region(EditorState *ed) {
+  if (!ed->mark_active) return;
+  int sl, sc, el, ec;
+  buf_region_ordered(ed, &sl, &sc, &el, &ec);
+  ed_kill_range(ed, sl, sc, el, ec);
   buf_mark_clear(ed);
 }
 
@@ -269,4 +274,81 @@ void ed_emacs_backward_word(EditorState *ed) {
   while (ed->cursor_col > 0 && l->text[ed->cursor_col - 1] == ' ') ed->cursor_col--;
   while (ed->cursor_col > 0 && l->text[ed->cursor_col - 1] != ' ') ed->cursor_col--;
   ed->cursor_target_col = ed->cursor_col;
+}
+
+/* M-d: kill from point to the end of the next word. */
+void ed_emacs_kill_word_forward(EditorState *ed) {
+  int sl = ed->cursor_line, sc = ed->cursor_col;
+  ed_emacs_forward_word(ed);
+  int el = ed->cursor_line, ec = ed->cursor_col;
+  if (el == sl && ec == sc) return;
+  ed_kill_range(ed, sl, sc, el, ec);
+}
+
+/* M-DEL: kill from the start of the previous word to point. */
+void ed_emacs_kill_word_backward(EditorState *ed) {
+  int el = ed->cursor_line, ec = ed->cursor_col;
+  ed_emacs_backward_word(ed);
+  int sl = ed->cursor_line, sc = ed->cursor_col;
+  if (sl == el && sc == ec) return;
+  ed_kill_range(ed, sl, sc, el, ec);
+}
+
+/* M-u / M-l / M-c: change the case of the word at/after point (mode 0=upper,
+   1=lower, 2=capitalize), leaving point after the word. Single line. */
+void ed_emacs_case_word(EditorState *ed, int mode) {
+  Line *l = &ed->lines[ed->cursor_line];
+  while (ed->cursor_col < l->len && l->text[ed->cursor_col] == ' ') ed->cursor_col++;
+  int start = ed->cursor_col;
+  int end = start;
+  while (end < l->len && l->text[end] != ' ') end++;
+  int wlen = end - start;
+  if (wlen <= 0) { ed->cursor_target_col = ed->cursor_col; return; }
+
+  char *xf = malloc(wlen);
+  if (!xf) return;
+  int changed = 0;
+  for (int i = 0; i < wlen; i++) {
+    char c = l->text[start + i];
+    char n;
+    if (mode == 0)      n = (char)toupper((unsigned char)c);
+    else if (mode == 1) n = (char)tolower((unsigned char)c);
+    else                n = (i == 0) ? (char)toupper((unsigned char)c)
+                                     : (char)tolower((unsigned char)c);
+    xf[i] = n;
+    if (n != c) changed = 1;
+  }
+  if (changed) {
+    undo_begin_group(ed);
+    for (int i = 0; i < wlen; i++) ed_delete(ed);          /* remove the word */
+    for (int i = 0; i < wlen; i++) {                        /* insert transformed */
+      char ch[2] = { xf[i], 0 };
+      ed_insert_char(ed, ch);
+    }
+    undo_end_group(ed);
+  } else {
+    ed->cursor_col = end;
+    ed->cursor_target_col = end;
+  }
+  free(xf);
+}
+
+/* C-t: transpose the two characters around point, advancing point. */
+void ed_emacs_transpose_chars(EditorState *ed) {
+  Line *l = &ed->lines[ed->cursor_line];
+  if (l->len < 2) return;
+  int a, b;
+  if (ed->cursor_col >= l->len)      { a = l->len - 2; b = l->len - 1; }
+  else if (ed->cursor_col == 0)      { a = 0;          b = 1;          }
+  else                               { a = ed->cursor_col - 1; b = ed->cursor_col; }
+  char x = l->text[a], y = l->text[b];
+  if (x == y) { return; }
+  undo_begin_group(ed);
+  ed->cursor_col = a;
+  ed_delete(ed);            /* remove x */
+  ed_delete(ed);            /* remove y (now at a) */
+  char ch[2];
+  ch[0] = y; ch[1] = 0; ed_insert_char(ed, ch);
+  ch[0] = x; ch[1] = 0; ed_insert_char(ed, ch);
+  undo_end_group(ed);
 }

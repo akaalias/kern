@@ -104,6 +104,10 @@ static ViewState   g_vs = {0};
 #define emacs_yank()      ed_emacs_yank(&g_ed)
 #define emacs_copy_region() ed_emacs_copy_region(&g_ed)
 #define emacs_kill_region() ed_emacs_kill_region(&g_ed)
+#define emacs_kill_word_fwd()  ed_emacs_kill_word_forward(&g_ed)
+#define emacs_kill_word_back() ed_emacs_kill_word_backward(&g_ed)
+#define emacs_case_word(m)     ed_emacs_case_word(&g_ed, (m))
+#define emacs_transpose()      ed_emacs_transpose_chars(&g_ed)
 #define emacs_forward_word() ed_emacs_forward_word(&g_ed)
 #define emacs_backward_word() ed_emacs_backward_word(&g_ed)
 
@@ -428,6 +432,76 @@ static void cmd_enter(void) {
   mark_clear(); editor_enter(); ensure_cursor_visible();
 }
 
+static void cmd_kill_word_fwd(void) {   /* M-d */
+  emacs_kill_word_fwd(); clipboard_set_from_kill(); ensure_cursor_visible();
+}
+static void cmd_kill_word_back(void) {  /* M-DEL */
+  emacs_kill_word_back(); clipboard_set_from_kill(); ensure_cursor_visible();
+}
+static void cmd_upcase_word(void)     { emacs_case_word(0); ensure_cursor_visible(); }
+static void cmd_downcase_word(void)   { emacs_case_word(1); ensure_cursor_visible(); }
+static void cmd_capitalize_word(void) { emacs_case_word(2); ensure_cursor_visible(); }
+static void cmd_transpose_chars(void) { emacs_transpose(); ensure_cursor_visible(); }
+static void cmd_open_line(void) {       /* C-o: insert newline, leave point */
+  int cl = cursor_line, cc = cursor_col;
+  mark_clear(); editor_enter();
+  cursor_line = cl; cursor_col = cc; cursor_target_col = cc;
+  ensure_cursor_visible();
+}
+static void cmd_page_down(void) {       /* C-v */
+  int lh = line_height();
+  int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
+  int vis = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col);
+  int total = nav_total_visual_lines(&g_ed);
+  int target = vis + rows; if (target > total - 1) target = total - 1; if (target < 0) target = 0;
+  int off; cursor_line = nav_visual_to_logical(&g_ed, target, &off);
+  cursor_col = cursor_target_col; cursor_clamp(); ensure_cursor_visible();
+}
+static void cmd_page_up(void) {         /* M-v */
+  int lh = line_height();
+  int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
+  int vis = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col);
+  int target = vis - rows; if (target < 0) target = 0;
+  int off; cursor_line = nav_visual_to_logical(&g_ed, target, &off);
+  cursor_col = cursor_target_col; cursor_clamp(); ensure_cursor_visible();
+}
+static int g_recenter_state = 0;
+static void cmd_recenter(void) {        /* C-l: center -> top -> bottom */
+  int lh = line_height();
+  int top = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col) * lh;
+  if (g_recenter_state == 0)      scroll_y = top - (g_content_h - lh) / 2;
+  else if (g_recenter_state == 1) scroll_y = top;
+  else                            scroll_y = top - (g_content_h - lh);
+  if (scroll_y < 0) scroll_y = 0;
+  g_recenter_state = (g_recenter_state + 1) % 3;
+}
+static void cmd_mark_whole_buffer(void) {  /* C-x h */
+  cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
+  mark_set();
+  cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
+  ensure_cursor_visible(); status_set("Mark set");
+}
+static void cmd_exchange_point_mark(void) {  /* C-x C-x */
+  if (!mark_active) return;
+  int tl = cursor_line, tc = cursor_col;
+  cursor_line = mark_line; cursor_col = mark_col;
+  mark_line = tl; mark_col = tc;
+  cursor_target_col = cursor_col; ensure_cursor_visible();
+}
+static void goto_line_cb(const char *text) {
+  int n = atoi(text);
+  if (n < 1) n = 1;
+  if (n > line_count) n = line_count;
+  cursor_line = n - 1; cursor_col = 0; cursor_target_col = 0;
+  ensure_cursor_visible();
+  char msg[64]; snprintf(msg, sizeof(msg), "Line %d", n); status_set(msg);
+}
+static void cmd_goto_line(void) {       /* M-g */
+  minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+  snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Goto line: ");
+  minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = goto_line_cb;
+}
+
 /* Alt+Shift+. and Alt+Shift+, need KMOD_ALT but the sym check uses SDLK_PERIOD/SDLK_COMMA
    plus shift — handled specially via check_binding which checks extra shift for those entries */
 
@@ -441,12 +515,24 @@ static const KeyBinding normal_bindings[] = {
   { KMOD_CTRL, SDLK_k,      cmd_kill_line },
   { KMOD_CTRL, SDLK_y,      cmd_yank },
   { KMOD_CTRL, SDLK_w,      cmd_kill_region },
+  { KMOD_CTRL, SDLK_d,      cmd_delete },
+  { KMOD_CTRL, SDLK_v,      cmd_page_down },
+  { KMOD_CTRL, SDLK_l,      cmd_recenter },
+  { KMOD_CTRL, SDLK_t,      cmd_transpose_chars },
+  { KMOD_CTRL, SDLK_o,      cmd_open_line },
   { KMOD_CTRL, SDLK_SLASH,  cmd_undo },
   { KMOD_CTRL, SDLK_SPACE,  cmd_set_mark },
   { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
   { KMOD_ALT,  SDLK_f,      cmd_forward_word_alt },
   { KMOD_ALT,  SDLK_b,      cmd_backward_word_alt },
   { KMOD_ALT,  SDLK_w,      cmd_copy_region },
+  { KMOD_ALT,  SDLK_v,      cmd_page_up },
+  { KMOD_ALT,  SDLK_d,      cmd_kill_word_fwd },
+  { KMOD_ALT,  SDLK_BACKSPACE, cmd_kill_word_back },
+  { KMOD_ALT,  SDLK_u,      cmd_upcase_word },
+  { KMOD_ALT,  SDLK_l,      cmd_downcase_word },
+  { KMOD_ALT,  SDLK_c,      cmd_capitalize_word },
+  { KMOD_ALT,  SDLK_g,      cmd_goto_line },
   { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
   { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
   { 0, SDLK_BACKSPACE,      cmd_backspace },
@@ -577,9 +663,13 @@ static int handle_esc_prefix_key(int sym, int shift) {
   if (sym == SDLK_b) {
     emacs_backward_word(); ensure_cursor_visible(); return 1;
   }
-  if (sym == SDLK_w) {   /* M-w via Esc prefix: copy region */
-    cmd_copy_region(); return 1;
-  }
+  if (sym == SDLK_w) { cmd_copy_region(); return 1; }      /* M-w copy */
+  if (sym == SDLK_v) { cmd_page_up(); return 1; }          /* M-v page up */
+  if (sym == SDLK_d) { cmd_kill_word_fwd(); return 1; }    /* M-d kill word */
+  if (sym == SDLK_u) { cmd_upcase_word(); return 1; }      /* M-u upcase */
+  if (sym == SDLK_l) { cmd_downcase_word(); return 1; }    /* M-l downcase */
+  if (sym == SDLK_c) { cmd_capitalize_word(); return 1; }  /* M-c capitalize */
+  if (sym == SDLK_g) { cmd_goto_line(); return 1; }        /* M-g goto line */
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -614,6 +704,15 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     minibuf_callback = open_or_create_file;
     return 1;
   }
+  if (ctrl && sym == SDLK_w) {   /* C-x C-w: write-file (save as) */
+    minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
+    minibuf_text[0] = '\0'; minibuf_len = 0;
+    minibuf_callback = save_to_path;
+    return 1;
+  }
+  if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(); return 1; }   /* C-x h */
+  if (ctrl && sym == SDLK_x)  { cmd_exchange_point_mark(); return 1; } /* C-x C-x */
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 

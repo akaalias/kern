@@ -15,6 +15,10 @@ void ed_emacs_kill_line(EditorState *ed);
 void ed_emacs_yank(EditorState *ed);
 void ed_emacs_copy_region(EditorState *ed);
 void ed_emacs_kill_region(EditorState *ed);
+void ed_emacs_kill_word_forward(EditorState *ed);
+void ed_emacs_kill_word_backward(EditorState *ed);
+void ed_emacs_case_word(EditorState *ed, int mode);
+void ed_emacs_transpose_chars(EditorState *ed);
 void ed_emacs_forward_word(EditorState *ed);
 void ed_emacs_backward_word(EditorState *ed);
 
