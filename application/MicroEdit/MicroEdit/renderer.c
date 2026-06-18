@@ -255,6 +255,7 @@ void r_init(void) {
     NULL, usable.x + pad, usable.y + pad,
     width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
   SDL_GL_CreateContext(window);
+  SDL_GL_SetSwapInterval(1);  /* vsync: cap frame rate to the display refresh */
 
   /* detect retina scale */
   SDL_GL_GetDrawableSize(window, &draw_width, &draw_height);

@@ -778,6 +778,10 @@ int editor_main(int argc, char **argv) {
 
   for (;;) {
     SDL_Event e;
+    /* Block until input arrives (NULL leaves events queued for the drain loop
+       below) instead of busy-spinning. The timeout wakes us periodically so
+       transient status-bar messages can still clear without input. */
+    SDL_WaitEventTimeout(NULL, 250);
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
         case SDL_QUIT: exit(EXIT_SUCCESS); break;
