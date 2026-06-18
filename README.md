@@ -5,41 +5,33 @@ keybindings and editing model, with a clean, distraction-free iA Writer look:
 the iA Writer Quattro/Mono typefaces, live markdown styling, and a full-window
 writing surface.
 
-Written in C with SDL2 + OpenGL for rendering. Built on
+A macOS app: a thin SwiftUI shell launches the editor, which is written in C
+with SDL2 + OpenGL for rendering. Built on
 [microui](https://github.com/rxi/microui) (the immediate-mode UI library
 provides the window, command list, clipping, and input plumbing) and
-[stb_truetype](https://github.com/nothings/stb) for font rasterization.
+[stb_truetype](https://github.com/nothings/stb) for font rasterization. SDL2 is
+statically linked from a vendored library, so the `.app` is self-contained
+(no Homebrew dependency) and runs with Hardened Runtime + App Sandbox.
 
 ## Building
 
-### Xcode
-
 ```sh
-open MicroEdit.xcodeproj
+open application/MicroEdit/MicroEdit.xcodeproj
 ```
 
-Then Build & Run (⌘R). Produces `MicroEdit.app` with the fonts bundled as
-resources.
-
-### Command line
-
-```sh
-./build.sh
-./microedit testdata/test_markdown.txt
-```
-
-Requires SDL2 (e.g. `brew install sdl2`). The script assumes Homebrew at
-`/opt/homebrew`; adjust the include/library paths in `build.sh` and the
-`HEADER_SEARCH_PATHS`/`LIBRARY_SEARCH_PATHS` build settings in the Xcode
-project if SDL2 lives elsewhere.
+Then Build & Run (⌘R). Produces a self-contained `MicroEdit.app` with the fonts
+bundled as resources. Apple Silicon only.
 
 ## Usage
 
-```sh
-microedit [file]
+Launches into an empty buffer. Files live in the app's sandbox container:
+
+```
+~/Library/Containers/com.rondeau.MicroEdit/Data/Documents/
 ```
 
-Opens `file`, or an empty buffer if none is given.
+Open/save paths resolve relative to that folder (reach it in Finder via
+**Go → Go to Folder**).
 
 ### Keybindings (Emacs-style)
 
@@ -61,14 +53,17 @@ Markdown headings, bold, and italic are styled live as you type.
 ## Layout
 
 ```
-src/          editor source (text view, buffer, editing, navigation,
-              undo, markdown rendering, SDL/GL renderer, macOS chrome)
-vendor/       microui/ and stb/ — vendored dependencies
-assets/fonts  iA Writer typefaces + the microui glyph atlas
-testdata/     sample documents
-tools/        gen_prose.py (test-corpus generator)
+application/MicroEdit/
+  MicroEdit.xcodeproj         the app project (open this)
+  MicroEdit/                  Swift app shell + the C editor sources:
+                                MicroEditApp.swift, bridging header,
+                                textview.c, buffer/editing/navigation/undo,
+                                md_render, renderer, macos_style, microui,
+                                stb_truetype, fonts
+  Vendor/SDL2/                vendored SDL2 static lib + headers
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Includes microui (© rxi), also MIT.
+MIT — see [LICENSE](LICENSE). Includes microui (© rxi) and SDL2 (zlib), each
+under their own licenses.
