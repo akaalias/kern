@@ -1,59 +1,74 @@
-# ![microui](https://user-images.githubusercontent.com/3920290/75171571-be83c500-5723-11ea-8a50-504cc2ae1109.png)
-A *tiny*, portable, immediate-mode UI library written in ANSI C
+# MicroEdit
 
-## Features
-* Tiny: around `1100 sloc` of ANSI C
-* Works within a fixed-sized memory region: no additional memory is allocated
-* Built-in controls: window, scrollable panel, button, slider, textbox, label,
-  checkbox, wordwrapped text
-* Works with any rendering system that can draw rectangles and text
-* Designed to allow the user to easily add custom controls
-* Simple layout system
+A minimalist text editor — a cross between Emacs and iA Writer. Emacs-style
+keybindings and editing model, with a clean, distraction-free iA Writer look:
+the iA Writer Quattro/Mono typefaces, live markdown styling, and a full-window
+writing surface.
 
-## Example
-![example](https://user-images.githubusercontent.com/3920290/75187058-2b598800-5741-11ea-9358-38caf59f8791.png)
-```c
-if (mu_begin_window(ctx, "My Window", mu_rect(10, 10, 140, 86))) {
-  mu_layout_row(ctx, 2, (int[]) { 60, -1 }, 0);
+Written in C with SDL2 + OpenGL for rendering. Built on
+[microui](https://github.com/rxi/microui) (the immediate-mode UI library
+provides the window, command list, clipping, and input plumbing) and
+[stb_truetype](https://github.com/nothings/stb) for font rasterization.
 
-  mu_label(ctx, "First:");
-  if (mu_button(ctx, "Button1")) {
-    printf("Button1 pressed\n");
-  }
+## Building
 
-  mu_label(ctx, "Second:");
-  if (mu_button(ctx, "Button2")) {
-    mu_open_popup(ctx, "My Popup");
-  }
+### Xcode
 
-  if (mu_begin_popup(ctx, "My Popup")) {
-    mu_label(ctx, "Hello world!");
-    mu_end_popup(ctx);
-  }
-
-  mu_end_window(ctx);
-}
+```sh
+open MicroEdit.xcodeproj
 ```
 
-## Screenshot
-![screenshot](https://user-images.githubusercontent.com/3920290/75188642-63ae9580-5744-11ea-9eee-d753ff5c0aa7.png)
+Then Build & Run (⌘R). Produces `MicroEdit.app` with the fonts bundled as
+resources.
 
-[**Browser Demo**](https://floooh.github.io/sokol-html5/sgl-microui-sapp.html)
+### Command line
+
+```sh
+./build.sh
+./microedit testdata/test_markdown.txt
+```
+
+Requires SDL2 (e.g. `brew install sdl2`). The script assumes Homebrew at
+`/opt/homebrew`; adjust the include/library paths in `build.sh` and the
+`HEADER_SEARCH_PATHS`/`LIBRARY_SEARCH_PATHS` build settings in the Xcode
+project if SDL2 lives elsewhere.
 
 ## Usage
-* See [`doc/usage.md`](doc/usage.md) for usage instructions
-* See the [`demo`](demo) directory for a usage example
 
-## Notes
-The library expects the user to provide input and handle the resultant drawing
-commands, it does not do any drawing itself.
+```sh
+microedit [file]
+```
 
-## Contributing
-The library is designed to be lightweight, providing a foundation to which you
-can easily add custom controls and UI elements; pull requests adding additional
-features will likely not be merged. Bug reports are welcome.
+Opens `file`, or an empty buffer if none is given.
+
+### Keybindings (Emacs-style)
+
+| Keys                | Action                          |
+|---------------------|---------------------------------|
+| `C-x C-f`           | Find/open file (minibuffer)     |
+| `C-x C-s`           | Save                            |
+| `C-x C-c`           | Quit                            |
+| `C-s` / `C-r`       | Incremental search fwd/back     |
+| `C-space`           | Set mark                        |
+| `C-w` / `M-w`       | Kill / copy region              |
+| `C-y`               | Yank                            |
+| `M-<` / `M->`       | Beginning / end of buffer       |
+| `Esc`               | Prefix / cancel, clear mark     |
+| `⌘F`                | Search with match highlights    |
+
+Markdown headings, bold, and italic are styled live as you type.
+
+## Layout
+
+```
+src/          editor source (text view, buffer, editing, navigation,
+              undo, markdown rendering, SDL/GL renderer, macOS chrome)
+vendor/       microui/ and stb/ — vendored dependencies
+assets/fonts  iA Writer typefaces + the microui glyph atlas
+testdata/     sample documents
+tools/        gen_prose.py (test-corpus generator)
+```
 
 ## License
-This library is free software; you can redistribute it and/or modify it under
-the terms of the MIT license. See [LICENSE](LICENSE) for details.
 
+MIT — see [LICENSE](LICENSE). Includes microui (© rxi), also MIT.

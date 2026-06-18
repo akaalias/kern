@@ -1,14 +1,12 @@
-# Welcome to the Emacs-like Editor
-
 This is a test of **markdown formatting** in our editor.
 
 ## Features
 
 Here is some _italic text_ and some **bold text** together.
 
-You can also use `inline code` for code snippets.
+You can also use `inline code` for code snippets. _NICE_
 
-### Links
+## Other Stuff
 
 Here is a [link to something](https://example.com) and a [[wikilink]] too.
 
@@ -33,3 +31,4 @@ This paragraph has **bold**, _italic_, `code`, and [links](url) all mixed togeth
 # Another Heading
 
 Some regular text after the heading. The **quick brown fox** jumps over the _lazy dog_. Check the `README.md` for more [[details]].
+Hello

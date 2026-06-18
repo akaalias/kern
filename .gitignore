@@ -1,0 +1,25 @@
+# Build artifacts
+*.o
+*.dSYM/
+a.out
+*.app/
+/build/
+/microedit
+
+# CLI build copies fonts next to the binary at the repo root; the canonical
+# copies live in assets/fonts/ (those stay tracked).
+/*.ttf
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Generated / large test corpora (regenerate with tools/gen_prose.py)
+test_100k.txt
+test_100mb.txt
+test_1M.txt
+test_prose_100k.txt
+new.txt
+
+# macOS
+.DS_Store

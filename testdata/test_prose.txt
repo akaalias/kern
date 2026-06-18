@@ -7,9 +7,17 @@ categories:
     - "learning-to-learn"
 ---
 
+1. One
+2. Two
+3. Three
+
+# Wow, this is great
+
 Come and learn what I've learned! I haven't posted my retrospectives in a while. Last week was the first week that I had fully to myself and I challenged myself to establish a solid deep work routine at home. Here are some of the things that worked, that were okay and some that didn't work.
 
 # Retrospective Week 13 - A total of 13 hours completed.
+
+Okay, how snappy is this for writing? So far so good.
 
 ## What worked:
 
@@ -23,6 +31,9 @@ Come and learn what I've learned! I haven't posted my retrospectives in a while.
 - Context switching between projects remains a productivity killer.
 
 ## Lessons learned:
+# A heading
+
+## And sometimes... characters just get lost?
 
 Deep work isn't just about time management. It's about energy management. The quality of your focus matters far more than the quantity of hours you put in. A single hour of truly deep, undistracted work can produce more meaningful output than an entire afternoon of shallow multitasking.
 

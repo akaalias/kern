@@ -56,8 +56,21 @@ static FontData fonts[FONT_COUNT];
 static int current_font = FONT_REGULAR;
 static float font_size = 16.0f;
 
-static void load_ttf(int style, const char *path) {
+static void load_ttf(int style, const char *filename) {
   FontData *fd = &fonts[style];
+
+  /* Resolve the font relative to the app's base path so it works both as a
+     bundled .app (base path = Contents/Resources/) and as a plain CLI binary
+     (base path = the executable's directory). */
+  char path[1024];
+  char *base = SDL_GetBasePath();
+  if (base) {
+    snprintf(path, sizeof(path), "%s%s", base, filename);
+    SDL_free(base);
+  } else {
+    snprintf(path, sizeof(path), "%s", filename);
+  }
+
   FILE *f = fopen(path, "rb");
   if (!f) { fprintf(stderr, "cannot open font: %s\n", path); exit(1); }
   fseek(f, 0, SEEK_END);
