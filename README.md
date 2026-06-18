@@ -1,4 +1,4 @@
-# MicroEdit
+# Kern
 
 A minimalist text editor — a cross between Emacs and iA Writer. Emacs-style
 keybindings and editing model, with a clean, distraction-free iA Writer look:
@@ -16,10 +16,10 @@ statically linked from a vendored library, so the `.app` is self-contained
 ## Building
 
 ```sh
-open application/MicroEdit/MicroEdit.xcodeproj
+open application/Kern/Kern.xcodeproj
 ```
 
-Then Build & Run (⌘R). Produces a self-contained `MicroEdit.app` with the fonts
+Then Build & Run (⌘R). Produces a self-contained `Kern.app` with the fonts
 bundled as resources. Apple Silicon only.
 
 ## Usage
@@ -27,7 +27,7 @@ bundled as resources. Apple Silicon only.
 Launches into an empty buffer. Files live in the app's sandbox container:
 
 ```
-~/Library/Containers/com.rondeau.MicroEdit/Data/Documents/
+~/Library/Containers/com.rondeau.Kern/Data/Documents/
 ```
 
 Open/save paths resolve relative to that folder (reach it in Finder via
@@ -53,10 +53,10 @@ Markdown headings, bold, and italic are styled live as you type.
 ## Layout
 
 ```
-application/MicroEdit/
-  MicroEdit.xcodeproj         the app project (open this)
-  MicroEdit/                  Swift app shell + the C editor sources:
-                                MicroEditApp.swift, bridging header,
+application/Kern/
+  Kern.xcodeproj         the app project (open this)
+  Kern/                  Swift app shell + the C editor sources:
+                                KernApp.swift, bridging header,
                                 textview.c, buffer/editing/navigation/undo,
                                 md_render, renderer, macos_style, microui,
                                 stb_truetype, fonts

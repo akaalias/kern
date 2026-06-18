@@ -1,6 +1,6 @@
 //
-//  MicroEditApp.swift
-//  MicroEdit
+//  KernApp.swift
+//  Kern
 //
 //  Created by Alexis Rondeau on 18.06.26.
 //
@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-struct MicroEditApp: App {
+struct KernApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {

@@ -1,4 +1,4 @@
-/* editor_types.h — Shared types, structs, and constants for MicroEdit */
+/* editor_types.h — Shared types, structs, and constants for Kern */
 
 #ifndef EDITOR_TYPES_H
 #define EDITOR_TYPES_H

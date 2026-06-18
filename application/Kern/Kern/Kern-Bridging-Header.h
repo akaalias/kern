@@ -1,5 +1,5 @@
-#ifndef MicroEdit_Bridging_Header_h
-#define MicroEdit_Bridging_Header_h
+#ifndef Kern_Bridging_Header_h
+#define Kern_Bridging_Header_h
 
 /* Entry point of the C editor (renamed from main() so it doesn't collide with
    SwiftUI's @main). Called by the Swift app on launch. */
@@ -9,4 +9,4 @@ int editor_main(int argc, char **argv);
    folder). Call before editor_main. */
 void editor_set_documents_dir(const char *path);
 
-#endif /* MicroEdit_Bridging_Header_h */
+#endif /* Kern_Bridging_Header_h */

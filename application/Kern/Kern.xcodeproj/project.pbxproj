@@ -7,13 +7,13 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		56F7DFB62FE3EFB7004E5404 /* MicroEdit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MicroEdit.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		56F7DFB62FE3EFB7004E5404 /* Kern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kern.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		56F7DFB82FE3EFB7004E5404 /* MicroEdit */ = {
+		56F7DFB82FE3EFB7004E5404 /* Kern */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = MicroEdit;
+			path = Kern;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,7 +32,7 @@
 		56F7DFAD2FE3EFB7004E5404 = {
 			isa = PBXGroup;
 			children = (
-				56F7DFB82FE3EFB7004E5404 /* MicroEdit */,
+				56F7DFB82FE3EFB7004E5404 /* Kern */,
 				56F7DFB72FE3EFB7004E5404 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -40,7 +40,7 @@
 		56F7DFB72FE3EFB7004E5404 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				56F7DFB62FE3EFB7004E5404 /* MicroEdit.app */,
+				56F7DFB62FE3EFB7004E5404 /* Kern.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		56F7DFB52FE3EFB7004E5404 /* MicroEdit */ = {
+		56F7DFB52FE3EFB7004E5404 /* Kern */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 56F7DFC12FE3EFB9004E5404 /* Build configuration list for PBXNativeTarget "MicroEdit" */;
+			buildConfigurationList = 56F7DFC12FE3EFB9004E5404 /* Build configuration list for PBXNativeTarget "Kern" */;
 			buildPhases = (
 				56F7DFB22FE3EFB7004E5404 /* Sources */,
 				56F7DFB32FE3EFB7004E5404 /* Frameworks */,
@@ -61,13 +61,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				56F7DFB82FE3EFB7004E5404 /* MicroEdit */,
+				56F7DFB82FE3EFB7004E5404 /* Kern */,
 			);
-			name = MicroEdit;
+			name = Kern;
 			packageProductDependencies = (
 			);
-			productName = MicroEdit;
-			productReference = 56F7DFB62FE3EFB7004E5404 /* MicroEdit.app */;
+			productName = Kern;
+			productReference = 56F7DFB62FE3EFB7004E5404 /* Kern.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 56F7DFB12FE3EFB7004E5404 /* Build configuration list for PBXProject "MicroEdit" */;
+			buildConfigurationList = 56F7DFB12FE3EFB7004E5404 /* Build configuration list for PBXProject "Kern" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				56F7DFB52FE3EFB7004E5404 /* MicroEdit */,
+				56F7DFB52FE3EFB7004E5404 /* Kern */,
 			);
 		};
 /* End PBXProject section */
@@ -300,14 +300,14 @@
 					"-framework",
 					OpenGL,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.MicroEdit;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.Kern;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "MicroEdit/MicroEdit-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Kern/Kern-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -368,14 +368,14 @@
 					"-framework",
 					OpenGL,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.MicroEdit;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.Kern;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "MicroEdit/MicroEdit-Bridging-Header.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Kern/Kern-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -384,7 +384,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		56F7DFB12FE3EFB7004E5404 /* Build configuration list for PBXProject "MicroEdit" */ = {
+		56F7DFB12FE3EFB7004E5404 /* Build configuration list for PBXProject "Kern" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				56F7DFBF2FE3EFB9004E5404 /* Debug */,
@@ -393,7 +393,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		56F7DFC12FE3EFB9004E5404 /* Build configuration list for PBXNativeTarget "MicroEdit" */ = {
+		56F7DFC12FE3EFB9004E5404 /* Build configuration list for PBXNativeTarget "Kern" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				56F7DFC22FE3EFB9004E5404 /* Debug */,
