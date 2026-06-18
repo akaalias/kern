@@ -115,18 +115,15 @@ static ViewState   g_vs = {0};
 /* ---- file operations (glue — uses status_set and r_set_title) ---- */
 
 static void open_or_create_file(const char *path) {
-  snprintf(g_filepath, sizeof(g_filepath), "%s", path);
-  const char *slash = strrchr(path, '/');
-  g_filename = slash ? slash + 1 : path;
+  /* resolve the typed name to a path inside the sandbox documents dir */
+  buf_resolve_path(path, g_filepath, sizeof(g_filepath));
+  const char *slash = strrchr(g_filepath, '/');
+  g_filename = slash ? slash + 1 : g_filepath;
 
-  FILE *f = fopen(path, "rb");
-  if (f) {
-    fclose(f);
-    buf_free_all_lines(&g_ed);
-    buf_load_file(&g_ed, path);
-  } else {
-    buf_init_empty(&g_ed);
-  }
+  buf_free_all_lines(&g_ed);
+  int existed = (buf_load_file(&g_ed, g_filepath) == 0);
+  if (!existed) buf_init_empty(&g_ed);
+
   cursor_line = 0;
   cursor_col = 0;
   cursor_target_col = 0;
@@ -134,17 +131,20 @@ static void open_or_create_file(const char *path) {
   invalidate_all_wraps();
   r_set_title(g_filename);
   char msg[256];
-  snprintf(msg, sizeof(msg), "Opened %s", g_filename);
+  snprintf(msg, sizeof(msg), existed ? "Opened %s" : "New file %s", g_filename);
   status_set(msg);
 }
 
 static void save_to_path(const char *path) {
-  snprintf(g_filepath, sizeof(g_filepath), "%s", path);
-  const char *slash = strrchr(path, '/');
-  g_filename = slash ? slash + 1 : path;
-  buf_save(&g_ed, g_filepath);
+  buf_resolve_path(path, g_filepath, sizeof(g_filepath));
+  const char *slash = strrchr(g_filepath, '/');
+  g_filename = slash ? slash + 1 : g_filepath;
   char msg[256];
-  snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
+  if (buf_save(&g_ed, g_filepath) == 0) {
+    snprintf(msg, sizeof(msg), "Wrote %s", g_filename);
+  } else {
+    snprintf(msg, sizeof(msg), "FAILED to write %s", g_filename);
+  }
   status_set(msg);
   r_set_title(g_filename);
 }
@@ -529,22 +529,12 @@ static int handle_esc_prefix_key(int sym, int shift) {
 static int handle_cx_prefix_key(int sym, int ctrl) {
   ctrl_x_prefix = 0;
   if (ctrl && sym == SDLK_s) {
-    /* C-x C-s: save */
+    /* C-x C-s: save (honest status, sandbox-resolved path) */
     if (g_filepath[0]) {
-      FILE *f = fopen(g_filepath, "wb");
-      if (f) {
-        for (int i = 0; i < line_count; i++) {
-          fwrite(lines[i].text, 1, lines[i].len, f);
-          if (i < line_count - 1) fwrite("\n", 1, 1, f);
-        }
-        fclose(f);
-        char msg[256];
-        snprintf(msg, sizeof(msg), "Wrote %s", g_filepath);
-        status_set(msg);
-      }
+      save_to_path(g_filepath);
     } else {
       minibuf_active = 1;
-      snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file: ");
+      snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
       minibuf_text[0] = '\0';
       minibuf_len = 0;
       minibuf_callback = save_to_path;
@@ -557,7 +547,7 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
   }
   if (ctrl && sym == SDLK_f) {
     minibuf_active = 1;
-    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file: ");
+    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file (Documents): ");
     minibuf_text[0] = '\0';
     minibuf_len = 0;
     minibuf_callback = open_or_create_file;
@@ -707,9 +697,14 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
   return 0;
 }
 
+/* Called from Swift (via the bridging header) before editor_main to point
+   file I/O at the app's sandbox-container Documents directory. */
+void editor_set_documents_dir(const char *path) {
+  buf_set_documents_dir(path);
+}
+
 int editor_main(int argc, char **argv) {
-  if (argc >= 2) {
-    buf_load_file(&g_ed, argv[1]);
+  if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_filepath, sizeof(g_filepath), "%s", argv[1]);
     g_filename = argv[1];
     const char *slash = strrchr(argv[1], '/');

@@ -3,7 +3,57 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include "buffer.h"
+
+/* ---- sandboxed document location ---- */
+
+/* All user-entered file paths resolve under this directory (the app's
+   sandbox-container Documents folder, set from Swift at launch). When empty
+   (e.g. the CLI build), paths are used verbatim. */
+static char g_documents_dir[1024] = "";
+
+void buf_set_documents_dir(const char *dir) {
+  if (dir) snprintf(g_documents_dir, sizeof(g_documents_dir), "%s", dir);
+}
+
+/* Create the parent directories of `path` (mkdir -p of the dirname). */
+static void mkdir_parents(const char *path) {
+  char tmp[1024];
+  snprintf(tmp, sizeof(tmp), "%s", path);
+  char *last = strrchr(tmp, '/');
+  if (!last) return;
+  *last = '\0';                 /* tmp is now the directory portion */
+  for (char *p = tmp + 1; *p; p++) {
+    if (*p == '/') { *p = '\0'; mkdir(tmp, 0755); *p = '/'; }
+  }
+  mkdir(tmp, 0755);
+}
+
+/* Map a user-typed name onto a path inside the documents dir. Relative names
+   (incl. subfolders) are kept under it; anything absolute or starting with '~'
+   we can't reach under the sandbox, so we keep just the filename. Idempotent:
+   a path already inside the documents dir is returned unchanged. */
+void buf_resolve_path(const char *input, char *out, int outsz) {
+  while (*input == ' ' || *input == '\t') input++;
+
+  if (g_documents_dir[0] == '\0') {            /* not sandboxed: use as-is */
+    snprintf(out, outsz, "%s", input);
+    return;
+  }
+  size_t dl = strlen(g_documents_dir);
+  if (strncmp(input, g_documents_dir, dl) == 0) {   /* already resolved */
+    snprintf(out, outsz, "%s", input);
+    return;
+  }
+  const char *rel = input;
+  if (rel[0] == '~' || rel[0] == '/') {        /* external path -> basename */
+    const char *slash = strrchr(rel, '/');
+    rel = slash ? slash + 1 : rel;
+  }
+  if (*rel == '\0') rel = "untitled.txt";
+  snprintf(out, outsz, "%s/%s", g_documents_dir, rel);
+}
 
 /* ---- line operations ---- */
 
@@ -49,22 +99,22 @@ void buf_delete_line_at(EditorState *ed, int idx) {
 
 /* ---- file I/O ---- */
 
-void buf_load_file(EditorState *ed, const char *path) {
+int buf_load_file(EditorState *ed, const char *path) {
   FILE *f = fopen(path, "rb");
-  if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(1); }
+  if (!f) return -1;                 /* missing/unreadable -> caller starts fresh */
   fseek(f, 0, SEEK_END);
   long sz = ftell(f);
-  if (sz < 0) { fclose(f); fprintf(stderr, "cannot read %s\n", path); exit(1); }
+  if (sz < 0) { fclose(f); return -1; }
   fseek(f, 0, SEEK_SET);
   char *buf = malloc((size_t)sz + 1);
-  if (!buf) { fclose(f); fprintf(stderr, "out of memory loading %s\n", path); exit(1); }
+  if (!buf) { fclose(f); return -1; }
   size_t nread = fread(buf, 1, (size_t)sz, f);
   buf[nread] = '\0';
   fclose(f);
 
   ed->line_cap = 4096;
   ed->lines = malloc(ed->line_cap * sizeof(Line));
-  if (!ed->lines) { free(buf); fprintf(stderr, "out of memory\n"); exit(1); }
+  if (!ed->lines) { free(buf); return -1; }
   ed->line_count = 0;
 
   char *p = buf;
@@ -98,6 +148,7 @@ void buf_load_file(EditorState *ed, const char *path) {
   }
 
   free(buf);
+  return 0;
 }
 
 void buf_free_all_lines(EditorState *ed) {
@@ -116,14 +167,18 @@ void buf_init_empty(EditorState *ed) {
   ed->cursor_target_col = 0;
 }
 
-void buf_save(EditorState *ed, const char *path) {
+int buf_save(EditorState *ed, const char *path) {
+  mkdir_parents(path);
   FILE *f = fopen(path, "wb");
-  if (!f) return;
+  if (!f) return -1;
   for (int i = 0; i < ed->line_count; i++) {
     fwrite(ed->lines[i].text, 1, ed->lines[i].len, f);
     if (i < ed->line_count - 1) fwrite("\n", 1, 1, f);
   }
-  fclose(f);
+  /* surface write/flush errors so the UI can report failure honestly */
+  int ok = (ferror(f) == 0);
+  if (fclose(f) != 0) ok = 0;
+  return ok ? 0 : -1;
 }
 
 /* ---- kill buffer ---- */

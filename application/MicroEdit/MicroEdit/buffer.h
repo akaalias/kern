@@ -12,11 +12,15 @@ void buf_ensure_lines_cap(EditorState *ed, int need);
 void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len);
 void buf_delete_line_at(EditorState *ed, int idx);
 
-/* file I/O */
-void buf_load_file(EditorState *ed, const char *path);
+/* file I/O — load/save return 0 on success, -1 on failure */
+int  buf_load_file(EditorState *ed, const char *path);
 void buf_free_all_lines(EditorState *ed);
 void buf_init_empty(EditorState *ed);
-void buf_save(EditorState *ed, const char *path);
+int  buf_save(EditorState *ed, const char *path);
+
+/* sandboxed file location: all user paths resolve under this directory */
+void buf_set_documents_dir(const char *dir);
+void buf_resolve_path(const char *input, char *out, int outsz);
 
 /* kill buffer */
 void buf_kill_set(EditorState *ed, const char *text, int len);

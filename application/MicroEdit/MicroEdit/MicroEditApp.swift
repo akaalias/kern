@@ -9,9 +9,17 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Point the editor's file I/O at the app's sandbox-container Documents
+        // folder (~/Library/Containers/<id>/Data/Documents), creating it if needed.
+        let fm = FileManager.default
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            try? fm.createDirectory(at: docs, withIntermediateDirectories: true)
+            docs.path.withCString { editor_set_documents_dir($0) }
+        }
+
         // Hand off to the C editor once the app is a proper foreground app.
-        // editor_main runs SDL's own window + event loop (blocking); for this
-        // test the SwiftUI window is just the launcher shell.
+        // editor_main runs SDL's own window + event loop (blocking); the
+        // SwiftUI side is just the launcher shell.
         DispatchQueue.main.async {
             editor_main(0, nil)
         }
