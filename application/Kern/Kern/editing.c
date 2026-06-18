@@ -163,6 +163,34 @@ void ed_emacs_yank(EditorState *ed) {
   undo_end_group(ed);
 }
 
+/* M-w (kill-ring-save): copy the region into the kill buffer without deleting. */
+void ed_emacs_copy_region(EditorState *ed) {
+  if (!ed->mark_active) return;
+  int sl, sc, el, ec;
+  buf_region_ordered(ed, &sl, &sc, &el, &ec);
+
+  int total = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : ed->lines[ln].len;
+    total += ce - cs;
+    if (ln < el) total++;
+  }
+  char *region = malloc(total + 1);
+  if (!region) return;
+  int pos = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : ed->lines[ln].len;
+    memcpy(region + pos, ed->lines[ln].text + cs, ce - cs);
+    pos += ce - cs;
+    if (ln < el) region[pos++] = '\n';
+  }
+  region[pos] = '\0';
+  buf_kill_set(ed, region, total);
+  free(region);
+}
+
 void ed_emacs_kill_region(EditorState *ed) {
   if (!ed->mark_active) return;
   int sl, sc, el, ec;

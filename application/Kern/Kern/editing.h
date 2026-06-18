@@ -13,6 +13,7 @@ void ed_enter(EditorState *ed);
 /* emacs commands */
 void ed_emacs_kill_line(EditorState *ed);
 void ed_emacs_yank(EditorState *ed);
+void ed_emacs_copy_region(EditorState *ed);
 void ed_emacs_kill_region(EditorState *ed);
 void ed_emacs_forward_word(EditorState *ed);
 void ed_emacs_backward_word(EditorState *ed);

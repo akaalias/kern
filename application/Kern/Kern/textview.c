@@ -102,6 +102,7 @@ static ViewState   g_vs = {0};
 #define editor_enter()    ed_enter(&g_ed)
 #define emacs_kill_line() ed_emacs_kill_line(&g_ed)
 #define emacs_yank()      ed_emacs_yank(&g_ed)
+#define emacs_copy_region() ed_emacs_copy_region(&g_ed)
 #define emacs_kill_region() ed_emacs_kill_region(&g_ed)
 #define emacs_forward_word() ed_emacs_forward_word(&g_ed)
 #define emacs_backward_word() ed_emacs_backward_word(&g_ed)
@@ -359,11 +360,32 @@ static void cmd_previous_line(void) {
 static void cmd_kill_line(void) {
   mark_clear(); emacs_kill_line(); ensure_cursor_visible();
 }
+/* mirror the kill buffer to the macOS system clipboard */
+static void clipboard_set_from_kill(void) {
+  if (kill_buf && kill_len > 0) {
+    char *tmp = malloc(kill_len + 1);
+    if (tmp) {
+      memcpy(tmp, kill_buf, kill_len);
+      tmp[kill_len] = '\0';
+      SDL_SetClipboardText(tmp);
+      free(tmp);
+    }
+  }
+}
 static void cmd_yank(void) {
+  /* prefer the system clipboard so you can paste in text from other apps */
+  char *cb = SDL_GetClipboardText();
+  if (cb && cb[0]) buf_kill_set(&g_ed, cb, (int)strlen(cb));
+  if (cb) SDL_free(cb);
   mark_clear(); emacs_yank(); status_set("Yanked"); ensure_cursor_visible();
 }
+static void cmd_copy_region(void) {  /* M-w: kill-ring-save */
+  emacs_copy_region(); clipboard_set_from_kill();
+  mark_clear(); status_set("Copied region"); ensure_cursor_visible();
+}
 static void cmd_kill_region(void) {
-  emacs_kill_region(); status_set("Region killed"); ensure_cursor_visible();
+  emacs_kill_region(); clipboard_set_from_kill();
+  status_set("Region killed"); ensure_cursor_visible();
 }
 static void cmd_undo(void) {
   mark_clear(); undo_perform(&g_ed); status_set("Undo"); ensure_cursor_visible();
@@ -424,6 +446,7 @@ static const KeyBinding normal_bindings[] = {
   { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
   { KMOD_ALT,  SDLK_f,      cmd_forward_word_alt },
   { KMOD_ALT,  SDLK_b,      cmd_backward_word_alt },
+  { KMOD_ALT,  SDLK_w,      cmd_copy_region },
   { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
   { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
   { 0, SDLK_BACKSPACE,      cmd_backspace },
@@ -553,6 +576,9 @@ static int handle_esc_prefix_key(int sym, int shift) {
   }
   if (sym == SDLK_b) {
     emacs_backward_word(); ensure_cursor_visible(); return 1;
+  }
+  if (sym == SDLK_w) {   /* M-w via Esc prefix: copy region */
+    cmd_copy_region(); return 1;
   }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
