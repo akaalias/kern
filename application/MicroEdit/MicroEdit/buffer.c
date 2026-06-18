@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "buffer.h"
 
 /* ---- sandboxed document location ---- */
@@ -53,6 +54,53 @@ void buf_resolve_path(const char *input, char *out, int outsz) {
   }
   if (*rel == '\0') rel = "untitled.txt";
   snprintf(out, outsz, "%s/%s", g_documents_dir, rel);
+}
+
+/* Find the alphabetically-first existing file in the documents dir whose name
+   starts with `prefix` (and is longer than it). Writes the full completed name
+   to `out` (which therefore begins with `prefix`) and returns 1, else 0.
+   Supports a relative subfolder in the prefix (e.g. "notes/dr"). Case-sensitive
+   so the completion shares the typed prefix exactly. */
+int buf_complete_filename(const char *prefix, char *out, int outsz) {
+  if (g_documents_dir[0] == '\0' || !prefix || !*prefix) return 0;
+  if (prefix[0] == '/' || prefix[0] == '~') return 0;   /* unreachable in sandbox */
+
+  /* split into a relative subdir and the basename prefix being typed */
+  char subdir[1024] = "";
+  const char *base = prefix;
+  const char *slash = strrchr(prefix, '/');
+  if (slash) {
+    int dl = (int)(slash - prefix);
+    if (dl > (int)sizeof(subdir) - 1) dl = sizeof(subdir) - 1;
+    memcpy(subdir, prefix, dl);
+    subdir[dl] = '\0';
+    base = slash + 1;
+  }
+
+  char dirpath[2048];
+  if (subdir[0]) snprintf(dirpath, sizeof(dirpath), "%s/%s", g_documents_dir, subdir);
+  else           snprintf(dirpath, sizeof(dirpath), "%s", g_documents_dir);
+
+  DIR *d = opendir(dirpath);
+  if (!d) return 0;
+
+  size_t blen = strlen(base);
+  char best[1024] = "";
+  struct dirent *e;
+  while ((e = readdir(d)) != NULL) {
+    const char *name = e->d_name;
+    if (name[0] == '.') continue;                      /* skip ., .., hidden */
+    if (strncmp(name, base, blen) != 0) continue;      /* must match prefix */
+    if (strlen(name) <= blen) continue;                /* nothing to suggest */
+    if (best[0] == '\0' || strcmp(name, best) < 0)
+      snprintf(best, sizeof(best), "%s", name);
+  }
+  closedir(d);
+  if (best[0] == '\0') return 0;
+
+  if (subdir[0]) snprintf(out, outsz, "%s/%s", subdir, best);
+  else           snprintf(out, outsz, "%s", best);
+  return 1;
 }
 
 /* ---- line operations ---- */

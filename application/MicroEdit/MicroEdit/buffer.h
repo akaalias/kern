@@ -22,6 +22,10 @@ int  buf_save(EditorState *ed, const char *path);
 void buf_set_documents_dir(const char *dir);
 void buf_resolve_path(const char *input, char *out, int outsz);
 
+/* filename completion in the documents dir; out begins with prefix. Returns 1
+   if a longer existing match was found, else 0. */
+int  buf_complete_filename(const char *prefix, char *out, int outsz);
+
 /* kill buffer */
 void buf_kill_set(EditorState *ed, const char *text, int len);
 void buf_kill_append(EditorState *ed, const char *text, int len);

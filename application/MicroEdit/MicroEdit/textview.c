@@ -112,6 +112,21 @@ static ViewState   g_vs = {0};
 #define draw_md_text(text,start,end,x,y,col,head,track) \
   md_draw_text((text),(start),(end),(x),(y),(col),(head),(track),&g_cursor_x)
 
+/* ---- minibuffer filename completion ---- */
+
+static int  minibuf_completing = 0;   /* show ghost completion for this prompt */
+static char minibuf_suggest[1024];    /* full completed name; begins with minibuf_text */
+
+/* Recompute the ghost suggestion from the current minibuffer text. */
+static void minibuf_refresh_completion(void) {
+  minibuf_suggest[0] = '\0';
+  if (minibuf_completing && minibuf_len > 0) {
+    char full[1024];
+    if (buf_complete_filename(minibuf_text, full, sizeof(full)))
+      snprintf(minibuf_suggest, sizeof(minibuf_suggest), "%s", full);
+  }
+}
+
 /* ---- file operations (glue — uses status_set and r_set_title) ---- */
 
 static void open_or_create_file(const char *path) {
@@ -434,14 +449,29 @@ static int check_binding(const KeyBinding *b, int kmod, int sym) {
 static int handle_minibuf_key(int sym, int ctrl) {
   if (sym == SDLK_RETURN) {
     minibuf_active = 0;
+    minibuf_completing = 0;
+    minibuf_suggest[0] = '\0';
     if (minibuf_callback) minibuf_callback(minibuf_text);
     minibuf_callback = NULL;
     return 1;
   }
   if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {
     minibuf_active = 0;
+    minibuf_completing = 0;
+    minibuf_suggest[0] = '\0';
     minibuf_callback = NULL;
     status_set("Quit");
+    return 1;
+  }
+  if (sym == SDLK_TAB) {
+    /* accept the ghost completion */
+    if (minibuf_completing && minibuf_suggest[0] &&
+        (int)strlen(minibuf_suggest) > minibuf_len) {
+      snprintf(minibuf_text, sizeof(minibuf_text), "%s", minibuf_suggest);
+      minibuf_len = (int)strlen(minibuf_text);
+      minibuf_refresh_completion();
+    }
+    suppress_next_text = 1;   /* swallow any tab character event */
     return 1;
   }
   if (sym == SDLK_BACKSPACE) {
@@ -449,6 +479,7 @@ static int handle_minibuf_key(int sym, int ctrl) {
       minibuf_len--;
       minibuf_text[minibuf_len] = '\0';
     }
+    minibuf_refresh_completion();
     return 1;
   }
   return 0;
@@ -534,6 +565,8 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
       save_to_path(g_filepath);
     } else {
       minibuf_active = 1;
+      minibuf_completing = 0;
+      minibuf_suggest[0] = '\0';
       snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
       minibuf_text[0] = '\0';
       minibuf_len = 0;
@@ -547,6 +580,8 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
   }
   if (ctrl && sym == SDLK_f) {
     minibuf_active = 1;
+    minibuf_completing = 1;       /* enable ghost filename completion */
+    minibuf_suggest[0] = '\0';
     snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file (Documents): ");
     minibuf_text[0] = '\0';
     minibuf_len = 0;
@@ -658,6 +693,11 @@ static void do_render(void) {
     r_draw_text(minibuf_text, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
     int cx = 10 + lw + r_get_text_width(minibuf_text, minibuf_len);
     int fh = r_get_text_height();
+    /* ghost completion of an existing filename (Tab to accept) */
+    if (minibuf_suggest[0] && (int)strlen(minibuf_suggest) > minibuf_len) {
+      const char *ghost = minibuf_suggest + minibuf_len;
+      r_draw_text(ghost, mu_vec2(cx, bar_y + 5), mu_color(110, 110, 112, 255));
+    }
     r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
   } else if (search_active) {
     const char *label = (search_direction == 1) ? "I-search: " : "I-search backward: ";
@@ -761,6 +801,7 @@ int editor_main(int argc, char **argv) {
               minibuf_len += tlen;
               minibuf_text[minibuf_len] = '\0';
             }
+            minibuf_refresh_completion();
           } else if (search_active) {
             int tlen = strlen(e.text.text);
             if (search_len + tlen < (int)sizeof(search_buf) - 1) {
