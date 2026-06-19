@@ -20,6 +20,7 @@ int  buf_save(EditorState *ed, const char *path);
 
 /* sandboxed file location: all user paths resolve under this directory */
 void buf_set_documents_dir(const char *dir);
+const char *buf_get_documents_dir(void);
 void buf_resolve_path(const char *input, char *out, int outsz);
 
 /* filename completion in the documents dir; out begins with prefix. Returns 1

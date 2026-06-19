@@ -18,6 +18,10 @@ void buf_set_documents_dir(const char *dir) {
   if (dir) snprintf(g_documents_dir, sizeof(g_documents_dir), "%s", dir);
 }
 
+const char *buf_get_documents_dir(void) {
+  return g_documents_dir;
+}
+
 /* Create the parent directories of `path` (mkdir -p of the dirname). */
 static void mkdir_parents(const char *path) {
   char tmp[1024];
