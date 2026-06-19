@@ -171,6 +171,74 @@ static void save_to_path(const char *path) {
   r_set_title(g_filename);
 }
 
+/* ---- wikilink navigation (Cmd-Enter follow, Cmd-Shift-Delete back) ---- */
+
+#define NAV_MAX 64
+typedef struct { char path[1024]; int line, col; } NavEntry;
+static NavEntry nav_back[NAV_MAX];
+static int nav_back_count;
+
+static void nav_push(const char *path, int line, int col) {
+  if (!path || !path[0]) return;   /* nothing to return to (unsaved scratch) */
+  if (nav_back_count == NAV_MAX) {
+    memmove(&nav_back[0], &nav_back[1], sizeof(NavEntry) * (NAV_MAX - 1));
+    nav_back_count--;
+  }
+  snprintf(nav_back[nav_back_count].path, sizeof(nav_back[0].path), "%s", path);
+  nav_back[nav_back_count].line = line;
+  nav_back[nav_back_count].col = col;
+  nav_back_count++;
+}
+
+/* If the cursor is within a [[wikilink]] on the current line, copy its target
+   (text between the brackets) to `out` and return 1. */
+static int wikilink_at_cursor(char *out, int outsz) {
+  Line *l = &lines[cursor_line];
+  int c = cursor_col;
+  for (int i = 0; i + 1 < l->len; i++) {
+    if (l->text[i] == '[' && l->text[i+1] == '[') {
+      int j = i + 2;
+      while (j + 1 < l->len && !(l->text[j] == ']' && l->text[j+1] == ']')) {
+        if (l->text[j] == '[' && l->text[j+1] == '[') break;   /* nested open */
+        j++;
+      }
+      if (j + 1 < l->len && l->text[j] == ']' && l->text[j+1] == ']') {
+        if (c >= i && c <= j + 2) {                 /* cursor within [[ … ]] */
+          int len = j - (i + 2);
+          if (len <= 0 || len >= outsz) return 0;
+          memcpy(out, l->text + i + 2, len);
+          out[len] = '\0';
+          return 1;
+        }
+        i = j + 1;                                  /* skip past this span */
+      }
+    }
+  }
+  return 0;
+}
+
+static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
+  char target[1024];
+  if (!wikilink_at_cursor(target, sizeof(target))) {
+    status_set("No wikilink at cursor");
+    return;
+  }
+  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
+  nav_push(g_filepath, cursor_line, cursor_col);
+  open_or_create_file(target);
+}
+
+static void cmd_nav_back(void) {          /* Cmd-Shift-Delete */
+  if (nav_back_count == 0) { status_set("No previous note"); return; }
+  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
+  NavEntry e = nav_back[--nav_back_count];
+  open_or_create_file(e.path);
+  cursor_line = e.line; cursor_col = e.col;
+  cursor_clamp();
+  cursor_target_col = cursor_col;
+  ensure_cursor_visible();
+}
+
 /* word wrapping, cursor navigation, editing, and markdown rendering
    now in navigation.c, editing.c, md_render.c (accessed via shims above) */
 
@@ -1164,6 +1232,16 @@ int editor_main(int argc, char **argv) {
             /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
                Esc dismiss) — only intercepts when the dropdown is showing */
             if (wl_active && handle_wikilink_key(sym)) break;
+
+            /* 1c. Wikilink navigation: Cmd-Enter follows the link under the
+               cursor; Cmd-Shift-Delete goes back to the previous note */
+            if ((e.key.keysym.mod & KMOD_GUI) && sym == SDLK_RETURN) {
+              cmd_follow_wikilink(); break;
+            }
+            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+                (sym == SDLK_BACKSPACE || sym == SDLK_DELETE)) {
+              cmd_nav_back(); break;
+            }
 
             /* 2. Prefix starters */
             if (ctrl && sym == SDLK_x) { ctrl_x_prefix = 1; break; }
