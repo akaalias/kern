@@ -113,6 +113,7 @@ static ViewState   g_vs = {0};
 
 /* function shims: old names → new md_* API */
 #define list_indent(l)    md_list_indent(l)
+#define list_marker_width(l) md_list_marker_width(l)
 #define is_heading(l)     md_is_heading(l)
 #define draw_md_text(text,start,end,x,y,col,head,track) \
   md_draw_text((text),(start),(end),(x),(y),(col),(head),(track),&g_cursor_x)
@@ -223,6 +224,16 @@ static void process_frame(mu_Context *ctx) {
       int nrows = get_wrap_breaks(l, starts, 256);
       int row_start = starts[wrap_off];
       int row_end = (wrap_off + 1 < nrows) ? starts[wrap_off + 1] : l->len;
+      /* a heading's "### " prefix hangs in the LEFT margin (text flush at the
+         page edge), so text/highlights flow from after it — unless the caret is
+         at the line start, where the markers fold back inline for editing */
+      int dstart = row_start;
+      if (is_heading(l) && row_start == 0) {
+        int hpre = md_heading_prefix_len(l);
+        if (!(ln == cursor_line && cursor_col <= hpre)) dstart = hpre;
+      }
+      /* match the text's indent so highlights align (incl. list hanging indent) */
+      int row_indent = list_indent(l) + (row_start > 0 ? list_marker_width(l) : 0);
 
       /* draw mark region highlight */
       if (mark_active && row_end > row_start) {
@@ -233,10 +244,10 @@ static void process_frame(mu_Context *ctx) {
           int hl_end   = (ln == el) ? ec : lines[ln].len;
           /* clamp to this visual row */
           if (hl_start < row_end && hl_end > row_start) {
-            int hs = hl_start < row_start ? row_start : hl_start;
+            int hs = hl_start < dstart ? dstart : hl_start;
             int he = hl_end > row_end ? row_end : hl_end;
             if (he > hs) {
-              int hx = page_margin() + r_get_text_width(l->text + row_start, hs - row_start);
+              int hx = page_margin() + row_indent + r_get_text_width(l->text + dstart, hs - dstart);
               int hw = r_get_text_width(l->text + hs, he - hs);
               int font_h = r_get_text_height();
               mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
@@ -258,9 +269,9 @@ static void process_frame(mu_Context *ctx) {
 
       /* draw search highlights on this visual row */
       if (search_active && search_len > 0 && row_end > row_start && (row_end - row_start) >= search_len) {
-        for (int sc = row_start; sc <= row_end - search_len; sc++) {
+        for (int sc = dstart; sc <= row_end - search_len; sc++) {
           if (strncasecmp(l->text + sc, search_buf, search_len) == 0) {
-            int hx = page_margin() + r_get_text_width(l->text + row_start, sc - row_start);
+            int hx = page_margin() + row_indent + r_get_text_width(l->text + dstart, sc - dstart);
             int hw = r_get_text_width(l->text + sc, search_len);
             int font_h = r_get_text_height();
             /* current match gets brighter highlight */
@@ -776,14 +787,40 @@ static void do_render(void) {
   g_cursor_x = -1;
   for (int i = 0; i < g_vis_row_count; i++) {
     VisRow *vr = &g_vis_rows[i];
-    int indent = list_indent(&lines[vr->ln]);
+    Line *L = &lines[vr->ln];
+    int indent = list_indent(L);
+    /* hang wrapped list text under the item text, not the marker */
+    if (vr->row_start > 0) indent += list_marker_width(L);
     /* track cursor if it's on this row */
     int track = -1;
     if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
         (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
       track = cursor_col;
     }
-    draw_md_text(lines[vr->ln].text, vr->row_start, vr->row_end,
+
+    int draw_start = vr->row_start;
+    if (vr->heading && vr->row_start == 0) {
+      int prefix = md_heading_prefix_len(L);
+      /* reveal the markers inline when the caret is at the line start so they
+         can be edited/removed; otherwise hang them in the left margin */
+      int reveal = (vr->ln == cursor_line && cursor_col <= prefix);
+      if (!reveal) {
+        int hcount = prefix - 1;
+        if (hcount > 23) hcount = 23;
+        char hashes[24];
+        memset(hashes, '#', hcount); hashes[hcount] = '\0';
+        r_set_font_style(FONT_BOLD);
+        int hw = r_get_text_width(hashes, hcount);
+        int gap = r_get_text_width(" ", 1);
+        int hx = page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
+        if (hx < 2) hx = 2;
+        r_draw_text(hashes, mu_vec2(hx, vr->py), mu_color(110, 110, 115, 255));
+        r_set_font_style(FONT_REGULAR);
+        if (prefix <= vr->row_end) draw_start = prefix;
+      }
+    }
+
+    draw_md_text(L->text, draw_start, vr->row_end,
                  page_margin() + indent, vr->py, text_color, vr->heading, track);
     r_set_font_style(FONT_REGULAR);
   }

@@ -16,11 +16,32 @@ int md_list_indent(Line *l) {
   return 0;
 }
 
+/* pixel width of a list item's marker ("- " or "12. "), 0 if not a list item.
+   Used to hang-indent wrapped continuation rows under the item text. */
+int md_list_marker_width(Line *l) {
+  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
+    return r_get_text_width("- ", 2);
+  }
+  int i = 0;
+  while (i < l->len && l->text[i] >= '0' && l->text[i] <= '9') i++;
+  if (i > 0 && i + 1 < l->len && l->text[i] == '.' && l->text[i+1] == ' ') {
+    return r_get_text_width(l->text, i + 2);  /* digits + ". " */
+  }
+  return 0;
+}
+
 int md_is_heading(Line *l) {
   if (l->len < 2) return 0;
   int i = 0;
   while (i < l->len && l->text[i] == '#') i++;
   return (i > 0 && i < l->len && l->text[i] == ' ');
+}
+
+int md_heading_prefix_len(Line *l) {
+  if (!md_is_heading(l)) return 0;
+  int i = 0;
+  while (i < l->len && l->text[i] == '#') i++;
+  return i + 1;  /* the hashes plus the single space after them */
 }
 
 float md_draw_text(const char *text, int start, int end,
