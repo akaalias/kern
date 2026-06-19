@@ -684,7 +684,7 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
       save_to_path(g_filepath);
     } else {
       minibuf_active = 1;
-      minibuf_completing = 0;
+      minibuf_completing = 1;       /* hint existing filenames (Tab to accept) */
       minibuf_suggest[0] = '\0';
       snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
       minibuf_text[0] = '\0';
@@ -708,7 +708,7 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     return 1;
   }
   if (ctrl && sym == SDLK_w) {   /* C-x C-w: write-file (save as) */
-    minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+    minibuf_active = 1; minibuf_completing = 1; minibuf_suggest[0] = '\0';
     snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
     minibuf_text[0] = '\0'; minibuf_len = 0;
     minibuf_callback = save_to_path;
