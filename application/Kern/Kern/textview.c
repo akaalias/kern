@@ -171,23 +171,32 @@ static void save_to_path(const char *path) {
   r_set_title(g_filename);
 }
 
-/* ---- wikilink navigation (Cmd-Enter follow, Cmd-Shift-Delete back) ---- */
+/* ---- wikilink navigation (Cmd-Enter follow, Cmd-Shift-←/→ back/forward) ---- */
 
 #define NAV_MAX 64
 typedef struct { char path[1024]; int line, col; } NavEntry;
-static NavEntry nav_back[NAV_MAX];
-static int nav_back_count;
+static NavEntry nav_back[NAV_MAX]; static int nav_back_count;
+static NavEntry nav_fwd[NAV_MAX];  static int nav_fwd_count;
 
-static void nav_push(const char *path, int line, int col) {
-  if (!path || !path[0]) return;   /* nothing to return to (unsaved scratch) */
-  if (nav_back_count == NAV_MAX) {
-    memmove(&nav_back[0], &nav_back[1], sizeof(NavEntry) * (NAV_MAX - 1));
-    nav_back_count--;
+static void nav_stack_push(NavEntry *stack, int *count,
+                           const char *path, int line, int col) {
+  if (!path || !path[0]) return;   /* nothing to remember (unsaved scratch) */
+  if (*count == NAV_MAX) {
+    memmove(&stack[0], &stack[1], sizeof(NavEntry) * (NAV_MAX - 1));
+    (*count)--;
   }
-  snprintf(nav_back[nav_back_count].path, sizeof(nav_back[0].path), "%s", path);
-  nav_back[nav_back_count].line = line;
-  nav_back[nav_back_count].col = col;
-  nav_back_count++;
+  snprintf(stack[*count].path, sizeof(stack[0].path), "%s", path);
+  stack[*count].line = line;
+  stack[*count].col = col;
+  (*count)++;
+}
+
+static void nav_goto(const NavEntry *e) {
+  open_or_create_file(e->path);
+  cursor_line = e->line; cursor_col = e->col;
+  cursor_clamp();
+  cursor_target_col = cursor_col;
+  ensure_cursor_visible();
 }
 
 /* If the cursor is within a [[wikilink]] on the current line, copy its target
@@ -224,19 +233,25 @@ static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
     return;
   }
   if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
-  nav_push(g_filepath, cursor_line, cursor_col);
+  nav_stack_push(nav_back, &nav_back_count, g_filepath, cursor_line, cursor_col);
+  nav_fwd_count = 0;   /* a new jump starts a fresh branch — drop forward history */
   open_or_create_file(target);
 }
 
-static void cmd_nav_back(void) {          /* Cmd-Shift-Delete */
+static void cmd_nav_back(void) {          /* Cmd-Shift-Left */
   if (nav_back_count == 0) { status_set("No previous note"); return; }
   if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
+  nav_stack_push(nav_fwd, &nav_fwd_count, g_filepath, cursor_line, cursor_col);
   NavEntry e = nav_back[--nav_back_count];
-  open_or_create_file(e.path);
-  cursor_line = e.line; cursor_col = e.col;
-  cursor_clamp();
-  cursor_target_col = cursor_col;
-  ensure_cursor_visible();
+  nav_goto(&e);
+}
+
+static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
+  if (nav_fwd_count == 0) { status_set("No next note"); return; }
+  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
+  nav_stack_push(nav_back, &nav_back_count, g_filepath, cursor_line, cursor_col);
+  NavEntry e = nav_fwd[--nav_fwd_count];
+  nav_goto(&e);
 }
 
 /* word wrapping, cursor navigation, editing, and markdown rendering
@@ -1241,13 +1256,17 @@ int editor_main(int argc, char **argv) {
             if (wl_active && handle_wikilink_key(sym)) break;
 
             /* 1c. Wikilink navigation: Cmd-Enter follows the link under the
-               cursor; Cmd-Shift-Delete goes back to the previous note */
+               cursor; Cmd-Shift-Left/Right go back/forward through history */
             if ((e.key.keysym.mod & KMOD_GUI) && sym == SDLK_RETURN) {
               cmd_follow_wikilink(); break;
             }
             if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
-                (sym == SDLK_BACKSPACE || sym == SDLK_DELETE)) {
+                sym == SDLK_LEFT) {
               cmd_nav_back(); break;
+            }
+            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+                sym == SDLK_RIGHT) {
+              cmd_nav_forward(); break;
             }
 
             /* 2. Prefix starters */
