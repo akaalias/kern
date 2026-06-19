@@ -936,7 +936,7 @@ static void do_render(void) {
     }
     box_w += 18;
     if (box_w < 140) box_w = 140;
-    int box_h = wl_count * item_h + 4;
+    int box_h = wl_count * item_h;   /* exact fit — items tile edge to edge */
     int bx = g_cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
                         - r_get_text_width("[[", 2);
     if (bx < page_margin()) bx = page_margin();
@@ -945,10 +945,10 @@ static void do_render(void) {
     r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
     r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
     for (int i = 0; i < wl_count; i++) {
-      int iy = by + 2 + i * item_h;
+      int iy = by + i * item_h;
       if (i == wl_sel)
-        r_draw_rect(mu_rect(bx, iy - 2, box_w, item_h), mu_color(60, 100, 160, 230));
-      r_draw_text(wl_matches[i], mu_vec2(bx + 9, iy + (item_h - fh) / 2 - 2),
+        r_draw_rect(mu_rect(bx, iy, box_w, item_h), mu_color(104, 68, 158, 235));
+      r_draw_text(wl_matches[i], mu_vec2(bx + 9, iy + (item_h - fh) / 2),
                   mu_color(222, 218, 212, 255));
     }
   }
