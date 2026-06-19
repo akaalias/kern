@@ -35,18 +35,60 @@ Open/save paths resolve relative to that folder (reach it in Finder via
 
 ### Keybindings (Emacs-style)
 
-| Keys                | Action                          |
-|---------------------|---------------------------------|
-| `C-x C-f`           | Find/open file (minibuffer)     |
-| `C-x C-s`           | Save                            |
-| `C-x C-c`           | Quit                            |
-| `C-s` / `C-r`       | Incremental search fwd/back     |
-| `C-space`           | Set mark                        |
-| `C-w` / `M-w`       | Kill / copy region              |
-| `C-y`               | Yank                            |
-| `M-<` / `M->`       | Beginning / end of buffer       |
-| `Esc`               | Prefix / cancel, clear mark     |
-| `⌘F`                | Search with match highlights    |
+Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or Esc then D.
+
+**Files**
+
+| Keys      | Action                                            |
+|-----------|---------------------------------------------------|
+| `C-x C-f` | Find/open file (inline completion — Tab to accept)|
+| `C-x C-s` | Save                                              |
+| `C-x C-w` | Write file (save as)                              |
+| `C-x C-c` | Quit                                              |
+
+**Movement**
+
+| Keys          | Action                          |
+|---------------|---------------------------------|
+| `C-f` / `C-b` | Forward / backward char         |
+| `C-n` / `C-p` | Next / previous line            |
+| `C-a` / `C-e` | Start / end of line             |
+| `M-f` / `M-b` | Forward / backward word         |
+| `C-v` / `M-v` | Page down / up                  |
+| `M-<` / `M->` | Beginning / end of buffer       |
+| `C-l`         | Recenter (center → top → bottom)|
+| `M-g`         | Go to line                      |
+
+**Editing**
+
+| Keys                  | Action                              |
+|-----------------------|-------------------------------------|
+| `C-d`                 | Delete char forward                 |
+| `C-k`                 | Kill to end of line                 |
+| `M-d` / `M-⌫`         | Kill word forward / backward        |
+| `C-t`                 | Transpose characters                |
+| `C-o`                 | Open line                           |
+| `M-u` / `M-l` / `M-c` | Upcase / downcase / capitalize word |
+| `C-/`                 | Undo                                |
+
+**Selection & clipboard** (cut/copy/yank sync with the macOS clipboard)
+
+| Keys          | Action                     |
+|---------------|----------------------------|
+| `C-Space`     | Set mark                   |
+| `C-w` / `M-w` | Cut / copy region          |
+| `C-y`         | Yank (paste)               |
+| `C-x h`       | Select whole buffer        |
+| `C-x C-x`     | Exchange point & mark      |
+
+**Search & view**
+
+| Keys          | Action                          |
+|---------------|---------------------------------|
+| `C-s` / `C-r` | Incremental search fwd / back   |
+| `⌘F`          | Search with match highlights    |
+| `⌘=` / `⌘-`   | Increase / decrease font size   |
+| `Esc`         | Cancel / clear mark             |
 
 Markdown headings, bold, and italic are styled live as you type.
 
