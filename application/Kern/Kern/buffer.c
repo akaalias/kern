@@ -200,6 +200,7 @@ int buf_load_file(EditorState *ed, const char *path) {
   }
 
   free(buf);
+  ed->dirty = 0;   /* freshly loaded == matches disk */
   return 0;
 }
 
@@ -217,6 +218,7 @@ void buf_init_empty(EditorState *ed) {
   ed->cursor_line = 0;
   ed->cursor_col = 0;
   ed->cursor_target_col = 0;
+  ed->dirty = 0;   /* a fresh empty buffer has nothing to save */
 }
 
 int buf_save(EditorState *ed, const char *path) {
@@ -230,6 +232,7 @@ int buf_save(EditorState *ed, const char *path) {
   /* surface write/flush errors so the UI can report failure honestly */
   int ok = (ferror(f) == 0);
   if (fclose(f) != 0) ok = 0;
+  if (ok) ed->dirty = 0;   /* in sync with disk again */
   return ok ? 0 : -1;
 }
 

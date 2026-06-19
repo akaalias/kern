@@ -81,6 +81,9 @@ typedef struct {
   UndoOp undo_stack[MAX_UNDO];
   int    undo_top;    /* next write position */
   int    undo_count;  /* total available entries */
+
+  /* unsaved-changes flag (set on any edit, cleared on save) */
+  int dirty;
 } EditorState;
 
 /* ---- view state (UI, depends on SDL/microui) ---- */

@@ -1138,6 +1138,22 @@ int editor_main(int argc, char **argv) {
       }
     }
 
+    /* periodic auto-save: write the current file if it changed since the last
+       save. Cheap (just a dirty flag); skipped for the unsaved *scratch*
+       buffer (no path). */
+    {
+      const Uint32 AUTOSAVE_INTERVAL_MS = 3000;   /* "every X seconds" */
+      static Uint32 last_autosave = 0;
+      Uint32 now = SDL_GetTicks();
+      if (last_autosave == 0) last_autosave = now;
+      if (now - last_autosave >= AUTOSAVE_INTERVAL_MS) {
+        last_autosave = now;
+        if (g_ed.dirty && g_filepath[0] && buf_save(&g_ed, g_filepath) == 0) {
+          status_set("Auto-saved");
+        }
+      }
+    }
+
     do_render();
   }
 

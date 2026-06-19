@@ -17,6 +17,7 @@ static void undo_op_free(UndoOp *op) {
 void undo_push_op(EditorState *ed, UndoOpType type, int line, int col,
                    const char *text, int text_len)
 {
+  ed->dirty = 1;   /* any recorded edit marks the buffer unsaved */
   /* coalesce consecutive inserts at adjacent positions */
   if (type == UNDO_INSERT && ed->undo_top > 0) {
     UndoOp *prev = &ed->undo_stack[(ed->undo_top - 1) % MAX_UNDO];
@@ -179,6 +180,7 @@ static void undo_apply_one(EditorState *ed, UndoOp *op) {
 void undo_perform(EditorState *ed) {
   if (ed->undo_top == 0) return;
 
+  ed->dirty = 1;   /* undoing changes the buffer relative to what's on disk */
   ed->undo_top--;
   UndoOp *op = &ed->undo_stack[ed->undo_top % MAX_UNDO];
 
