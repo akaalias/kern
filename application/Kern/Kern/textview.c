@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "renderer.h"
 #include "microui.h"
 #include "macos_style.h"
@@ -909,6 +910,30 @@ void editor_set_documents_dir(const char *path) {
   buf_set_documents_dir(path);
 }
 
+/* Open (or create) today's daily note "YYYY-MM-DD.md" in the documents folder.
+   A brand-new note is seeded with a date heading and written to disk. */
+static void load_daily_note(void) {
+  time_t t = time(NULL);
+  struct tm lt;
+  localtime_r(&t, &lt);
+
+  char fname[32];
+  strftime(fname, sizeof(fname), "%Y-%m-%d.md", &lt);
+  buf_resolve_path(fname, g_filepath, sizeof(g_filepath));
+  const char *slash = strrchr(g_filepath, '/');
+  g_filename = slash ? slash + 1 : g_filepath;
+
+  if (buf_load_file(&g_ed, g_filepath) != 0) {
+    /* new note: seed a date heading + blank line, then create it on disk */
+    buf_init_empty(&g_ed);
+    char heading[64];
+    strftime(heading, sizeof(heading), "# %A, %B %d, %Y", &lt);
+    buf_insert_line_at(&g_ed, 0, heading, (int)strlen(heading));
+    cursor_line = 1; cursor_col = 0; cursor_target_col = 0;
+    buf_save(&g_ed, g_filepath);
+  }
+}
+
 int editor_main(int argc, char **argv) {
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_filepath, sizeof(g_filepath), "%s", argv[1]);
@@ -917,7 +942,8 @@ int editor_main(int argc, char **argv) {
     if (slash) g_filename = slash + 1;
     printf("loaded %d lines\n", line_count);
   } else {
-    buf_init_empty(&g_ed);
+    /* no file given: open today's daily note instead of an empty scratch buffer */
+    load_daily_note();
   }
 
   SDL_Init(SDL_INIT_EVERYTHING);
