@@ -560,6 +560,7 @@ static int handle_minibuf_key(int sym, int ctrl) {
     minibuf_active = 0;
     minibuf_completing = 0;
     minibuf_suggest[0] = '\0';
+    suppress_next_text = 0;   /* never let a stale suppression leak into the buffer */
     if (minibuf_callback) minibuf_callback(minibuf_text);
     minibuf_callback = NULL;
     return 1;
@@ -568,6 +569,7 @@ static int handle_minibuf_key(int sym, int ctrl) {
     minibuf_active = 0;
     minibuf_completing = 0;
     minibuf_suggest[0] = '\0';
+    suppress_next_text = 0;
     minibuf_callback = NULL;
     status_set("Quit");
     return 1;
@@ -580,7 +582,8 @@ static int handle_minibuf_key(int sym, int ctrl) {
       minibuf_len = (int)strlen(minibuf_text);
       minibuf_refresh_completion();
     }
-    suppress_next_text = 1;   /* swallow any tab character event */
+    /* Tab emits no text-input character, so nothing needs suppressing here.
+       Setting the flag would linger and eat the next real keystroke. */
     return 1;
   }
   if (sym == SDLK_BACKSPACE) {
