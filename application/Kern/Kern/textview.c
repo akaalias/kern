@@ -763,11 +763,90 @@ static int text_height(mu_Font font) {
 
 /* ---- render pass (callable from main loop and resize watcher) ---- */
 
+/* ---- wikilink autocomplete ([[ … ]]) ---- */
+#define WL_MAX 6
+static int  wl_active;
+static int  wl_count;
+static int  wl_sel;
+static int  wl_query_col;
+static int  wl_query_line;
+static char wl_query[256];
+static char wl_last_query[256];
+static char wl_matches[WL_MAX][256];
+static char wl_suppressed[256];
+static int  wl_has_suppress;
+
+/* Recompute the active "[[" query before the caret and its match list. */
+static void wikilink_refresh(void) {
+  wl_active = 0;
+  if (minibuf_active || search_active) return;
+  Line *l = &lines[cursor_line];
+  int c = cursor_col;
+  if (c < 2) return;
+  int open = -1;
+  for (int i = c - 2; i >= 0; i--) {
+    if (l->text[i] == ']') return;                       /* closed / not a link */
+    if (l->text[i] == '[' && l->text[i+1] == '[') { open = i; break; }
+  }
+  if (open < 0) return;
+  int qstart = open + 2;
+  for (int i = qstart; i < c; i++)
+    if (l->text[i] == '[' || l->text[i] == ']') return;  /* query must be clean */
+  int qlen = c - qstart;
+  if (qlen >= (int)sizeof(wl_query)) return;
+  memcpy(wl_query, l->text + qstart, qlen);
+  wl_query[qlen] = '\0';
+
+  if (strcmp(wl_query, wl_last_query) != 0) {             /* new query → top item */
+    wl_sel = 0;
+    snprintf(wl_last_query, sizeof(wl_last_query), "%s", wl_query);
+  }
+  if (wl_has_suppress && strcmp(wl_query, wl_suppressed) == 0) return;  /* Esc-dismissed */
+  wl_has_suppress = 0;
+
+  wl_count = buf_list_matches(wl_query, wl_matches, WL_MAX);
+  if (wl_count <= 0) return;
+  if (wl_sel >= wl_count) wl_sel = wl_count - 1;
+  if (wl_sel < 0) wl_sel = 0;
+  wl_query_col = qstart;
+  wl_query_line = cursor_line;
+  wl_active = 1;
+}
+
+/* Replace the typed "[[query" with the selected match, closed: "[[Name]]". */
+static int wikilink_accept(void) {
+  if (!wl_active || wl_count == 0) return 0;
+  int qlen = (int)strlen(wl_query);
+  if (cursor_line != wl_query_line || cursor_col != wl_query_col + qlen) return 0;
+  undo_begin_group(&g_ed);
+  for (int i = 0; i < qlen; i++) editor_backspace();   /* delete the typed query */
+  editor_insert_char(wl_matches[wl_sel]);              /* insert the note name */
+  editor_insert_char("]]");                            /* close the link */
+  undo_end_group(&g_ed);
+  wl_active = 0;
+  ensure_cursor_visible();
+  return 1;
+}
+
+static int handle_wikilink_key(int sym) {
+  if (sym == SDLK_RETURN || sym == SDLK_TAB) return wikilink_accept();
+  if (sym == SDLK_DOWN) { wl_sel = (wl_sel + 1) % wl_count; return 1; }
+  if (sym == SDLK_UP)   { wl_sel = (wl_sel - 1 + wl_count) % wl_count; return 1; }
+  if (sym == SDLK_ESCAPE) {
+    snprintf(wl_suppressed, sizeof(wl_suppressed), "%s", wl_query);
+    wl_has_suppress = 1;
+    wl_active = 0;
+    return 1;
+  }
+  return 0;
+}
+
 static void do_render(void) {
   mu_Context *ctx = g_ctx;
   if (!ctx) return;
 
   process_frame(ctx);
+  wikilink_refresh();
 
   r_clear(mu_color(30, 30, 32, 255));
   mu_Command *cmd = NULL;
@@ -827,6 +906,7 @@ static void do_render(void) {
   }
 
   /* draw cursor (post-render, uses markdown-aware x position) */
+  int cursor_py = -1;
   if (g_cursor_x >= 0) {
     int font_h = r_get_text_height();
     /* find the py for the cursor row */
@@ -836,8 +916,40 @@ static void do_render(void) {
           (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
         r_draw_rect(mu_rect(g_cursor_x, vr->py, 3, font_h),
                     mu_color(90, 200, 250, 255));
+        cursor_py = vr->py;
         break;
       }
+    }
+  }
+
+  /* wikilink autocomplete dropdown, anchored under the "[[" query */
+  if (wl_active && wl_count > 0 && g_cursor_x >= 0 && cursor_py >= 0) {
+    r_set_font_style(FONT_REGULAR);
+    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
+    int fh = r_get_text_height();
+    int lh = line_height();
+    int item_h = fh + 6;
+    int box_w = 0;
+    for (int i = 0; i < wl_count; i++) {
+      int w = r_get_text_width(wl_matches[i], (int)strlen(wl_matches[i]));
+      if (w > box_w) box_w = w;
+    }
+    box_w += 18;
+    if (box_w < 140) box_w = 140;
+    int box_h = wl_count * item_h + 4;
+    int bx = g_cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
+                        - r_get_text_width("[[", 2);
+    if (bx < page_margin()) bx = page_margin();
+    int by = cursor_py + lh;
+    /* border + background */
+    r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
+    r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
+    for (int i = 0; i < wl_count; i++) {
+      int iy = by + 2 + i * item_h;
+      if (i == wl_sel)
+        r_draw_rect(mu_rect(bx, iy - 2, box_w, item_h), mu_color(60, 100, 160, 230));
+      r_draw_text(wl_matches[i], mu_vec2(bx + 9, iy + (item_h - fh) / 2 - 2),
+                  mu_color(222, 218, 212, 255));
     }
   }
 
@@ -1048,6 +1160,10 @@ int editor_main(int argc, char **argv) {
             if (search_active && handle_search_key(sym, ctrl)) break;
             if (ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
             if (esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
+
+            /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
+               Esc dismiss) — only intercepts when the dropdown is showing */
+            if (wl_active && handle_wikilink_key(sym)) break;
 
             /* 2. Prefix starters */
             if (ctrl && sym == SDLK_x) { ctrl_x_prefix = 1; break; }

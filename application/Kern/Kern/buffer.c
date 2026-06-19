@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <strings.h>
 #include "buffer.h"
 
 /* ---- sandboxed document location ---- */
@@ -105,6 +106,36 @@ int buf_complete_filename(const char *prefix, char *out, int outsz) {
   if (subdir[0]) snprintf(out, outsz, "%s/%s", subdir, best);
   else           snprintf(out, outsz, "%s", best);
   return 1;
+}
+
+/* Collect up to `max` existing filenames in the documents dir whose names start
+   with `prefix` (case-insensitive), alphabetically. Returns the count. Used for
+   the wikilink autocomplete dropdown. */
+int buf_list_matches(const char *prefix, char out[][256], int max) {
+  if (g_documents_dir[0] == '\0' || max <= 0) return 0;
+  DIR *d = opendir(g_documents_dir);
+  if (!d) return 0;
+
+  size_t plen = strlen(prefix);
+  int count = 0;
+  struct dirent *e;
+  while ((e = readdir(d)) != NULL) {
+    const char *name = e->d_name;
+    if (name[0] == '.') continue;                       /* skip ., .., hidden */
+    if (strlen(name) >= 256) continue;
+    if (plen > 0 && strncasecmp(name, prefix, plen) != 0) continue;
+
+    /* insert into out[] keeping it alphabetical, capped at max */
+    int idx = 0;
+    while (idx < count && strcasecmp(out[idx], name) < 0) idx++;
+    if (idx >= max) continue;                           /* sorts after a full list */
+    int end = (count < max) ? count : max - 1;          /* last slot to shift into */
+    for (int j = end; j > idx; j--) memcpy(out[j], out[j-1], 256);
+    snprintf(out[idx], 256, "%s", name);
+    if (count < max) count++;
+  }
+  closedir(d);
+  return count;
 }
 
 /* ---- line operations ---- */

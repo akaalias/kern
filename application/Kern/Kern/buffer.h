@@ -27,6 +27,10 @@ void buf_resolve_path(const char *input, char *out, int outsz);
    if a longer existing match was found, else 0. */
 int  buf_complete_filename(const char *prefix, char *out, int outsz);
 
+/* up to `max` filenames in the documents dir starting with `prefix`
+   (case-insensitive, alphabetical); returns the count. For wikilink completion. */
+int  buf_list_matches(const char *prefix, char out[][256], int max);
+
 /* kill buffer */
 void buf_kill_set(EditorState *ed, const char *text, int len);
 void buf_kill_append(EditorState *ed, const char *text, int len);
