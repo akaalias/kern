@@ -860,6 +860,13 @@ static void wikilink_refresh(void) {
   int qstart = open + 2;
   for (int i = qstart; i < c; i++)
     if (l->text[i] == '[' || l->text[i] == ']') return;  /* query must be clean */
+  /* if this "[[" is already closed by a "]]" ahead of the caret, it's an
+     existing link being edited — not a query being typed. Don't show the
+     dropdown (so Cmd-Enter navigates instead of rewriting the link). */
+  for (int i = c; i + 1 < l->len; i++) {
+    if (l->text[i] == '[' && l->text[i+1] == '[') break;     /* next link starts */
+    if (l->text[i] == ']' && l->text[i+1] == ']') return;    /* already closed */
+  }
   int qlen = c - qstart;
   if (qlen >= (int)sizeof(wl_query)) return;
   memcpy(wl_query, l->text + qstart, qlen);
