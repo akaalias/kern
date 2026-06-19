@@ -65,5 +65,8 @@ application/Kern/
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Includes microui (© rxi) and SDL2 (zlib), each
-under their own licenses.
+MIT — see [LICENSE](LICENSE). Includes microui (© rxi), SDL2 (zlib), and
+stb_truetype (public domain), each under their own licenses. Typeset in the
+[iA Writer](https://github.com/iaolo/iA-Fonts) Quattro & Mono typefaces
+(© Information Architects), used under the SIL Open Font License 1.1 — see
+[OFL.txt](application/Kern/Kern/OFL.txt).

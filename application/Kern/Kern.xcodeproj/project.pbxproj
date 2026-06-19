@@ -263,7 +263,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/include",
 				);
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Typeset in iA Writer Quattro & Mono (c) Information Architects, under the SIL Open Font License 1.1 (see OFL.txt).";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -331,7 +331,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/include",
 				);
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Typeset in iA Writer Quattro & Mono (c) Information Architects, under the SIL Open Font License 1.1 (see OFL.txt).";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
