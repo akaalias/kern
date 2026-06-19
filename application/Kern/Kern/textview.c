@@ -361,8 +361,9 @@ static void cmd_previous_line(void) {
   if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
   ensure_cursor_visible();
 }
+static void clipboard_set_from_kill(void);  /* defined below */
 static void cmd_kill_line(void) {
-  mark_clear(); emacs_kill_line(); ensure_cursor_visible();
+  mark_clear(); emacs_kill_line(); clipboard_set_from_kill(); ensure_cursor_visible();
 }
 /* mirror the kill buffer to the macOS system clipboard */
 static void clipboard_set_from_kill(void) {
