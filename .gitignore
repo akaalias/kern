@@ -23,3 +23,6 @@ new.txt
 
 # macOS
 .DS_Store
+
+# Claude Code local session/settings
+.claude/
