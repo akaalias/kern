@@ -96,13 +96,15 @@ Markdown headings, bold, and italic are styled live as you type.
 
 ```
 application/Kern/
-  Kern.xcodeproj         the app project (open this)
-  Kern/                  Swift app shell + the C editor sources:
-                                KernApp.swift, bridging header,
-                                textview.c, buffer/editing/navigation/undo,
-                                md_render, renderer, macos_style, microui,
-                                stb_truetype, fonts
-  Vendor/SDL2/                vendored SDL2 static lib + headers
+  Kern.xcodeproj    the app project (open this)
+  Kern/
+    App/            SwiftUI shell, bridging header, asset catalog
+    Editor/         the C editor: textview, buffer, editing, navigation,
+                    undo, md_render, editor_types
+    Platform/       SDL/GL renderer + macOS window chrome
+    ThirdParty/     microui, stb_truetype, atlas
+    Resources/      iA Writer fonts + OFL.txt
+  Vendor/SDL2/      vendored SDL2 static lib + headers
 ```
 
 ## License
@@ -111,4 +113,4 @@ MIT — see [LICENSE](LICENSE). Includes microui (© rxi), SDL2 (zlib), and
 stb_truetype (public domain), each under their own licenses. Typeset in the
 [iA Writer](https://github.com/iaolo/iA-Fonts) Quattro & Mono typefaces
 (© Information Architects), used under the SIL Open Font License 1.1 — see
-[OFL.txt](application/Kern/Kern/OFL.txt).
+[OFL.txt](application/Kern/Kern/Resources/OFL.txt).
