@@ -150,12 +150,33 @@ void ed_emacs_kill_line(EditorState *ed) {
   ed->last_kill_was_k = 1;
 }
 
+/* Split the current line at the cursor with NO markdown auto-continuation.
+   Used by yank so pasted text is reproduced verbatim (ed_enter would re-add
+   list markers, doubling them on paste). */
+static void ed_split_plain(EditorState *ed) {
+  Line *l = &ed->lines[ed->cursor_line];
+  undo_push_op(ed, UNDO_SPLIT_LINE, ed->cursor_line, ed->cursor_col, NULL, 0);
+  int rest_len = l->len - ed->cursor_col;
+  char *new_text = malloc(rest_len + 1);
+  memcpy(new_text, l->text + ed->cursor_col, rest_len);
+  new_text[rest_len] = '\0';
+  buf_insert_line_at(ed, ed->cursor_line + 1, new_text, rest_len);
+  free(new_text);
+  l = &ed->lines[ed->cursor_line];
+  l->len = ed->cursor_col;
+  l->text[l->len] = '\0';
+  line_dirty(l);
+  ed->cursor_line++;
+  ed->cursor_col = 0;
+  ed->cursor_target_col = 0;
+}
+
 void ed_emacs_yank(EditorState *ed) {
   if (!ed->kill_buf || ed->kill_len == 0) return;
   undo_begin_group(ed);
   for (int i = 0; i < ed->kill_len; i++) {
     if (ed->kill_buf[i] == '\n') {
-      ed_enter(ed);
+      ed_split_plain(ed);   /* verbatim — no list/heading auto-continuation */
     } else {
       char ch[2] = { ed->kill_buf[i], 0 };
       ed_insert_char(ed, ch);
