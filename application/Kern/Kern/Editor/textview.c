@@ -304,6 +304,14 @@ static void process_frame(mu_Context *ctx) {
   mu_begin(ctx);
   g_vis_row_count = 0;
 
+  /* Measure with the body font — the same state the text is drawn in (see the
+     r_set_font_* calls in do_render below). The previous frame ended with the
+     status bar's FONT_MONO active; measuring wrap breaks and selection-highlight
+     widths in mono while the text renders in the proportional body font skews
+     them, most visibly on indented list lines. */
+  r_set_font_size(font_size);
+  r_set_font_style(FONT_REGULAR);
+
   if (mu_begin_window_ex(ctx, "Writer",
         mu_rect(0, 0, win_w(), win_h()),
         MU_OPT_NOTITLE | MU_OPT_NORESIZE | MU_OPT_NOCLOSE | MU_OPT_NOSCROLL)) {
