@@ -918,11 +918,11 @@ static int wikilink_accept(void) {
   return 1;
 }
 
-static int handle_wikilink_key(int sym) {
+static int handle_wikilink_key(int sym, int ctrl) {
   if (sym == SDLK_RETURN || sym == SDLK_TAB) return wikilink_accept();
   if (sym == SDLK_DOWN) { wl_sel = (wl_sel + 1) % wl_count; return 1; }
   if (sym == SDLK_UP)   { wl_sel = (wl_sel - 1 + wl_count) % wl_count; return 1; }
-  if (sym == SDLK_ESCAPE) {
+  if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {   /* dismiss (Esc or C-g) */
     snprintf(wl_suppressed, sizeof(wl_suppressed), "%s", wl_query);
     wl_has_suppress = 1;
     wl_active = 0;
@@ -1253,7 +1253,7 @@ int editor_main(int argc, char **argv) {
 
             /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
                Esc dismiss) — only intercepts when the dropdown is showing */
-            if (wl_active && handle_wikilink_key(sym)) break;
+            if (wl_active && handle_wikilink_key(sym, ctrl)) break;
 
             /* 1c. Wikilink navigation: Cmd-Enter follows the link under the
                cursor; Cmd-Shift-Left/Right go back/forward through history */
