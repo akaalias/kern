@@ -1181,7 +1181,10 @@ static void do_render(void) {
     }
     box_w += 20; if (box_w < 220) box_w = 220;
     int box_h = bufsw_count * item_h;
-    int bx = 10;
+    /* align the list under where the input starts (after the prompt) */
+    int bx = 10 + r_get_text_width(minibuf_prompt, strlen(minibuf_prompt));
+    if (bx + box_w > win_w() - 10) bx = win_w() - box_w - 10;
+    if (bx < 10) bx = 10;
     int by = bar_y - box_h;
     r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
     r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
