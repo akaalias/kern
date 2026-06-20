@@ -259,6 +259,23 @@ static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
 
 /* ---- undo is now in undo.c (operation-based) ---- */
 
+/* True if a heading's "### " markers fit in the left margin (so they can hang
+   there). False in a narrow window, where they'd overlap the text and should
+   render inline instead. */
+static int heading_markers_hang(Line *l) {
+  if (!is_heading(l)) return 0;
+  int hcount = md_heading_prefix_len(l) - 1;
+  if (hcount > 23) hcount = 23;
+  char hashes[24];
+  memset(hashes, '#', hcount); hashes[hcount] = '\0';
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_BOLD);
+  int hw = r_get_text_width(hashes, hcount);
+  int gap = r_get_text_width(" ", 1);
+  r_set_font_style(saved);
+  return (page_margin() - gap - hw) >= 2;   /* headings carry no list indent */
+}
+
 /* ---- frame ---- */
 static void process_frame(mu_Context *ctx) {
   mu_begin(ctx);
@@ -314,7 +331,8 @@ static void process_frame(mu_Context *ctx) {
       int dstart = row_start;
       if (is_heading(l) && row_start == 0) {
         int hpre = md_heading_prefix_len(l);
-        if (!(ln == cursor_line && cursor_col <= hpre)) dstart = hpre;
+        int reveal = (ln == cursor_line && cursor_col <= hpre);
+        if (!reveal && heading_markers_hang(l)) dstart = hpre;
       }
       /* match the text's indent so highlights align (incl. list hanging indent) */
       int row_indent = list_indent(l) + (row_start > 0 ? list_marker_width(l) : 0);
@@ -974,7 +992,10 @@ static void do_render(void) {
       /* reveal the markers inline when the caret is at the line start so they
          can be edited/removed; otherwise hang them in the left margin */
       int reveal = (vr->ln == cursor_line && cursor_col <= prefix);
-      if (!reveal) {
+      /* hang markers in the margin only when there's room; otherwise let the
+         "## " render inline (draw_start stays at row_start) so it never
+         overlaps the text in a narrow window */
+      if (!reveal && heading_markers_hang(L)) {
         int hcount = prefix - 1;
         if (hcount > 23) hcount = 23;
         char hashes[24];
@@ -983,7 +1004,6 @@ static void do_render(void) {
         int hw = r_get_text_width(hashes, hcount);
         int gap = r_get_text_width(" ", 1);
         int hx = page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
-        if (hx < 2) hx = 2;
         r_draw_text(hashes, mu_vec2(hx, vr->py), mu_color(110, 110, 115, 255));
         r_set_font_style(FONT_REGULAR);
         if (prefix <= vr->row_end) draw_start = prefix;
