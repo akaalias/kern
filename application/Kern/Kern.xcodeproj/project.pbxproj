@@ -300,6 +300,7 @@
 					"-framework",
 					OpenGL,
 				);
+				ARCHS = arm64;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.Kern;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -368,6 +369,7 @@
 					"-framework",
 					OpenGL,
 				);
+				ARCHS = arm64;
 				PRODUCT_BUNDLE_IDENTIFIER = com.rondeau.Kern;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
