@@ -136,6 +136,28 @@ static void minibuf_refresh_completion(void) {
 
 /* ---- file operations (glue — uses status_set and r_set_title) ---- */
 
+/* ---- recent files (MRU) for C-x b buffer switching ---- */
+#define RECENT_MAX 32
+static char recent_files[RECENT_MAX][1024];
+static int  recent_count;
+
+static const char *path_base(const char *p) {
+  const char *s = strrchr(p, '/');
+  return s ? s + 1 : p;
+}
+
+/* move `path` to the front of the recent list (dedup, capped) */
+static void recent_push(const char *path) {
+  if (!path || !path[0]) return;
+  int top = -1;
+  for (int i = 0; i < recent_count; i++)
+    if (strcmp(recent_files[i], path) == 0) { top = i; break; }
+  if (top < 0) top = (recent_count < RECENT_MAX) ? recent_count++ : RECENT_MAX - 1;
+  for (int i = top; i > 0; i--)
+    memcpy(recent_files[i], recent_files[i-1], sizeof(recent_files[0]));
+  snprintf(recent_files[0], sizeof(recent_files[0]), "%s", path);
+}
+
 static void open_or_create_file(const char *path) {
   /* resolve the typed name to a path inside the sandbox documents dir */
   buf_resolve_path(path, g_filepath, sizeof(g_filepath));
@@ -155,6 +177,7 @@ static void open_or_create_file(const char *path) {
   char msg[256];
   snprintf(msg, sizeof(msg), existed ? "Opened %s" : "New file %s", g_filename);
   status_set(msg);
+  recent_push(g_filepath);
 }
 
 static void save_to_path(const char *path) {
@@ -669,7 +692,76 @@ static int check_binding(const KeyBinding *b, int kmod, int sym) {
 
 /* ---- modal key handlers ---- */
 
+/* ---- C-x b buffer switching (recent files + Tab-cycling list) ---- */
+static int  bufsw_active;
+static int  bufsw_listing;     /* the candidate list is shown (after first Tab) */
+static int  bufsw_sel;
+static int  bufsw_count;
+static char bufsw_default[1024];
+static char bufsw_cands[RECENT_MAX][1024];
+
+/* rebuild candidates from recents (excluding the current file), filtered by the
+   typed text (case-insensitive on the filename) */
+static void bufsw_filter(void) {
+  bufsw_count = 0;
+  size_t tl = strlen(minibuf_text);
+  for (int i = 1; i < recent_count && bufsw_count < RECENT_MAX; i++) {
+    const char *base = path_base(recent_files[i]);
+    if (tl == 0 || strncasecmp(base, minibuf_text, tl) == 0)
+      snprintf(bufsw_cands[bufsw_count++], sizeof(bufsw_cands[0]), "%s", recent_files[i]);
+  }
+  if (bufsw_sel >= bufsw_count) bufsw_sel = bufsw_count > 0 ? bufsw_count - 1 : 0;
+}
+
+static void bufsw_switch(const char *path) {
+  if (!path || !path[0]) { status_set("No other buffer"); return; }
+  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);   /* save current */
+  open_or_create_file(path);
+}
+
+static int handle_bufsw_key(int sym, int ctrl) {
+  if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {
+    bufsw_active = 0; minibuf_active = 0; minibuf_callback = NULL;
+    status_set("Quit");
+    return 1;
+  }
+  if (sym == SDLK_RETURN) {
+    bufsw_active = 0; minibuf_active = 0; minibuf_callback = NULL;
+    if (bufsw_listing && bufsw_count > 0) bufsw_switch(bufsw_cands[bufsw_sel]);
+    else if (minibuf_len == 0)            bufsw_switch(bufsw_default);
+    else                                  bufsw_switch(minibuf_text);
+    return 1;
+  }
+  if (sym == SDLK_TAB) {              /* first Tab shows the list; then cycles */
+    bufsw_filter();
+    if (bufsw_count == 0) return 1;
+    if (!bufsw_listing) { bufsw_listing = 1; bufsw_sel = 0; }
+    else bufsw_sel = (bufsw_sel + 1) % bufsw_count;
+    return 1;
+  }
+  if (sym == SDLK_BACKSPACE) {
+    if (minibuf_len > 0) { minibuf_len--; minibuf_text[minibuf_len] = '\0'; }
+    bufsw_filter();
+    return 1;
+  }
+  return 1;   /* modal: swallow other keys (letters still arrive via text input) */
+}
+
+static void cmd_switch_buffer(void) {   /* C-x b */
+  bufsw_default[0] = '\0';
+  if (recent_count >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_files[1]);
+  minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+  minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = NULL;
+  bufsw_active = 1; bufsw_listing = 0; bufsw_sel = 0; bufsw_count = 0;
+  if (bufsw_default[0])
+    snprintf(minibuf_prompt, sizeof(minibuf_prompt),
+             "Switch to buffer (default %s): ", path_base(bufsw_default));
+  else
+    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Switch to buffer: ");
+}
+
 static int handle_minibuf_key(int sym, int ctrl) {
+  if (bufsw_active) return handle_bufsw_key(sym, ctrl);
   if (sym == SDLK_RETURN) {
     minibuf_active = 0;
     minibuf_completing = 0;
@@ -830,6 +922,7 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
   }
   if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(); return 1; }   /* C-x h */
   if (ctrl && sym == SDLK_x)  { cmd_exchange_point_mark(); return 1; } /* C-x C-x */
+  if (!ctrl && sym == SDLK_b) { cmd_switch_buffer(); return 1; }       /* C-x b */
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -1075,6 +1168,31 @@ static void do_render(void) {
   /* top border */
   r_draw_rect(mu_rect(0, bar_y, win_w(), 1), mu_color(55, 55, 57, 255));
 
+  /* C-x b candidate list, stacked above the status bar (Tab cycles selection) */
+  if (bufsw_active && bufsw_listing && bufsw_count > 0) {
+    int fh = r_get_text_height();
+    int item_h = fh + 6;
+    int box_w = 0;
+    for (int i = 0; i < bufsw_count; i++) {
+      const char *b = path_base(bufsw_cands[i]);
+      int w = r_get_text_width(b, strlen(b));
+      if (w > box_w) box_w = w;
+    }
+    box_w += 20; if (box_w < 220) box_w = 220;
+    int box_h = bufsw_count * item_h;
+    int bx = 10;
+    int by = bar_y - box_h;
+    r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
+    r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
+    for (int i = 0; i < bufsw_count; i++) {
+      int iy = by + i * item_h;
+      if (i == bufsw_sel)
+        r_draw_rect(mu_rect(bx, iy, box_w, item_h), mu_color(104, 68, 158, 235));
+      r_draw_text(path_base(bufsw_cands[i]), mu_vec2(bx + 9, iy + (item_h - fh) / 2),
+                  mu_color(222, 218, 212, 255));
+    }
+  }
+
   /* left: minibuffer input, isearch, or status message */
   if (minibuf_active) {
     r_draw_text(minibuf_prompt, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
@@ -1167,6 +1285,7 @@ int editor_main(int argc, char **argv) {
     /* no file given: open today's daily note instead of an empty scratch buffer */
     load_daily_note();
   }
+  recent_push(g_filepath);   /* seed the MRU with the initially-opened file */
 
   SDL_Init(SDL_INIT_EVERYTHING);
   font_size = 26.0f;
@@ -1220,6 +1339,7 @@ int editor_main(int argc, char **argv) {
               minibuf_text[minibuf_len] = '\0';
             }
             minibuf_refresh_completion();
+            if (bufsw_active) bufsw_filter();
           } else if (search_active) {
             int tlen = strlen(e.text.text);
             if (search_len + tlen < (int)sizeof(search_buf) - 1) {
