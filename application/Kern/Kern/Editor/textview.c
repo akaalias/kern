@@ -750,6 +750,7 @@ static int handle_bufsw_key(int sym, int ctrl) {
 static void cmd_switch_buffer(void) {   /* C-x b */
   bufsw_default[0] = '\0';
   if (recent_count >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_files[1]);
+  suppress_next_text = 1;   /* swallow the "b" text event that triggered this */
   minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
   minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = NULL;
   bufsw_active = 1; bufsw_listing = 0; bufsw_sel = 0; bufsw_count = 0;
