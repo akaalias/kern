@@ -556,11 +556,11 @@ static void cmd_backward_word_alt(void) {
 }
 static void cmd_end_of_buffer_alt(void) {
   cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
-  cursor_target_col = cursor_col; ensure_cursor_visible(); suppress_next_text = 1;
+  cursor_target_col = cursor_col; ensure_cursor_visible();
 }
 static void cmd_beginning_of_buffer_alt(void) {
   cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
-  ensure_cursor_visible(); suppress_next_text = 1;
+  ensure_cursor_visible();
 }
 static void cmd_font_increase(void) {
   font_size += 2.0f; if (font_size > 72.0f) font_size = 72.0f;
@@ -1479,14 +1479,20 @@ int editor_main(int argc, char **argv) {
             /* 5. {Alt,Cmd}+Shift+. / +, → end/beginning of buffer
                (need shift check, not in table) */
             {
-              int altcmd = !!(e.key.keysym.mod & (KMOD_ALT | KMOD_GUI));
+              int alt = !!(e.key.keysym.mod & KMOD_ALT);
+              int cmd = !!(e.key.keysym.mod & KMOD_GUI);
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if (altcmd && shift && sym == SDLK_PERIOD) {
+              if ((alt || cmd) && shift && sym == SDLK_PERIOD) {
                 cmd_end_of_buffer_alt();
+                /* Option+key can emit a stray text glyph that races past the
+                   modifier guard, so swallow it; Cmd+key emits no text, and
+                   suppressing would eat the user's next real keystroke. */
+                if (alt) suppress_next_text = 1;
                 break;
               }
-              if (altcmd && shift && sym == SDLK_COMMA) {
+              if ((alt || cmd) && shift && sym == SDLK_COMMA) {
                 cmd_beginning_of_buffer_alt();
+                if (alt) suppress_next_text = 1;
                 break;
               }
             }
