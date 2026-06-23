@@ -1476,15 +1476,16 @@ int editor_main(int argc, char **argv) {
               if (matched) break;
             }
 
-            /* 5. Alt+Shift+. / Alt+Shift+, (need shift check, not in table) */
+            /* 5. {Alt,Cmd}+Shift+. / +, → end/beginning of buffer
+               (need shift check, not in table) */
             {
-              int alt = !!(e.key.keysym.mod & KMOD_ALT);
+              int altcmd = !!(e.key.keysym.mod & (KMOD_ALT | KMOD_GUI));
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if (alt && shift && sym == SDLK_PERIOD) {
+              if (altcmd && shift && sym == SDLK_PERIOD) {
                 cmd_end_of_buffer_alt();
                 break;
               }
-              if (alt && shift && sym == SDLK_COMMA) {
+              if (altcmd && shift && sym == SDLK_COMMA) {
                 cmd_beginning_of_buffer_alt();
                 break;
               }

@@ -87,8 +87,9 @@ static NSTextField *kern_label(NSString *s, CGFloat size, NSFontWeight weight,
 }
 
 /* Parse an emacs-style chord string ("C-x C-s", "M-w", "Cmd-=") into a row of
-   key-cap views. Space separates chords pressed in sequence (joined by "then");
-   keys within a chord are pressed together. */
+   key-cap views. " / " separates interchangeable alternatives (joined by "or");
+   a space separates chords pressed in sequence (joined by "then"); keys within a
+   chord are pressed together. */
 static NSView *kern_chord_view(NSString *spec) {
   NSStackView *row = [[NSStackView alloc] init];
   row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
@@ -96,49 +97,58 @@ static NSView *kern_chord_view(NSString *spec) {
   row.alignment = NSLayoutAttributeCenterY;
   row.translatesAutoresizingMaskIntoConstraints = NO;
 
-  NSArray<NSString *> *chords = [spec componentsSeparatedByString:@" "];
-  BOOL firstChord = YES;
-  for (NSString *chord in chords) {
-    if (chord.length == 0) continue;
-    if (!firstChord) {
-      [row addArrangedSubview:kern_label(@"then", 11.0, NSFontWeightRegular,
-                                         [NSColor colorWithWhite:0.55 alpha:1.0])];
+  NSColor *dim = [NSColor colorWithWhite:0.55 alpha:1.0];
+  NSArray<NSString *> *alts = [spec componentsSeparatedByString:@" / "];
+  BOOL firstAlt = YES;
+  for (NSString *alt in alts) {
+    if (!firstAlt) {
+      [row addArrangedSubview:kern_label(@"or", 11.0, NSFontWeightRegular, dim)];
     }
-    firstChord = NO;
+    firstAlt = NO;
 
-    /* a tight group of caps pressed together */
-    NSStackView *group = [[NSStackView alloc] init];
-    group.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    group.spacing = 3.0;
-    group.translatesAutoresizingMaskIntoConstraints = NO;
+    NSArray<NSString *> *chords = [alt componentsSeparatedByString:@" "];
+    BOOL firstChord = YES;
+    for (NSString *chord in chords) {
+      if (chord.length == 0) continue;
+      if (!firstChord) {
+        [row addArrangedSubview:kern_label(@"then", 11.0, NSFontWeightRegular, dim)];
+      }
+      firstChord = NO;
 
-    NSString *rest = chord;
-    /* peel modifier prefixes off the front */
-    struct { NSString *pfx; NSString *cap; } mods[] = {
-      { @"C-", @"⌃" },   /* ⌃ Control */
-      { @"M-", @"⌥" },   /* ⌥ Option  */
-      { @"S-", @"⇧" },   /* ⇧ Shift   */
-      { @"Cmd-", @"⌘" }, /* ⌘ Command */
-    };
-    BOOL matched = YES;
-    while (matched && rest.length > 0) {
-      matched = NO;
-      for (unsigned i = 0; i < sizeof(mods) / sizeof(mods[0]); i++) {
-        if ([rest hasPrefix:mods[i].pfx]) {
-          [group addArrangedSubview:[[KernKeycap alloc] initWithText:mods[i].cap]];
-          rest = [rest substringFromIndex:mods[i].pfx.length];
-          matched = YES;
-          break;
+      /* a tight group of caps pressed together */
+      NSStackView *group = [[NSStackView alloc] init];
+      group.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+      group.spacing = 3.0;
+      group.translatesAutoresizingMaskIntoConstraints = NO;
+
+      NSString *rest = chord;
+      /* peel modifier prefixes off the front */
+      struct { NSString *pfx; NSString *cap; } mods[] = {
+        { @"C-", @"⌃" },   /* ⌃ Control */
+        { @"M-", @"⌥" },   /* ⌥ Option  */
+        { @"S-", @"⇧" },   /* ⇧ Shift   */
+        { @"Cmd-", @"⌘" }, /* ⌘ Command */
+      };
+      BOOL matched = YES;
+      while (matched && rest.length > 0) {
+        matched = NO;
+        for (unsigned i = 0; i < sizeof(mods) / sizeof(mods[0]); i++) {
+          if ([rest hasPrefix:mods[i].pfx]) {
+            [group addArrangedSubview:[[KernKeycap alloc] initWithText:mods[i].cap]];
+            rest = [rest substringFromIndex:mods[i].pfx.length];
+            matched = YES;
+            break;
+          }
         }
       }
-    }
-    /* the remaining key — single letters uppercased, named keys kept as-is */
-    NSString *key = rest;
-    if (key.length == 1) key = [key uppercaseString];
-    if (key.length > 0)
-      [group addArrangedSubview:[[KernKeycap alloc] initWithText:key]];
+      /* the remaining key — single letters uppercased, named keys kept as-is */
+      NSString *key = rest;
+      if (key.length == 1) key = [key uppercaseString];
+      if (key.length > 0)
+        [group addArrangedSubview:[[KernKeycap alloc] initWithText:key]];
 
-    [row addArrangedSubview:group];
+      [row addArrangedSubview:group];
+    }
   }
   return row;
 }
@@ -273,7 +283,8 @@ static NSView *kern_legend_card(void) {
        @[@"Forward a character", @"C-f"], @[@"Back a character", @"C-b"],
        @[@"Next line", @"C-n"], @[@"Previous line", @"C-p"],
        @[@"Forward a word", @"M-f"], @[@"Back a word", @"M-b"],
-       @[@"Top of document", @"M-S-,"], @[@"Bottom of document", @"M-S-."],
+       @[@"Top of document", @"M-S-, / Cmd-S-,"],
+       @[@"Bottom of document", @"M-S-. / Cmd-S-."],
        @[@"Go to line…", @"M-g"],
     ],
     @[ @"Scrolling",
