@@ -23,17 +23,20 @@ int md_is_heading(Line *l);
 int md_heading_prefix_len(Line *l);
 
 /* draw a text segment with markdown inline formatting.
-   text is the full line text, start..end is the range to draw.
+   text is the full line buffer; start..end is the visual-row window to draw,
+   and line_len is the full logical-line length (inline spans are parsed from
+   the line start so formatting that wraps across rows still applies).
    x,y is the starting position. heading = whether this line is a heading.
-   track_cursor_col: if >= 0, record x position when we reach this column
-   (written to *out_cursor_x, or -1 if not found).
+   track_cursor_col: if in [start,end], record x position at that column
+   (written to *out_cursor_x).
    returns the x position after drawing. */
-float md_draw_text(const char *text, int start, int end,
+float md_draw_text(const char *text, int start, int end, int line_len,
                    float x, float y, mu_Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw);
 
 /* x position (px) where column `col` renders, using the same per-span font
    metrics as md_draw_text — for aligning the selection/search highlight. */
-int md_col_x(const char *text, int start, int end, int x0, int heading, int col);
+int md_col_x(const char *text, int start, int end, int line_len,
+             int x0, int heading, int col);
 
 #endif

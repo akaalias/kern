@@ -116,8 +116,8 @@ static ViewState   g_vs = {0};
 #define list_indent(l)    md_list_indent(l)
 #define list_marker_width(l) md_list_marker_width(l)
 #define is_heading(l)     md_is_heading(l)
-#define draw_md_text(text,start,end,x,y,col,head,track) \
-  md_draw_text((text),(start),(end),(x),(y),(col),(head),(track),&g_cursor_x,1)
+#define draw_md_text(text,start,end,llen,x,y,col,head,track) \
+  md_draw_text((text),(start),(end),(llen),(x),(y),(col),(head),(track),&g_cursor_x,1)
 
 /* ---- minibuffer filename completion ---- */
 
@@ -382,8 +382,8 @@ static void process_frame(mu_Context *ctx) {
             if (he > hs) {
               /* measure with the same per-span font metrics the text is drawn in */
               int x0 = page_margin() + row_indent;
-              int hx = md_col_x(l->text, dstart, row_end, x0, is_heading(l), hs);
-              int hw = md_col_x(l->text, dstart, row_end, x0, is_heading(l), he) - hx;
+              int hx = md_col_x(l->text, dstart, row_end, l->len, x0, is_heading(l), hs);
+              int hw = md_col_x(l->text, dstart, row_end, l->len, x0, is_heading(l), he) - hx;
               int font_h = r_get_text_height();
               mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
                            mu_color(60, 100, 160, 180));
@@ -407,8 +407,8 @@ static void process_frame(mu_Context *ctx) {
         for (int sc = dstart; sc <= row_end - search_len; sc++) {
           if (strncasecmp(l->text + sc, search_buf, search_len) == 0) {
             int x0 = page_margin() + row_indent;
-            int hx = md_col_x(l->text, dstart, row_end, x0, is_heading(l), sc);
-            int hw = md_col_x(l->text, dstart, row_end, x0, is_heading(l), sc + search_len) - hx;
+            int hx = md_col_x(l->text, dstart, row_end, l->len, x0, is_heading(l), sc);
+            int hw = md_col_x(l->text, dstart, row_end, l->len, x0, is_heading(l), sc + search_len) - hx;
             int font_h = r_get_text_height();
             /* current match gets brighter highlight */
             if (ln == search_match_line && sc == search_match_col) {
@@ -1115,7 +1115,7 @@ static void do_render(void) {
       }
     }
 
-    draw_md_text(L->text, draw_start, vr->row_end,
+    draw_md_text(L->text, draw_start, vr->row_end, L->len,
                  page_margin() + indent, vr->py, text_color, vr->heading, track);
     r_set_font_style(FONT_REGULAR);
   }
