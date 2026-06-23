@@ -5,12 +5,69 @@
 /* from buffer.c — the sandbox-container Documents directory */
 extern const char *buf_get_documents_dir(void);
 
-/* Target for the title-bar folder button. Retained for the app's lifetime. */
-@interface KernTitlebarActions : NSObject
-- (void)openDocsFolder:(id)sender;
+#pragma mark - Keyboard-shortcut sheet
+
+/* A small rounded "key-cap" view that draws one key (e.g. ⌃ or "X"). */
+@interface KernKeycap : NSView
+@property(nonatomic, copy) NSString *text;
 @end
 
+@implementation KernKeycap
+- (instancetype)initWithText:(NSString *)text {
+  if ((self = [super initWithFrame:NSZeroRect])) {
+    _text = [text copy];
+    self.translatesAutoresizingMaskIntoConstraints = NO;
+  }
+  return self;
+}
+- (NSDictionary *)textAttributes {
+  return @{
+    NSFontAttributeName : [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
+    NSForegroundColorAttributeName : [NSColor colorWithWhite:0.92 alpha:1.0],
+  };
+}
+- (NSSize)intrinsicContentSize {
+  NSSize t = [self.text sizeWithAttributes:[self textAttributes]];
+  CGFloat w = ceil(t.width) + 16.0;
+  if (w < 26.0) w = 26.0;            /* keep single glyphs roughly square */
+  return NSMakeSize(w, 24.0);
+}
+- (void)drawRect:(NSRect)dirty {
+  (void)dirty;
+  NSRect r = NSInsetRect(self.bounds, 0.5, 0.5);
+  NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:r xRadius:5.0 yRadius:5.0];
+  [[NSColor colorWithWhite:1.0 alpha:0.08] setFill];
+  [p fill];
+  [[NSColor colorWithWhite:1.0 alpha:0.20] setStroke];
+  p.lineWidth = 1.0;
+  [p stroke];
+
+  NSDictionary *attrs = [self textAttributes];
+  NSSize t = [self.text sizeWithAttributes:attrs];
+  NSPoint at = NSMakePoint(NSMidX(self.bounds) - t.width / 2.0,
+                           NSMidY(self.bounds) - t.height / 2.0);
+  [self.text drawAtPoint:at withAttributes:attrs];
+}
+@end
+
+/* A top-origin (flipped) container so the scroll view shows content from the top. */
+@interface KernFlippedView : NSView
+@end
+@implementation KernFlippedView
+- (BOOL)isFlipped { return YES; }
+@end
+
+/* Target for the title-bar buttons. Retained for the app's lifetime. */
+@interface KernTitlebarActions : NSObject <NSWindowDelegate>
+- (void)openDocsFolder:(id)sender;
+- (void)showShortcuts:(id)sender;
+- (void)closeShortcuts:(id)sender;
+@end
+
+static NSPanel *g_shortcuts_panel;  /* strong while the panel is up */
+
 @implementation KernTitlebarActions
+
 - (void)openDocsFolder:(id)sender {
   (void)sender;
   const char *p = buf_get_documents_dir();
@@ -18,9 +75,419 @@ extern const char *buf_get_documents_dir(void);
   NSString *path = [NSString stringWithUTF8String:p];
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
 }
+
+/* Make a label NSTextField (non-editable, no background). */
+static NSTextField *kern_label(NSString *s, CGFloat size, NSFontWeight weight,
+                               NSColor *color) {
+  NSTextField *f = [NSTextField labelWithString:s];
+  f.font = [NSFont systemFontOfSize:size weight:weight];
+  f.textColor = color;
+  f.translatesAutoresizingMaskIntoConstraints = NO;
+  return f;
+}
+
+/* Parse an emacs-style chord string ("C-x C-s", "M-w", "Cmd-=") into a row of
+   key-cap views. Space separates chords pressed in sequence (joined by "then");
+   keys within a chord are pressed together. */
+static NSView *kern_chord_view(NSString *spec) {
+  NSStackView *row = [[NSStackView alloc] init];
+  row.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  row.spacing = 6.0;
+  row.alignment = NSLayoutAttributeCenterY;
+  row.translatesAutoresizingMaskIntoConstraints = NO;
+
+  NSArray<NSString *> *chords = [spec componentsSeparatedByString:@" "];
+  BOOL firstChord = YES;
+  for (NSString *chord in chords) {
+    if (chord.length == 0) continue;
+    if (!firstChord) {
+      [row addArrangedSubview:kern_label(@"then", 11.0, NSFontWeightRegular,
+                                         [NSColor colorWithWhite:0.55 alpha:1.0])];
+    }
+    firstChord = NO;
+
+    /* a tight group of caps pressed together */
+    NSStackView *group = [[NSStackView alloc] init];
+    group.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    group.spacing = 3.0;
+    group.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSString *rest = chord;
+    /* peel modifier prefixes off the front */
+    struct { NSString *pfx; NSString *cap; } mods[] = {
+      { @"C-", @"⌃" },   /* ⌃ Control */
+      { @"M-", @"⌥" },   /* ⌥ Option  */
+      { @"S-", @"⇧" },   /* ⇧ Shift   */
+      { @"Cmd-", @"⌘" }, /* ⌘ Command */
+    };
+    BOOL matched = YES;
+    while (matched && rest.length > 0) {
+      matched = NO;
+      for (unsigned i = 0; i < sizeof(mods) / sizeof(mods[0]); i++) {
+        if ([rest hasPrefix:mods[i].pfx]) {
+          [group addArrangedSubview:[[KernKeycap alloc] initWithText:mods[i].cap]];
+          rest = [rest substringFromIndex:mods[i].pfx.length];
+          matched = YES;
+          break;
+        }
+      }
+    }
+    /* the remaining key — single letters uppercased, named keys kept as-is */
+    NSString *key = rest;
+    if (key.length == 1) key = [key uppercaseString];
+    if (key.length > 0)
+      [group addArrangedSubview:[[KernKeycap alloc] initWithText:key]];
+
+    [row addArrangedSubview:group];
+  }
+  return row;
+}
+
+/* Build one description-left / keys-right row. */
+static NSView *kern_binding_row(NSString *desc, NSString *spec) {
+  NSStackView *r = [[NSStackView alloc] init];
+  r.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  r.spacing = 12.0;
+  r.alignment = NSLayoutAttributeCenterY;
+  r.translatesAutoresizingMaskIntoConstraints = NO;
+
+  NSTextField *label = kern_label(desc, 13.0, NSFontWeightRegular,
+                                  [NSColor colorWithWhite:0.85 alpha:1.0]);
+  NSView *spacer = [[NSView alloc] init];
+  spacer.translatesAutoresizingMaskIntoConstraints = NO;
+  [spacer setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+  [r addArrangedSubview:label];
+  [r addArrangedSubview:spacer];
+  [r addArrangedSubview:kern_chord_view(spec)];
+  return r;
+}
+
+/* Wrap content in a layer-backed bordered "bento" card. The inner view is
+   pinned by inset constraints, so the card's height is driven by its content. */
+static NSView *kern_card_wrap(NSView *inner) {
+  NSView *card = [[NSView alloc] init];
+  card.translatesAutoresizingMaskIntoConstraints = NO;
+  card.wantsLayer = YES;
+  card.layer.cornerRadius = 10.0;
+  card.layer.borderWidth = 1.0;
+  card.layer.borderColor = [NSColor colorWithWhite:1.0 alpha:0.12].CGColor;
+  card.layer.backgroundColor = [NSColor colorWithWhite:1.0 alpha:0.035].CGColor;
+  [card addSubview:inner];
+  [NSLayoutConstraint activateConstraints:@[
+    [inner.topAnchor constraintEqualToAnchor:card.topAnchor constant:14],
+    [inner.bottomAnchor constraintEqualToAnchor:card.bottomAnchor constant:-14],
+    [inner.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:16],
+    [inner.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-16],
+  ]];
+  return card;
+}
+
+/* One bento card for a group: a title plus its binding rows. */
+static NSView *kern_group_card(NSArray *section) {
+  NSStackView *inner = [[NSStackView alloc] init];
+  inner.orientation = NSUserInterfaceLayoutOrientationVertical;
+  inner.alignment = NSLayoutAttributeLeading;
+  inner.spacing = 6.0;
+  inner.translatesAutoresizingMaskIntoConstraints = NO;
+
+  NSTextField *header = kern_label([section[0] uppercaseString], 11.0,
+                                   NSFontWeightBold,
+                                   [NSColor colorWithWhite:0.58 alpha:1.0]);
+  [inner addArrangedSubview:header];
+  [inner setCustomSpacing:10.0 afterView:header];
+
+  for (NSUInteger i = 1; i < section.count; i++) {
+    NSArray *pair = section[i];
+    NSView *r = kern_binding_row(pair[0], pair[1]);
+    [inner addArrangedSubview:r];
+    [r.widthAnchor constraintEqualToAnchor:inner.widthAnchor].active = YES;
+  }
+  return kern_card_wrap(inner);
+}
+
+/* A modifier explainer: a key-cap glyph next to its spelled-out name. */
+static NSView *kern_mod_item(NSString *glyph, NSString *name) {
+  NSStackView *s = [[NSStackView alloc] init];
+  s.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  s.spacing = 8.0;
+  s.alignment = NSLayoutAttributeCenterY;
+  s.translatesAutoresizingMaskIntoConstraints = NO;
+  [s addArrangedSubview:[[KernKeycap alloc] initWithText:glyph]];
+  [s addArrangedSubview:kern_label(name, 13.0, NSFontWeightRegular,
+                                   [NSColor colorWithWhite:0.85 alpha:1.0])];
+  return s;
+}
+
+/* The "how to read this" legend card: the four modifier keys, plus worked
+   examples of keys pressed together vs. in sequence. */
+static NSView *kern_legend_card(void) {
+  NSStackView *mods = [[NSStackView alloc] init];
+  mods.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  mods.spacing = 26.0;
+  mods.alignment = NSLayoutAttributeCenterY;
+  mods.translatesAutoresizingMaskIntoConstraints = NO;
+  [mods addArrangedSubview:kern_mod_item(@"⌃", @"Control")];
+  [mods addArrangedSubview:kern_mod_item(@"⌥", @"Option")];
+  [mods addArrangedSubview:kern_mod_item(@"⇧", @"Shift")];
+  [mods addArrangedSubview:kern_mod_item(@"⌘", @"Command")];
+
+  NSColor *dim = [NSColor colorWithWhite:0.6 alpha:1.0];
+  NSStackView *ex = [[NSStackView alloc] init];
+  ex.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  ex.spacing = 10.0;
+  ex.alignment = NSLayoutAttributeCenterY;
+  ex.translatesAutoresizingMaskIntoConstraints = NO;
+  [ex addArrangedSubview:kern_label(@"Keys touching", 13.0, NSFontWeightRegular, dim)];
+  [ex addArrangedSubview:kern_chord_view(@"C-c")];
+  [ex addArrangedSubview:kern_label(@"are pressed at the same time.", 13.0,
+                                    NSFontWeightRegular, dim)];
+  NSTextField *gap = kern_label(@"      ", 13.0, NSFontWeightRegular, dim);
+  [ex addArrangedSubview:gap];
+  [ex addArrangedSubview:kern_chord_view(@"C-x C-s")];
+  [ex addArrangedSubview:kern_label(@"means press each group one after another.",
+                                    13.0, NSFontWeightRegular, dim)];
+
+  NSStackView *inner = [[NSStackView alloc] init];
+  inner.orientation = NSUserInterfaceLayoutOrientationVertical;
+  inner.alignment = NSLayoutAttributeLeading;
+  inner.spacing = 14.0;
+  inner.translatesAutoresizingMaskIntoConstraints = NO;
+  [inner addArrangedSubview:mods];
+  [inner addArrangedSubview:ex];
+  return kern_card_wrap(inner);
+}
+
+- (void)showShortcuts:(id)sender {
+  NSWindow *parent = [sender isKindOfClass:[NSView class]] ? [sender window] : nil;
+  if (!parent) return;
+  if (g_shortcuts_panel) {  /* already open — just bring it forward */
+    [g_shortcuts_panel makeKeyAndOrderFront:nil];
+    return;
+  }
+
+  /* ---- content data: section title, then {desc, chord-spec} pairs ---- */
+  NSArray *sections = @[
+    @[ @"Moving the cursor",
+       @[@"Start of line", @"C-a"], @[@"End of line", @"C-e"],
+       @[@"Forward a character", @"C-f"], @[@"Back a character", @"C-b"],
+       @[@"Next line", @"C-n"], @[@"Previous line", @"C-p"],
+       @[@"Forward a word", @"M-f"], @[@"Back a word", @"M-b"],
+       @[@"Top of document", @"M-S-,"], @[@"Bottom of document", @"M-S-."],
+       @[@"Go to line…", @"M-g"],
+    ],
+    @[ @"Scrolling",
+       @[@"Page down", @"C-v"], @[@"Page up", @"M-v"],
+       @[@"Recenter the view", @"C-l"],
+    ],
+    @[ @"Editing",
+       @[@"Delete character ahead", @"C-d"], @[@"Delete character behind", @"Backspace"],
+       @[@"Cut to end of line", @"C-k"], @[@"Delete word ahead", @"M-d"],
+       @[@"Delete word behind", @"M-Backspace"], @[@"Insert a blank line", @"C-o"],
+       @[@"Swap the two characters around the cursor", @"C-t"], @[@"Undo", @"C-/"],
+       @[@"UPPERCASE word", @"M-u"], @[@"lowercase word", @"M-l"],
+       @[@"Capitalize Word", @"M-c"],
+    ],
+    @[ @"Selecting & the clipboard",
+       @[@"Start selecting (set mark)", @"C-Space"], @[@"Copy selection", @"M-w"],
+       @[@"Cut selection", @"C-w"], @[@"Paste", @"C-y"],
+       @[@"Select the whole document", @"C-x h"],
+       @[@"Jump between selection ends", @"C-x C-x"],
+       @[@"Cancel / clear selection", @"C-g"],
+    ],
+    @[ @"Searching",
+       @[@"Search forward", @"C-s"], @[@"Search backward", @"C-r"],
+       @[@"While searching: next match", @"C-s"],
+       @[@"While searching: previous match", @"C-r"],
+       @[@"Finish searching", @"Return"],
+    ],
+    @[ @"Files",
+       @[@"Save", @"C-x C-s"], @[@"Save as…", @"C-x C-w"],
+       @[@"Open a file", @"C-x C-f"], @[@"Switch to a recent file", @"C-x b"],
+       @[@"Quit", @"C-x C-c"],
+    ],
+    @[ @"Links & navigation",
+       @[@"Follow link under cursor", @"Cmd-Return"],
+       @[@"Go back", @"Cmd-S-Left"], @[@"Go forward", @"Cmd-S-Right"],
+    ],
+    @[ @"View",
+       @[@"Bigger text", @"Cmd-="], @[@"Smaller text", @"Cmd--"],
+    ],
+  ];
+
+  NSColor *bg = [NSColor colorWithRed:30.0/255.0 green:30.0/255.0
+                                 blue:32.0/255.0 alpha:1.0];
+
+  /* groups balanced across three bento columns (indices into `sections`) */
+  NSArray *columnPlan = @[ @[@0, @5], @[@2, @4], @[@3, @1, @6, @7] ];
+
+  NSStackView *columns = [[NSStackView alloc] init];
+  columns.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+  columns.distribution = NSStackViewDistributionFillEqually;
+  columns.alignment = NSLayoutAttributeTop;
+  columns.spacing = 14.0;
+  columns.translatesAutoresizingMaskIntoConstraints = NO;
+
+  for (NSArray *colGroups in columnPlan) {
+    NSStackView *col = [[NSStackView alloc] init];
+    col.orientation = NSUserInterfaceLayoutOrientationVertical;
+    col.alignment = NSLayoutAttributeLeading;
+    col.spacing = 14.0;
+    col.translatesAutoresizingMaskIntoConstraints = NO;
+    for (NSNumber *idx in colGroups) {
+      NSView *card = kern_group_card(sections[idx.unsignedIntegerValue]);
+      [col addArrangedSubview:card];
+      [card.widthAnchor constraintEqualToAnchor:col.widthAnchor].active = YES;
+    }
+    /* a flexible tail so cards hug the top instead of spreading out when the
+       column is shorter than its neighbours */
+    NSView *tail = [[NSView alloc] init];
+    tail.translatesAutoresizingMaskIntoConstraints = NO;
+    [tail setContentHuggingPriority:1
+                     forOrientation:NSLayoutConstraintOrientationVertical];
+    [col addArrangedSubview:tail];
+    [columns addArrangedSubview:col];
+  }
+
+  /* document stack: legend card + the three columns */
+  NSStackView *doc = [[NSStackView alloc] init];
+  doc.orientation = NSUserInterfaceLayoutOrientationVertical;
+  doc.alignment = NSLayoutAttributeLeading;
+  doc.spacing = 14.0;
+  doc.edgeInsets = NSEdgeInsetsMake(22, 26, 26, 26);
+  doc.translatesAutoresizingMaskIntoConstraints = NO;
+
+  NSView *legend = kern_legend_card();
+  [doc addArrangedSubview:legend];
+  [doc addArrangedSubview:columns];
+  CGFloat hInset = doc.edgeInsets.left + doc.edgeInsets.right;
+  [legend.widthAnchor constraintEqualToAnchor:doc.widthAnchor constant:-hInset].active = YES;
+  [columns.widthAnchor constraintEqualToAnchor:doc.widthAnchor constant:-hInset].active = YES;
+
+  /* opaque container — opaque so AppKit does not recomposite the window against
+     the live GL view beneath it. */
+  KernFlippedView *container = [[KernFlippedView alloc] init];
+  container.translatesAutoresizingMaskIntoConstraints = NO;
+  container.wantsLayer = YES;
+  container.layer.backgroundColor = bg.CGColor;
+  [container addSubview:doc];
+  [NSLayoutConstraint activateConstraints:@[
+    [doc.topAnchor constraintEqualToAnchor:container.topAnchor],
+    [doc.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+    [doc.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+    [doc.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
+  ]];
+
+  NSScrollView *scroll = [[NSScrollView alloc] init];
+  scroll.translatesAutoresizingMaskIntoConstraints = NO;
+  scroll.hasVerticalScroller = YES;
+  scroll.drawsBackground = YES;
+  scroll.backgroundColor = bg;
+  scroll.documentView = container;
+  [container.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor].active = YES;
+
+  /* Done button row at the bottom */
+  NSButton *done = [NSButton buttonWithTitle:@"Done"
+                                      target:self
+                                      action:@selector(closeShortcuts:)];
+  done.keyEquivalent = @"\r";  /* Return dismisses */
+  done.translatesAutoresizingMaskIntoConstraints = NO;
+
+  NSView *content = [[NSView alloc] init];
+  content.wantsLayer = YES;
+  content.layer.backgroundColor = bg.CGColor;
+  [content addSubview:scroll];
+  [content addSubview:done];
+  [NSLayoutConstraint activateConstraints:@[
+    [scroll.topAnchor constraintEqualToAnchor:content.topAnchor],
+    [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+    [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+    [done.topAnchor constraintEqualToAnchor:scroll.bottomAnchor constant:12],
+    [done.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-16],
+    [done.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-22],
+  ]];
+
+  /* Choose a width up to 80% of the window, then size the height to fit the
+     content (capped at 90% of the window) so scrolling is rarely needed. */
+  NSRect pf = parent.frame;
+  CGFloat width = floor(pf.size.width * 0.8);
+  if (width < 820.0)  width  = 820.0;
+  if (width > 1280.0) width  = 1280.0;
+  NSLayoutConstraint *widthC =
+      [content.widthAnchor constraintEqualToConstant:width];
+  widthC.active = YES;
+
+  [content layoutSubtreeIfNeeded];
+  CGFloat docH = container.fittingSize.height;
+  CGFloat barH = 16.0 + done.fittingSize.height + 12.0;  /* Done button strip */
+  CGFloat height = docH + barH;
+  CGFloat capH = floor(pf.size.height * 0.9);
+  if (height > capH) height = capH;
+  NSLayoutConstraint *heightC =
+      [content.heightAnchor constraintEqualToConstant:height];
+  heightC.active = YES;
+
+  NSPanel *panel = [[NSPanel alloc]
+      initWithContentRect:NSMakeRect(0, 0, width, height)
+                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
+                  backing:NSBackingStoreBuffered
+                    defer:NO];
+  panel.title = @"Keyboard Shortcuts";
+  panel.opaque = YES;
+  panel.backgroundColor = bg;
+  panel.contentView = content;
+  panel.delegate = self;
+  panel.hidesOnDeactivate = NO;
+  g_shortcuts_panel = panel;
+
+  /* centre over the editor window, then show as an ordinary child window — not
+     a modal sheet — so it never blocks the app from quitting. */
+  NSRect wf = parent.frame;
+  NSPoint origin = NSMakePoint(wf.origin.x + (wf.size.width - width) / 2.0,
+                               wf.origin.y + (wf.size.height - height) / 2.0);
+  [panel setFrameOrigin:origin];
+  [parent addChildWindow:panel ordered:NSWindowAbove];
+  [panel makeKeyAndOrderFront:nil];
+}
+
+- (void)dismissShortcuts {
+  NSPanel *panel = g_shortcuts_panel;
+  if (!panel) return;
+  g_shortcuts_panel = nil;
+  panel.delegate = nil;
+  [panel.parentWindow removeChildWindow:panel];
+  [panel orderOut:nil];
+}
+
+- (void)closeShortcuts:(id)sender {
+  (void)sender;
+  [self dismissShortcuts];
+}
+
+- (void)windowWillClose:(NSNotification *)note {
+  (void)note;
+  g_shortcuts_panel = nil;
+}
+
 @end
 
 static KernTitlebarActions *g_titlebar_actions;  /* strong (ARC) — keep alive */
+
+#pragma mark - Window chrome
+
+static NSButton *kern_titlebar_button(NSString *symbol, NSString *accDesc,
+                                      NSString *tip, SEL action, NSRect frame) {
+  NSImage *icon = [NSImage imageWithSystemSymbolName:symbol
+                            accessibilityDescription:accDesc];
+  NSButton *btn = [NSButton buttonWithImage:icon
+                                     target:g_titlebar_actions
+                                     action:action];
+  btn.bordered = NO;
+  btn.imagePosition = NSImageOnly;
+  btn.toolTip = tip;
+  btn.frame = frame;
+  return btn;
+}
 
 void macos_style_window(SDL_Window *sdl_window) {
   SDL_SysWMinfo info;
@@ -45,21 +512,25 @@ void macos_style_window(SDL_Window *sdl_window) {
   NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:@"main"];
   nswindow.toolbar = toolbar;
 
-  /* icon-only button in the top-right of the title bar: open the documents
-     folder in Finder */
+  /* icon-only buttons in the top-right of the title bar: a help button that
+     lists the keyboard shortcuts, and a folder button that opens the documents
+     folder in Finder. */
   g_titlebar_actions = [KernTitlebarActions new];
-  NSImage *icon = [NSImage imageWithSystemSymbolName:@"folder"
-                            accessibilityDescription:@"Open documents folder"];
-  NSButton *btn = [NSButton buttonWithImage:icon
-                                     target:g_titlebar_actions
-                                     action:@selector(openDocsFolder:)];
-  btn.bordered = NO;
-  btn.imagePosition = NSImageOnly;
-  btn.toolTip = @"Open documents folder in Finder";
-  btn.frame = NSMakeRect(0, 0, 38, 30);
+  NSButton *helpBtn = kern_titlebar_button(@"info.circle", @"Keyboard shortcuts",
+                                           @"Keyboard shortcuts",
+                                           @selector(showShortcuts:),
+                                           NSMakeRect(0, 0, 38, 30));
+  NSButton *folder = kern_titlebar_button(@"folder", @"Open documents folder",
+                                          @"Open documents folder in Finder",
+                                          @selector(openDocsFolder:),
+                                          NSMakeRect(38, 0, 38, 30));
+
+  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 82, 30)];
+  [buttons addSubview:helpBtn];
+  [buttons addSubview:folder];
 
   NSTitlebarAccessoryViewController *acc = [[NSTitlebarAccessoryViewController alloc] init];
   acc.layoutAttribute = NSLayoutAttributeRight;
-  acc.view = btn;
+  acc.view = buttons;
   [nswindow addTitlebarAccessoryViewController:acc];
 }
