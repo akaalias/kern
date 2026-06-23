@@ -11,6 +11,10 @@ int md_list_indent(Line *l);
 /* pixel width of a list item's marker ("- " / "12. "), 0 if not a list item */
 int md_list_marker_width(Line *l);
 
+/* whether a line is a list item ("- " or "N. "), ignoring any leading
+   indentation whitespace — true for nested items like "  - foo" too */
+int md_is_list_item(Line *l);
+
 /* check if a logical line is a heading (starts with # ) */
 int md_is_heading(Line *l);
 

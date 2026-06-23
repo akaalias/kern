@@ -10,6 +10,11 @@ void ed_backspace(EditorState *ed);
 void ed_delete(EditorState *ed);
 void ed_enter(EditorState *ed);
 
+/* list indentation: add / remove one indent level at the start of the current
+   line (used by Tab / Shift-Tab on list items) */
+void ed_indent_line(EditorState *ed);
+void ed_dedent_line(EditorState *ed);
+
 /* emacs commands */
 void ed_emacs_kill_line(EditorState *ed);
 void ed_emacs_yank(EditorState *ed);

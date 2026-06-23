@@ -4,29 +4,46 @@
 #include "md_render.h"
 #include "renderer.h"
 
+/* base indent shared by every list level; nesting is added on top by the line's
+   own leading whitespace, which is drawn as literal text */
 int md_list_indent(Line *l) {
-  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
+  int i = 0;
+  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
+  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') {
     return r_get_text_width("    ", 4);
   }
-  int i = 0;
-  while (i < l->len && l->text[i] >= '0' && l->text[i] <= '9') i++;
-  if (i > 0 && i + 1 < l->len && l->text[i] == '.' && l->text[i+1] == ' ') {
+  int d = i;
+  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
+  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') {
     return r_get_text_width("    ", 4);
   }
   return 0;
 }
 
-/* pixel width of a list item's marker ("- " or "12. "), 0 if not a list item.
-   Used to hang-indent wrapped continuation rows under the item text. */
+/* pixel width of a list item's marker — including any leading indentation
+   whitespace, so wrapped continuation rows hang under the item text. 0 if not
+   a list item. */
 int md_list_marker_width(Line *l) {
-  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
-    return r_get_text_width("- ", 2);
-  }
   int i = 0;
-  while (i < l->len && l->text[i] >= '0' && l->text[i] <= '9') i++;
-  if (i > 0 && i + 1 < l->len && l->text[i] == '.' && l->text[i+1] == ' ') {
-    return r_get_text_width(l->text, i + 2);  /* digits + ". " */
+  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
+  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') {
+    return r_get_text_width(l->text, i + 2);  /* leading ws + "- " */
   }
+  int d = i;
+  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
+  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') {
+    return r_get_text_width(l->text, d + 2);  /* leading ws + digits + ". " */
+  }
+  return 0;
+}
+
+int md_is_list_item(Line *l) {
+  int i = 0;
+  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
+  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') return 1;
+  int d = i;
+  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
+  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') return 1;
   return 0;
 }
 

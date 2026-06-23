@@ -25,6 +25,40 @@ void ed_insert_char(EditorState *ed, const char *text) {
   undo_push_op(ed, UNDO_INSERT, ins_line, ins_col, text, tlen);
 }
 
+/* one indent level for list items — two spaces, the CommonMark width for
+   nesting under a "- " bullet */
+#define INDENT_UNIT  "  "
+#define INDENT_WIDTH 2
+
+void ed_indent_line(EditorState *ed) {
+  Line *l = &ed->lines[ed->cursor_line];
+  line_ensure_cap(l, l->len + INDENT_WIDTH);
+  memmove(l->text + INDENT_WIDTH, l->text, l->len + 1);  /* +1 keeps the NUL */
+  memcpy(l->text, INDENT_UNIT, INDENT_WIDTH);
+  l->len += INDENT_WIDTH;
+  undo_push_op(ed, UNDO_INSERT, ed->cursor_line, 0, INDENT_UNIT, INDENT_WIDTH);
+  ed->cursor_col += INDENT_WIDTH;
+  ed->cursor_target_col = ed->cursor_col;
+  line_dirty(l);
+}
+
+void ed_dedent_line(EditorState *ed) {
+  Line *l = &ed->lines[ed->cursor_line];
+  int n = 0;  /* leading whitespace to remove, up to one indent level */
+  while (n < INDENT_WIDTH && n < l->len &&
+         (l->text[n] == ' ' || l->text[n] == '\t')) n++;
+  if (n == 0) return;
+  char removed[INDENT_WIDTH + 1];
+  memcpy(removed, l->text, n);
+  removed[n] = '\0';
+  undo_push_op(ed, UNDO_DELETE, ed->cursor_line, 0, removed, n);
+  memmove(l->text, l->text + n, l->len - n + 1);  /* +1 keeps the NUL */
+  l->len -= n;
+  ed->cursor_col = ed->cursor_col > n ? ed->cursor_col - n : 0;
+  ed->cursor_target_col = ed->cursor_col;
+  line_dirty(l);
+}
+
 void ed_backspace(EditorState *ed) {
   if (ed->cursor_col > 0) {
     Line *l = &ed->lines[ed->cursor_line];

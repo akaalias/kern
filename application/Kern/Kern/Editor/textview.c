@@ -1364,6 +1364,8 @@ int editor_main(int argc, char **argv) {
               search_find_current_dir();
             }
           } else {
+            /* a literal Tab is indentation (handled on keydown), never inserted */
+            if (e.text.text[0] == '\t' && e.text.text[1] == '\0') break;
             editor_insert_char(e.text.text);
             ensure_cursor_visible();
           }
@@ -1422,6 +1424,15 @@ int editor_main(int argc, char **argv) {
             if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
                 sym == SDLK_RIGHT) {
               cmd_nav_forward(); break;
+            }
+
+            /* 1d. Tab / Shift-Tab indent or outdent the current list item.
+               The matching '\t' text event is dropped in SDL_TEXTINPUT. */
+            if (sym == SDLK_TAB && md_is_list_item(&lines[cursor_line])) {
+              if (e.key.keysym.mod & KMOD_SHIFT) ed_dedent_line(&g_ed);
+              else                               ed_indent_line(&g_ed);
+              ensure_cursor_visible();
+              break;
             }
 
             /* 2. Prefix starters */
