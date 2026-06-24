@@ -501,15 +501,6 @@ static void cmd_kill_region(void) {
   emacs_kill_region(); clipboard_set_from_kill();
   status_set("Region killed"); ensure_cursor_visible();
 }
-static void cmd_undo(void) {
-  mark_clear(); undo_perform(&g_ed); status_set("Undo"); ensure_cursor_visible();
-}
-static void cmd_set_mark(void) {
-  mark_set(); status_set("Mark set");
-}
-static void cmd_keyboard_quit(void) {
-  mark_clear(); status_set("Quit");
-}
 static void cmd_end_of_buffer_alt(void) {
   cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
   cursor_target_col = cursor_col; ensure_cursor_visible();
@@ -526,16 +517,6 @@ static void cmd_font_decrease(void) {
   font_size -= 2.0f; if (font_size < 8.0f) font_size = 8.0f;
   r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
 }
-static void cmd_backspace(void) {
-  mark_clear(); editor_backspace(); ensure_cursor_visible();
-}
-static void cmd_delete(void) {
-  mark_clear(); editor_delete();
-}
-static void cmd_enter(void) {
-  mark_clear(); editor_enter(); ensure_cursor_visible();
-}
-
 static void cmd_kill_word_fwd(void) {   /* M-d */
   emacs_kill_word_fwd(); clipboard_set_from_kill(); ensure_cursor_visible();
 }
@@ -545,13 +526,6 @@ static void cmd_kill_word_back(void) {  /* M-DEL */
 static void cmd_upcase_word(void)     { emacs_case_word(0); ensure_cursor_visible(); }
 static void cmd_downcase_word(void)   { emacs_case_word(1); ensure_cursor_visible(); }
 static void cmd_capitalize_word(void) { emacs_case_word(2); ensure_cursor_visible(); }
-static void cmd_transpose_chars(void) { emacs_transpose(); ensure_cursor_visible(); }
-static void cmd_open_line(void) {       /* C-o: insert newline, leave point */
-  int cl = cursor_line, cc = cursor_col;
-  mark_clear(); editor_enter();
-  cursor_line = cl; cursor_col = cc; cursor_target_col = cc;
-  ensure_cursor_visible();
-}
 static void cmd_page_down(void) {       /* C-v */
   int lh = line_height();
   int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
@@ -613,14 +587,8 @@ static const KeyBinding normal_bindings[] = {
   { KMOD_CTRL, SDLK_k,      cmd_kill_line },
   { KMOD_CTRL, SDLK_y,      cmd_yank },
   { KMOD_CTRL, SDLK_w,      cmd_kill_region },
-  { KMOD_CTRL, SDLK_d,      cmd_delete },
   { KMOD_CTRL, SDLK_v,      cmd_page_down },
   { KMOD_CTRL, SDLK_l,      cmd_recenter },
-  { KMOD_CTRL, SDLK_t,      cmd_transpose_chars },
-  { KMOD_CTRL, SDLK_o,      cmd_open_line },
-  { KMOD_CTRL, SDLK_SLASH,  cmd_undo },
-  { KMOD_CTRL, SDLK_SPACE,  cmd_set_mark },
-  { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
   { KMOD_ALT,  SDLK_w,      cmd_copy_region },
   { KMOD_ALT,  SDLK_v,      cmd_page_up },
   { KMOD_ALT,  SDLK_d,      cmd_kill_word_fwd },
@@ -631,9 +599,6 @@ static const KeyBinding normal_bindings[] = {
   { KMOD_ALT,  SDLK_g,      cmd_goto_line },
   { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
   { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
-  { 0, SDLK_BACKSPACE,      cmd_backspace },
-  { 0, SDLK_DELETE,         cmd_delete },
-  { 0, SDLK_RETURN,         cmd_enter },
   { 0, 0, NULL }  /* sentinel */
 };
 

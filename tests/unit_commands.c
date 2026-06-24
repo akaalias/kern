@@ -85,6 +85,74 @@ static void test_meta_f_and_b_word(void) {
   ed_teardown(&ed);
 }
 
+/* ---- editing commands (batch 2a) ---- */
+
+static void test_ctrl_d_deletes_forward(void) {
+  EditorState ed = {0}; ed_load(&ed, "abc"); ed.cursor_col = 0;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_d);
+  CHECK_SEQ(LINE(ed, 0), "bc");
+  ed_teardown(&ed);
+}
+
+static void test_backspace_deletes_back(void) {
+  EditorState ed = {0}; ed_load(&ed, "abc");     /* caret at end */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, 0, SDLK_BACKSPACE);
+  CHECK_SEQ(LINE(ed, 0), "ab");
+  ed_teardown(&ed);
+}
+
+static void test_return_splits_line(void) {
+  EditorState ed = {0}; ed_load(&ed, "ab"); ed.cursor_col = 1;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, 0, SDLK_RETURN);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "a");
+  CHECK_SEQ(LINE(ed, 1), "b");
+  ed_teardown(&ed);
+}
+
+static void test_set_mark_then_quit_clears(void) {
+  EditorState ed = {0}; ed_load(&ed, "x");
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_SPACE);
+  CHECK_IEQ(ed.mark_active, 1);
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_g);   /* keyboard-quit */
+  CHECK_IEQ(ed.mark_active, 0);
+  ed_teardown(&ed);
+}
+
+static void test_undo_via_dispatch(void) {
+  EditorState ed = {0}; ed_load(&ed, "ab");
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, 0, SDLK_BACKSPACE);   /* "a" */
+  CHECK_SEQ(LINE(ed, 0), "a");
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_SLASH); /* C-/ undo */
+  CHECK_SEQ(LINE(ed, 0), "ab");
+  ed_teardown(&ed);
+}
+
+static void test_open_line_keeps_point(void) {
+  EditorState ed = {0}; ed_load(&ed, "abc"); ed.cursor_col = 1;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_o);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "a");
+  CHECK_SEQ(LINE(ed, 1), "bc");
+  CHECK_IEQ(ed.cursor_line, 0);     /* point stays put */
+  CHECK_IEQ(ed.cursor_col, 1);
+  ed_teardown(&ed);
+}
+
+static void test_transpose_chars(void) {
+  EditorState ed = {0}; ed_load(&ed, "ab");        /* caret at end */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_t);
+  CHECK_SEQ(LINE(ed, 0), "ba");
+  ed_teardown(&ed);
+}
+
 void suite_commands(void) {
   RUN(test_dispatch_unbound_returns_zero);
   RUN(test_ctrl_a_beginning_of_line);
@@ -93,4 +161,11 @@ void suite_commands(void) {
   RUN(test_ctrl_f_wraps_to_next_line);
   RUN(test_ctrl_n_and_p_line);
   RUN(test_meta_f_and_b_word);
+  RUN(test_ctrl_d_deletes_forward);
+  RUN(test_backspace_deletes_back);
+  RUN(test_return_splits_line);
+  RUN(test_set_mark_then_quit_clears);
+  RUN(test_undo_via_dispatch);
+  RUN(test_open_line_keeps_point);
+  RUN(test_transpose_chars);
 }

@@ -3,6 +3,8 @@
 #include "commands.h"
 #include "navigation.h"
 #include "editing.h"
+#include "buffer.h"
+#include "undo.h"
 
 /* ---- cursor movement ---- */
 
@@ -68,6 +70,58 @@ static void cmd_backward_word(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
+/* ---- editing ---- */
+
+static void cmd_backspace(EditorState *ed, ViewState *vs) {
+  buf_mark_clear(ed);
+  ed_backspace(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_delete(EditorState *ed, ViewState *vs) {
+  (void)vs;
+  buf_mark_clear(ed);
+  ed_delete(ed);
+}
+
+static void cmd_enter(EditorState *ed, ViewState *vs) {
+  buf_mark_clear(ed);
+  ed_enter(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_transpose_chars(EditorState *ed, ViewState *vs) {
+  ed_emacs_transpose_chars(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_open_line(EditorState *ed, ViewState *vs) {   /* C-o */
+  int cl = ed->cursor_line, cc = ed->cursor_col;
+  buf_mark_clear(ed);
+  ed_enter(ed);
+  ed->cursor_line = cl;
+  ed->cursor_col = cc;
+  ed->cursor_target_col = cc;
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_undo(EditorState *ed, ViewState *vs) {
+  buf_mark_clear(ed);
+  undo_perform(ed);
+  nav_status_set(vs, "Undo");
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_set_mark(EditorState *ed, ViewState *vs) {
+  buf_mark_set(ed);
+  nav_status_set(vs, "Mark set");
+}
+
+static void cmd_keyboard_quit(EditorState *ed, ViewState *vs) {
+  buf_mark_clear(ed);
+  nav_status_set(vs, "Quit");
+}
+
 /* ---- dispatch ---- */
 
 static const Command g_commands[] = {
@@ -79,6 +133,15 @@ static const Command g_commands[] = {
   { KMOD_CTRL, SDLK_p, cmd_previous_line },
   { KMOD_ALT,  SDLK_f, cmd_forward_word },
   { KMOD_ALT,  SDLK_b, cmd_backward_word },
+  { KMOD_CTRL, SDLK_d,      cmd_delete },
+  { KMOD_CTRL, SDLK_t,      cmd_transpose_chars },
+  { KMOD_CTRL, SDLK_o,      cmd_open_line },
+  { KMOD_CTRL, SDLK_SLASH,  cmd_undo },
+  { KMOD_CTRL, SDLK_SPACE,  cmd_set_mark },
+  { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
+  { 0, SDLK_BACKSPACE,      cmd_backspace },
+  { 0, SDLK_DELETE,         cmd_delete },
+  { 0, SDLK_RETURN,         cmd_enter },
   { 0, 0, NULL },  /* sentinel */
 };
 
