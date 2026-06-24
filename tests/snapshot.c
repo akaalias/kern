@@ -140,8 +140,8 @@ static void snap_plain(void) {
   const char *doc[] = {
     "A short first line.",
     "",
-    "This second paragraph is deliberately long enough that it must wrap "
-    "across more than one visual row at the test page width of seventy.",
+    ("This second paragraph is deliberately long enough that it must wrap "
+     "across more than one visual row at the test page width of seventy."),
   };
   check_snapshot("plain", doc, 3);
 }
@@ -157,8 +157,8 @@ static void snap_inline(void) {
 static void snap_inline_wrap(void) {
   /* a bold span that spans the 70-glyph row boundary */
   const char *doc[] = {
-    "**this entire sentence is bold and is long enough to wrap onto a "
-    "second visual row while staying bold**",
+    ("**this entire sentence is bold and is long enough to wrap onto a "
+     "second visual row while staying bold**"),
   };
   check_snapshot("inline_wrap", doc, 1);
 }

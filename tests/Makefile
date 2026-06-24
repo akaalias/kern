@@ -20,7 +20,10 @@ SAN     := -fsanitize=address,undefined -fno-omit-frame-pointer
 INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
 # _GNU_SOURCE exposes POSIX helpers (mkstemp/unlink/mkdir) that glibc hides
 # under -std=c11; harmless on macOS where they're visible by default.
-CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter $(SAN) $(INCS)
+# -Wno-deprecated-declarations silences a vendored microui.c sprintf() warning
+# (our own code uses snprintf); microui is slated for removal (REFACTORING #1).
+CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter \
+           -Wno-deprecated-declarations $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
