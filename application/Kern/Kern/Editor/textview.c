@@ -62,7 +62,6 @@ static ViewState   g_vs = {0};
 #define minibuf_len     g_vs.minibuf_len
 #define status_msg      g_vs.status_msg
 #define status_time     g_vs.status_time
-#define g_ctx           g_vs.ctx
 #define minibuf_callback g_vs.minibuf_callback
 #define g_filename      g_ed.filename
 #define g_filepath      g_ed.filepath
@@ -284,8 +283,15 @@ static int heading_markers_hang(Line *l) {
 }
 
 /* ---- frame ---- */
-static void process_frame(mu_Context *ctx) {
-  mu_begin(ctx);
+
+/* mouse state, tracked from SDL events (replaces microui's input aggregation);
+   only the scrollbar consumes it. g_mouse_pressed is the edge for this frame. */
+static int g_mouse_x, g_mouse_y, g_mouse_down, g_mouse_pressed;
+
+/* Lay out and immediately draw the frame's chrome: window background, content
+   clip, selection/search highlights and the scrollbar. The markdown text is
+   drawn afterward in do_render. */
+static void process_frame(void) {
   g_vis_row_count = 0;
 
   /* Measure with the body font — the same state the text is drawn in (see the
@@ -296,12 +302,10 @@ static void process_frame(mu_Context *ctx) {
   r_set_font_size(font_size);
   r_set_font_style(FONT_REGULAR);
 
-  if (mu_begin_window_ex(ctx, "Writer",
-        mu_rect(0, 0, win_w(), win_h()),
-        MU_OPT_NOTITLE | MU_OPT_NORESIZE | MU_OPT_NOCLOSE | MU_OPT_NOSCROLL)) {
-    mu_Container *win = mu_get_current_container(ctx);
-    win->rect = mu_rect(0, 0, win_w(), win_h());
+  /* window background (was microui's MU_COLOR_WINDOWBG) */
+  r_draw_rect(mu_rect(0, 0, win_w(), win_h()), mu_color(50, 50, 50, 255));
 
+  {
     int lh = line_height();
     g_content_y = TOP_PADDING;
     int status_bar_h = r_get_text_height() + 16;
@@ -321,7 +325,7 @@ static void process_frame(mu_Context *ctx) {
     int vis_on_screen = g_content_h / lh + 4;
 
     /* clip to content area */
-    mu_push_clip_rect(ctx, mu_rect(0, g_content_y, win_w(), g_content_h));
+    r_set_clip_rect(mu_rect(0, g_content_y, win_w(), g_content_h));
 
     /* render visible visual lines */
     for (int vi = 0; vi < vis_on_screen; vi++) {
@@ -369,8 +373,8 @@ static void process_frame(mu_Context *ctx) {
               int hx = md_col_x(l, dstart, row_end, x0, is_heading(l), hs);
               int hw = md_col_x(l, dstart, row_end, x0, is_heading(l), he) - hx;
               int font_h = r_get_text_height();
-              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
-                           mu_color(60, 100, 160, 180));
+              r_draw_rect(mu_rect(hx, py, hw, font_h),
+                          mu_color(60, 100, 160, 180));
             }
           }
         }
@@ -396,11 +400,11 @@ static void process_frame(mu_Context *ctx) {
             int font_h = r_get_text_height();
             /* current match gets brighter highlight */
             if (ln == search_match_line && sc == search_match_col) {
-              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
-                           mu_color(200, 150, 0, 180));
+              r_draw_rect(mu_rect(hx, py, hw, font_h),
+                          mu_color(200, 150, 0, 180));
             } else {
-              mu_draw_rect(ctx, mu_rect(hx, py, hw, font_h),
-                           mu_color(120, 90, 0, 120));
+              r_draw_rect(mu_rect(hx, py, hw, font_h),
+                          mu_color(120, 90, 0, 120));
             }
           }
         }
@@ -409,7 +413,7 @@ static void process_frame(mu_Context *ctx) {
       /* cursor drawing moved to post-render pass (uses g_cursor_x) */
     }
 
-    mu_pop_clip_rect(ctx);
+    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));   /* back to full window */
 
     /* scrollbar */
     if (max_scroll > 0) {
@@ -421,11 +425,11 @@ static void process_frame(mu_Context *ctx) {
       if (thumb_h < 20) thumb_h = 20;
       int thumb_y = g_content_y + (int)((scroll_y / max_scroll) * (sb_h - thumb_h));
 
-      int mx = ctx->mouse_pos.x, my = ctx->mouse_pos.y;
+      int mx = g_mouse_x, my = g_mouse_y;
       int mouse_in_track = (mx >= sb_x - 4 && mx < sb_x + sb_w + 4 && my >= g_content_y && my < g_content_y + sb_h);
 
       if (scrollbar_dragging) {
-        if (ctx->mouse_down & MU_MOUSE_LEFT) {
+        if (g_mouse_down & MU_MOUSE_LEFT) {
           float ratio = (my - drag_offset - g_content_y) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
@@ -433,7 +437,7 @@ static void process_frame(mu_Context *ctx) {
         } else {
           scrollbar_dragging = 0;
         }
-      } else if (mouse_in_track && (ctx->mouse_pressed & MU_MOUSE_LEFT)) {
+      } else if (mouse_in_track && (g_mouse_pressed & MU_MOUSE_LEFT)) {
         if (my >= thumb_y && my < thumb_y + thumb_h) {
           scrollbar_dragging = 1;
           drag_offset = my - thumb_y;
@@ -450,13 +454,11 @@ static void process_frame(mu_Context *ctx) {
       mu_Color thumb_color = scrollbar_dragging ? mu_color(140, 140, 140, 255) :
                              mouse_in_track     ? mu_color(120, 120, 120, 255) :
                                                   mu_color(80, 80, 80, 255);
-      mu_draw_rect(ctx, mu_rect(sb_x, thumb_y, sb_w, thumb_h), thumb_color);
+      r_draw_rect(mu_rect(sb_x, thumb_y, sb_w, thumb_h), thumb_color);
     }
-
-    mu_end_window(ctx);
   }
 
-  mu_end(ctx);
+  g_mouse_pressed = 0;   /* the press edge is consumed once per frame */
 }
 
 
@@ -754,26 +756,6 @@ static const char button_map[256] = {
   [ SDL_BUTTON_MIDDLE & 0xff ] =  MU_MOUSE_MIDDLE,
 };
 
-static const char key_map[256] = {
-  [ SDLK_LSHIFT       & 0xff ] = MU_KEY_SHIFT,
-  [ SDLK_RSHIFT       & 0xff ] = MU_KEY_SHIFT,
-  [ SDLK_LCTRL        & 0xff ] = MU_KEY_CTRL,
-  [ SDLK_RCTRL        & 0xff ] = MU_KEY_CTRL,
-  [ SDLK_LALT         & 0xff ] = MU_KEY_ALT,
-  [ SDLK_RALT         & 0xff ] = MU_KEY_ALT,
-  [ SDLK_RETURN       & 0xff ] = MU_KEY_RETURN,
-  [ SDLK_BACKSPACE    & 0xff ] = MU_KEY_BACKSPACE,
-};
-
-static int text_width(mu_Font font, const char *text, int len) {
-  if (len == -1) { len = strlen(text); }
-  return r_get_text_width(text, len);
-}
-
-static int text_height(mu_Font font) {
-  return r_get_text_height();
-}
-
 
 /* ---- render pass (callable from main loop and resize watcher) ---- */
 
@@ -863,28 +845,15 @@ static int handle_wikilink_key(int sym, int ctrl) {
 }
 
 static void do_render(void) {
-  mu_Context *ctx = g_ctx;
-  if (!ctx) return;
-
-  process_frame(ctx);
+  r_clear(mu_color(30, 30, 32, 255));
+  process_frame();          /* lays out + draws bg, highlights, scrollbar */
   wikilink_refresh();
 
-  r_clear(mu_color(30, 30, 32, 255));
-  mu_Command *cmd = NULL;
-  while (mu_next_command(ctx, &cmd)) {
-    switch (cmd->type) {
-      case MU_COMMAND_TEXT: r_draw_text(cmd->text.str, cmd->text.pos, cmd->text.color); break;
-      case MU_COMMAND_RECT: r_draw_rect(cmd->rect.rect, cmd->rect.color); break;
-      case MU_COMMAND_ICON: r_draw_icon(cmd->icon.id, cmd->icon.rect, cmd->icon.color); break;
-      case MU_COMMAND_CLIP: r_set_clip_rect(cmd->clip.rect); break;
-    }
-  }
-
-  /* draw markdown-formatted text (direct rendering, not through microui) */
+  /* draw markdown-formatted text */
   r_set_font_size(font_size);
   r_set_font_style(FONT_REGULAR);
   r_set_clip_rect(mu_rect(0, g_content_y, win_w(), g_content_h));
-  mu_Color text_color = g_ctx->style->colors[MU_COLOR_TEXT];
+  mu_Color text_color = mu_color(204, 200, 195, 255);
   g_cursor_x = -1;
   for (int i = 0; i < g_vis_row_count; i++) {
     VisRow *vr = &g_vis_rows[i];
@@ -1122,14 +1091,6 @@ int editor_main(int argc, char **argv) {
   r_set_title(g_filename);
   macos_style_window(r_get_window());
 
-  mu_Context *ctx = malloc(sizeof(mu_Context));
-  mu_init(ctx);
-  ctx->text_width = text_width;
-  ctx->text_height = text_height;
-  ctx->style->colors[MU_COLOR_TEXT] = mu_color(204, 200, 195, 255);
-
-  /* store ctx globally so the resize watcher can trigger a re-render */
-  g_ctx = ctx;
   SDL_AddEventWatch(resize_event_watcher, NULL);
 
   for (;;) {
@@ -1150,7 +1111,7 @@ int editor_main(int argc, char **argv) {
             nav_maybe_reflow(&g_ed, &g_vs);
           }
           break;
-        case SDL_MOUSEMOTION: mu_input_mousemove(ctx, e.motion.x, e.motion.y); break;
+        case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
         case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
 
         case SDL_TEXTINPUT:
@@ -1185,12 +1146,13 @@ int editor_main(int argc, char **argv) {
         case SDL_MOUSEBUTTONUP: {
           int b = button_map[e.button.button & 0xff];
           if (b && e.type == SDL_MOUSEBUTTONDOWN) {
-            mu_input_mousedown(ctx, e.button.x, e.button.y, b);
+            g_mouse_x = e.button.x; g_mouse_y = e.button.y;
+            g_mouse_down |= b; g_mouse_pressed |= b;
             if (b == MU_MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < win_w() - 12) {
               click_to_cursor(e.button.x, e.button.y);
             }
           }
-          if (b && e.type == SDL_MOUSEBUTTONUP) { mu_input_mouseup(ctx, e.button.x, e.button.y, b); }
+          if (b && e.type == SDL_MOUSEBUTTONUP) { g_mouse_down &= ~b; }
           break;
         }
 
@@ -1203,10 +1165,6 @@ int editor_main(int argc, char **argv) {
           if (e.type == SDL_KEYUP && !(SDL_GetModState() & KMOD_CTRL)) {
             SDL_StartTextInput();
           }
-
-          int c = key_map[e.key.keysym.sym & 0xff];
-          if (c && e.type == SDL_KEYDOWN) { mu_input_keydown(ctx, c); }
-          if (c && e.type ==   SDL_KEYUP) { mu_input_keyup(ctx, c);   }
 
           if (e.type == SDL_KEYDOWN) {
             int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
