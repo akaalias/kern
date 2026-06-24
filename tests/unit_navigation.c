@@ -180,6 +180,39 @@ static void test_click_to_cursor(void) {
   ed_teardown(&ed);
 }
 
+/* ---- branch coverage ---- */
+
+static void test_cursor_clamp_all_directions(void) {
+  EditorState ed = {0}; ed_load(&ed, "ab");   /* one line, len 2 */
+  ed.cursor_line = -1; nav_cursor_clamp(&ed); CHECK_IEQ(ed.cursor_line, 0);
+  ed.cursor_line = 99; nav_cursor_clamp(&ed); CHECK_IEQ(ed.cursor_line, 0);
+  ed.cursor_col = -1;  nav_cursor_clamp(&ed); CHECK_IEQ(ed.cursor_col, 0);
+  ed.cursor_col = 99;  nav_cursor_clamp(&ed); CHECK_IEQ(ed.cursor_col, 2);
+  ed_teardown(&ed);
+}
+
+/* With no content height set, ensure-visible falls back to the window height. */
+static void test_ensure_visible_without_content_h(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = {0};                          /* content_h == 0 */
+  nav_ensure_cursor_visible(&ed, &vs);
+  CHECK(vs.scroll_y >= 0);                      /* did not divide-by-bogus */
+  ed_teardown(&ed);
+}
+
+/* Click on the first row of a wrapped line takes the "more rows follow" branch. */
+static void test_click_on_wrapped_line(void) {
+  stub_set_metrics(10, 20, 800, 600);          /* 70 glyphs per row */
+  char s[101]; memset(s, 'a', 100); s[100] = '\0';
+  EditorState ed = {0}; ed_load(&ed, s);       /* wraps to 2 rows */
+  ViewState vs = {0}; vs.content_y = 80; vs.content_h = 600;
+  nav_click_to_cursor(&ed, &vs, 85, 85);       /* first visual row */
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK(ed.cursor_col < 70);                    /* landed within the first row */
+  ed_teardown(&ed);
+}
+
 void suite_navigation(void) {
   RUN(test_wrap_empty_line);
   RUN(test_reflow_only_on_width_change);
@@ -192,4 +225,7 @@ void suite_navigation(void) {
   RUN(test_win_metrics);
   RUN(test_visual_to_logical_past_end);
   RUN(test_click_to_cursor);
+  RUN(test_cursor_clamp_all_directions);
+  RUN(test_ensure_visible_without_content_h);
+  RUN(test_click_on_wrapped_line);
 }

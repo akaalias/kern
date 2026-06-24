@@ -112,6 +112,16 @@ static void test_undo_join_line_resplits(void) {
   ed_teardown(&ed);
 }
 
+/* The undo stack is bounded: past MAX_UNDO ops, undo_top saturates rather than
+   overflowing the ring buffer. */
+static void test_undo_stack_caps_at_max(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  for (int i = 0; i < MAX_UNDO + 10; i++) ed_enter(&ed);  /* one SPLIT op each */
+  CHECK_IEQ(ed.undo_count, MAX_UNDO);
+  ed_teardown(&ed);
+}
+
 static void test_undo_empty_is_noop(void) {
   EditorState ed = {0};
   buf_init_empty(&ed);
@@ -130,5 +140,6 @@ void suite_undo(void) {
   RUN(test_undo_coalesces_typed_run);
   RUN(test_undo_kill_multiline_region);
   RUN(test_undo_join_line_resplits);
+  RUN(test_undo_stack_caps_at_max);
   RUN(test_undo_empty_is_noop);
 }

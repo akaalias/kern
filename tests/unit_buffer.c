@@ -263,6 +263,86 @@ static void test_save_text_and_empty_load(void) {
   unlink(path); unlink(ep); rmdir(dir);
 }
 
+/* leading-whitespace skip, "~" external path, and empty-name → untitled. */
+static void test_resolve_path_branches(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  buf_set_documents_dir(dir);
+
+  char out[1300], want[1300];
+  buf_resolve_path("  spaced.md", out, sizeof out);    /* leading spaces skipped */
+  snprintf(want, sizeof want, "%s/spaced.md", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_path("~/x.md", out, sizeof out);         /* "~" → basename only */
+  snprintf(want, sizeof want, "%s/x.md", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_path("/", out, sizeof out);              /* nothing usable → untitled */
+  snprintf(want, sizeof want, "%s/untitled.txt", dir);
+  CHECK_SEQ(out, want);
+
+  buf_set_documents_dir("");
+  rmdir(dir);
+}
+
+static void test_complete_filename_edge_branches(void) {
+  char out[1024];
+  buf_set_documents_dir("");
+  CHECK_IEQ(buf_complete_filename("x", out, sizeof out), 0);    /* no docs dir */
+
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  buf_set_documents_dir(dir);
+  CHECK_IEQ(buf_complete_filename("", out, sizeof out), 0);     /* empty prefix */
+  CHECK_IEQ(buf_complete_filename("/abs", out, sizeof out), 0); /* absolute prefix */
+  CHECK_IEQ(buf_complete_filename("nope/x", out, sizeof out), 0); /* opendir fails */
+
+  buf_set_documents_dir("");
+  rmdir(dir);
+}
+
+static void test_list_matches_edge_branches(void) {
+  char list[8][256];
+  buf_set_documents_dir("");
+  CHECK_IEQ(buf_list_matches("a", list, 8), 0);    /* no docs dir */
+
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  buf_set_documents_dir(dir);
+  CHECK_IEQ(buf_list_matches("a", list, 0), 0);    /* max <= 0 */
+
+  buf_set_documents_dir("/no/such/dir/zzz");
+  CHECK_IEQ(buf_list_matches("a", list, 8), 0);    /* opendir fails */
+
+  buf_set_documents_dir("");
+  rmdir(dir);
+}
+
+static void test_sanitize_zero_outsz_is_noop(void) {
+  char out[2] = "Z";
+  buf_sanitize_note_title("hi", 2, out, 0);        /* outsz <= 0 → returns at once */
+  CHECK_IEQ(out[0], 'Z');                          /* buffer untouched */
+}
+
+/* Re-initializing an existing buffer frees the old lines (the non-NULL branch). */
+static void test_init_empty_reinit(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);                             /* lines == NULL → allocate */
+  buf_insert_line_at(&ed, 1, "x", 1);
+  buf_init_empty(&ed);                             /* lines != NULL → free + reset */
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "");
+  ed_teardown(&ed);
+}
+
+static void test_save_unwritable_path_fails(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  CHECK_IEQ(buf_save(&ed, "/dev/null/x.md"), -1);  /* parent isn't a directory */
+  ed_teardown(&ed);
+}
+
 static void test_sanitize_note_title(void) {
   char out[64];
   /* spaces between words are kept */
@@ -292,5 +372,11 @@ void suite_buffer(void) {
   RUN(test_documents_dir_and_unsandboxed_resolve);
   RUN(test_complete_filename_subdir);
   RUN(test_save_text_and_empty_load);
+  RUN(test_resolve_path_branches);
+  RUN(test_complete_filename_edge_branches);
+  RUN(test_list_matches_edge_branches);
+  RUN(test_sanitize_zero_outsz_is_noop);
+  RUN(test_init_empty_reinit);
+  RUN(test_save_unwritable_path_fails);
   RUN(test_sanitize_note_title);
 }

@@ -388,6 +388,88 @@ static void test_kill_region_empty_is_noop(void) {
   ed_teardown(&ed);
 }
 
+/* ---- branch coverage: early-returns, no-ops, tab/space alternatives ---- */
+
+static void test_dedent_removes_tab_indent(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "\t- foo");          /* tab as the leading indent char */
+  ed_dedent_line(&ed);
+  CHECK_SEQ(LINE(ed, 0), "- foo");  /* the tab is removed */
+  ed_teardown(&ed);
+}
+
+static void test_yank_empty_kill_is_noop(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  ed_emacs_yank(&ed);               /* nothing in the kill buffer */
+  CHECK_SEQ(LINE(ed, 0), "");
+  ed_teardown(&ed);
+}
+
+static void test_replace_region_without_mark_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");              /* no mark active */
+  ed_replace_region(&ed, "X");
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  ed_teardown(&ed);
+}
+
+static void test_kill_region_without_mark_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  ed_emacs_kill_region(&ed);
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  ed_teardown(&ed);
+}
+
+static void test_kill_word_forward_at_eof_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");             /* single line, caret at end */
+  ed_emacs_kill_word_forward(&ed);
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  ed_teardown(&ed);
+}
+
+static void test_kill_word_backward_at_bof_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc"); ed.cursor_col = 0;
+  ed_emacs_kill_word_backward(&ed);
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  ed_teardown(&ed);
+}
+
+static void test_case_word_skips_leading_spaces(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "  ab"); ed.cursor_col = 0;   /* point on the spaces */
+  ed_emacs_case_word(&ed, 0);                 /* upcase the next word */
+  CHECK_SEQ(LINE(ed, 0), "  AB");
+  ed_teardown(&ed);
+}
+
+static void test_case_word_no_word_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab");              /* caret at end → no word ahead */
+  ed_emacs_case_word(&ed, 0);
+  CHECK_SEQ(LINE(ed, 0), "ab");
+  ed_teardown(&ed);
+}
+
+static void test_transpose_too_short_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "a");              /* < 2 chars */
+  ed_emacs_transpose_chars(&ed);
+  CHECK_SEQ(LINE(ed, 0), "a");
+  ed_teardown(&ed);
+}
+
+static void test_transpose_equal_chars_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "aa");            /* the two chars are identical */
+  ed_emacs_transpose_chars(&ed);
+  CHECK_SEQ(LINE(ed, 0), "aa");
+  ed_teardown(&ed);
+}
+
 void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
@@ -421,4 +503,14 @@ void suite_editing(void) {
   RUN(test_transpose_at_line_start);
   RUN(test_transpose_midline);
   RUN(test_kill_region_empty_is_noop);
+  RUN(test_dedent_removes_tab_indent);
+  RUN(test_yank_empty_kill_is_noop);
+  RUN(test_replace_region_without_mark_is_noop);
+  RUN(test_kill_region_without_mark_is_noop);
+  RUN(test_kill_word_forward_at_eof_is_noop);
+  RUN(test_kill_word_backward_at_bof_is_noop);
+  RUN(test_case_word_skips_leading_spaces);
+  RUN(test_case_word_no_word_is_noop);
+  RUN(test_transpose_too_short_is_noop);
+  RUN(test_transpose_equal_chars_is_noop);
 }

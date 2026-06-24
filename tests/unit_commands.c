@@ -339,6 +339,69 @@ static void test_recenter_cycles(void) {
   ed_teardown(&ed);
 }
 
+/* ---- branch coverage: clamps and boundary conditions ---- */
+
+static void test_exchange_point_mark_without_mark_is_noop(void) {
+  EditorState ed = {0}; mkbuf(&ed, 3);
+  ViewState vs = vs_make();
+  ed.cursor_line = 2; ed.cursor_col = 0;
+  cmd_exchange_point_mark(&ed, &vs);     /* no mark → returns early */
+  CHECK_IEQ(ed.cursor_line, 2);
+  ed_teardown(&ed);
+}
+
+/* A tiny viewport forces the page-size floor (rows < 1 → 1). */
+static void test_page_down_tiny_viewport(void) {
+  EditorState ed = {0}; mkbuf(&ed, 10);
+  ViewState vs = vs_make(); vs.content_h = 20;   /* < one line height */
+  ed.cursor_line = 0;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_v);
+  CHECK(ed.cursor_line >= 1);                     /* still advanced a line */
+  ed_teardown(&ed);
+}
+
+/* Page-down near the bottom clamps the target to the last line. */
+static void test_page_down_clamps_at_bottom(void) {
+  EditorState ed = {0}; mkbuf(&ed, 5);
+  ViewState vs = vs_make();
+  ed.cursor_line = 4;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_v);
+  CHECK_IEQ(ed.cursor_line, 4);                   /* can't go past the end */
+  ed_teardown(&ed);
+}
+
+/* Page-up from the top clamps the target to 0. */
+static void test_page_up_clamps_at_top(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 2;
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_v);
+  CHECK_IEQ(ed.cursor_line, 0);
+  ed_teardown(&ed);
+}
+
+/* Recenter with the cursor at the top clamps scroll_y up to 0. */
+static void test_recenter_at_top_clamps_scroll(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 0; vs.scroll_y = 100;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_l);
+  CHECK_IEQ((int)vs.scroll_y, 0);
+  ed_teardown(&ed);
+}
+
+static void test_font_size_clamps_at_bounds(void) {
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = vs_make();
+  vs.font_size = 71.0f;
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_EQUALS);   /* +2 → clamp 72 */
+  CHECK_IEQ((int)vs.font_size, 72);
+  vs.font_size = 9.0f;
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_MINUS);    /* -2 → clamp 8 */
+  CHECK_IEQ((int)vs.font_size, 8);
+  ed_teardown(&ed);
+}
+
 void suite_commands(void) {
   kern_clipboard_set("");   /* start from a known clipboard state */
   RUN(test_dispatch_unbound_returns_zero);
@@ -371,4 +434,10 @@ void suite_commands(void) {
   RUN(test_meta_del_kill_word_backward);
   RUN(test_page_up_moves_cursor);
   RUN(test_recenter_cycles);
+  RUN(test_exchange_point_mark_without_mark_is_noop);
+  RUN(test_page_down_tiny_viewport);
+  RUN(test_page_down_clamps_at_bottom);
+  RUN(test_page_up_clamps_at_top);
+  RUN(test_recenter_at_top_clamps_scroll);
+  RUN(test_font_size_clamps_at_bounds);
 }

@@ -107,6 +107,31 @@ static void test_search_current_dir_seeds_from_cursor(void) {
   ed_teardown(&ed);
 }
 
+static void test_search_empty_query_clears_match(void) {
+  EditorState ed = {0}; ViewState vs = {0}; vs.content_h = 600;
+  load_lines(&ed, DOC, 3);
+  vs.search_len = 0;
+  nav_search_find_next(&ed, &vs, 0, -1);
+  CHECK_IEQ(vs.search_match_line, -1);
+  nav_search_find_prev(&ed, &vs, 2, 0);
+  CHECK_IEQ(vs.search_match_line, -1);
+  ed_teardown(&ed);
+}
+
+/* A query longer than a line exercises the "line too short, skip" branch in
+   both directions ("qux" is shorter than the 4-char query). */
+static void test_search_skips_short_lines(void) {
+  EditorState ed = {0}; ViewState vs = {0}; vs.content_h = 600;
+  load_lines(&ed, DOC, 3);
+  set_query(&vs, "zzzz", 1);
+  nav_search_find_first(&ed, &vs);
+  CHECK_IEQ(vs.search_match_line, -1);
+  set_query(&vs, "zzzz", -1);
+  nav_search_find_first(&ed, &vs);
+  CHECK_IEQ(vs.search_match_line, -1);
+  ed_teardown(&ed);
+}
+
 void suite_search(void) {
   RUN(test_search_forward_first_and_next);
   RUN(test_search_is_case_insensitive);
@@ -114,4 +139,6 @@ void suite_search(void) {
   RUN(test_search_backward);
   RUN(test_search_backward_not_found);
   RUN(test_search_current_dir_seeds_from_cursor);
+  RUN(test_search_empty_query_clears_match);
+  RUN(test_search_skips_short_lines);
 }

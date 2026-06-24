@@ -37,6 +37,10 @@ static void test_status_priority(void) {
   CHECK_SEQ(nav_status_get(&ed, &vs), "Mark active");
   ed.mark_active = 0;
 
+  vs.esc_prefix = 1;
+  CHECK_SEQ(nav_status_get(&ed, &vs), "ESC-");
+  vs.esc_prefix = 0;
+
   vs.ctrl_x_prefix = 1;
   CHECK_SEQ(nav_status_get(&ed, &vs), "C-x -");
   vs.ctrl_x_prefix = 0;

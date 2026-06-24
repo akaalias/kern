@@ -92,6 +92,40 @@ static void test_heading_prefix_len(void) {
   Line nn = mkline("not heading"); CHECK_IEQ(md_heading_prefix_len(&nn), 0); freeline(&nn);
 }
 
+/* List metrics recognize a tab as the leading indent char. */
+static void test_list_metrics_with_tab_indent(void) {
+  Line a = mkline("\t- x");
+  CHECK(md_list_indent(&a) > 0);
+  CHECK(md_list_marker_width(&a) > 0);
+  CHECK_IEQ(md_is_list_item(&a), 1);
+  freeline(&a);
+}
+
+/* md_col_x for a column at/after the window end returns the trailing pen x. */
+static void test_col_x_at_end(void) {
+  Line l = mkline("ab");
+  CHECK_IEQ(md_col_x(&l, 0, 2, 0, 0, 2), 20);   /* two 10px glyphs */
+  freeline(&l);
+}
+
+/* Drawing a window that begins past the first span exercises the span-skip
+   loop (si advanced before the draw). */
+static void test_draw_window_after_first_span(void) {
+  stub_reset();
+  draw_window("**a** **b**", 6, 11);            /* second "**b**" only */
+  CHECK_IEQ(stub_text_count, 5);                /* '*','*','b','*','*' */
+}
+
+/* Inside a heading, an italic span renders bold (headings are all-bold). */
+static void test_italic_in_heading_is_bold(void) {
+  stub_reset();
+  Line l = mkline("_x_");
+  int out = -1;
+  md_draw_text(&l, 0, 3, 0, 0, GREY, 1 /* heading */, -1, &out, 1);
+  CHECK_IEQ(stub_texts[1].style, FONT_BOLD);    /* the 'x' content glyph */
+  freeline(&l);
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
   RUN(test_bold_carries_into_tail_window);
@@ -102,4 +136,8 @@ void suite_md_render(void) {
   RUN(test_col_x_is_linear);
   RUN(test_is_list_item);
   RUN(test_heading_prefix_len);
+  RUN(test_list_metrics_with_tab_indent);
+  RUN(test_col_x_at_end);
+  RUN(test_draw_window_after_first_span);
+  RUN(test_italic_in_heading_is_bold);
 }
