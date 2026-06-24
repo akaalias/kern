@@ -29,7 +29,7 @@ CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
            $(APP)/ThirdParty/microui.c
-TESTS   := test_main.c stub_renderer.c clock_fake.c \
+TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_md_render.c unit_recent.c unit_status.c \
            unit_commands.c snapshot.c

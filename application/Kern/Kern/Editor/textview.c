@@ -470,37 +470,8 @@ typedef struct {
 
 /* cursor-movement commands migrated to commands.c (dispatched via
    kern_dispatch_key): C-a C-e C-f C-b C-n C-p, M-f M-b. */
-static void clipboard_set_from_kill(void);  /* defined below */
-static void cmd_kill_line(void) {
-  mark_clear(); emacs_kill_line(); clipboard_set_from_kill(); ensure_cursor_visible();
-}
-/* mirror the kill buffer to the system clipboard */
-static void clipboard_set_from_kill(void) {
-  if (kill_buf && kill_len > 0) {
-    char *tmp = malloc(kill_len + 1);
-    if (tmp) {
-      memcpy(tmp, kill_buf, kill_len);
-      tmp[kill_len] = '\0';
-      kern_clipboard_set(tmp);
-      free(tmp);
-    }
-  }
-}
-static void cmd_yank(void) {
-  /* prefer the system clipboard so you can paste in text from other apps */
-  char *cb = kern_clipboard_get();
-  if (cb && cb[0]) buf_kill_set(&g_ed, cb, (int)strlen(cb));
-  if (cb) kern_clipboard_free(cb);
-  mark_clear(); emacs_yank(); status_set("Yanked"); ensure_cursor_visible();
-}
-static void cmd_copy_region(void) {  /* M-w: kill-ring-save */
-  emacs_copy_region(); clipboard_set_from_kill();
-  mark_clear(); status_set("Copied region"); ensure_cursor_visible();
-}
-static void cmd_kill_region(void) {
-  emacs_kill_region(); clipboard_set_from_kill();
-  status_set("Region killed"); ensure_cursor_visible();
-}
+/* kill/yank/copy + case commands migrated to commands.c (dispatched via
+   kern_dispatch_key; the meta-prefix handler calls the exposed ones). */
 static void cmd_end_of_buffer_alt(void) {
   cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
   cursor_target_col = cursor_col; ensure_cursor_visible();
@@ -517,15 +488,6 @@ static void cmd_font_decrease(void) {
   font_size -= 2.0f; if (font_size < 8.0f) font_size = 8.0f;
   r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
 }
-static void cmd_kill_word_fwd(void) {   /* M-d */
-  emacs_kill_word_fwd(); clipboard_set_from_kill(); ensure_cursor_visible();
-}
-static void cmd_kill_word_back(void) {  /* M-DEL */
-  emacs_kill_word_back(); clipboard_set_from_kill(); ensure_cursor_visible();
-}
-static void cmd_upcase_word(void)     { emacs_case_word(0); ensure_cursor_visible(); }
-static void cmd_downcase_word(void)   { emacs_case_word(1); ensure_cursor_visible(); }
-static void cmd_capitalize_word(void) { emacs_case_word(2); ensure_cursor_visible(); }
 static void cmd_page_down(void) {       /* C-v */
   int lh = line_height();
   int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
@@ -584,18 +546,9 @@ static void cmd_goto_line(void) {       /* M-g */
    plus shift — handled specially via check_binding which checks extra shift for those entries */
 
 static const KeyBinding normal_bindings[] = {
-  { KMOD_CTRL, SDLK_k,      cmd_kill_line },
-  { KMOD_CTRL, SDLK_y,      cmd_yank },
-  { KMOD_CTRL, SDLK_w,      cmd_kill_region },
   { KMOD_CTRL, SDLK_v,      cmd_page_down },
   { KMOD_CTRL, SDLK_l,      cmd_recenter },
-  { KMOD_ALT,  SDLK_w,      cmd_copy_region },
   { KMOD_ALT,  SDLK_v,      cmd_page_up },
-  { KMOD_ALT,  SDLK_d,      cmd_kill_word_fwd },
-  { KMOD_ALT,  SDLK_BACKSPACE, cmd_kill_word_back },
-  { KMOD_ALT,  SDLK_u,      cmd_upcase_word },
-  { KMOD_ALT,  SDLK_l,      cmd_downcase_word },
-  { KMOD_ALT,  SDLK_c,      cmd_capitalize_word },
   { KMOD_ALT,  SDLK_g,      cmd_goto_line },
   { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
   { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
@@ -797,12 +750,12 @@ static int handle_esc_prefix_key(int sym, int shift) {
   if (sym == SDLK_b) {
     emacs_backward_word(); ensure_cursor_visible(); return 1;
   }
-  if (sym == SDLK_w) { cmd_copy_region(); return 1; }      /* M-w copy */
+  if (sym == SDLK_w) { cmd_copy_region(&g_ed, &g_vs); return 1; }      /* M-w copy */
   if (sym == SDLK_v) { cmd_page_up(); return 1; }          /* M-v page up */
-  if (sym == SDLK_d) { cmd_kill_word_fwd(); return 1; }    /* M-d kill word */
-  if (sym == SDLK_u) { cmd_upcase_word(); return 1; }      /* M-u upcase */
-  if (sym == SDLK_l) { cmd_downcase_word(); return 1; }    /* M-l downcase */
-  if (sym == SDLK_c) { cmd_capitalize_word(); return 1; }  /* M-c capitalize */
+  if (sym == SDLK_d) { cmd_kill_word_fwd(&g_ed, &g_vs); return 1; }    /* M-d kill word */
+  if (sym == SDLK_u) { cmd_upcase_word(&g_ed, &g_vs); return 1; }      /* M-u upcase */
+  if (sym == SDLK_l) { cmd_downcase_word(&g_ed, &g_vs); return 1; }    /* M-l downcase */
+  if (sym == SDLK_c) { cmd_capitalize_word(&g_ed, &g_vs); return 1; }  /* M-c capitalize */
   if (sym == SDLK_g) { cmd_goto_line(); return 1; }        /* M-g goto line */
   return 1; /* consume even if unrecognized — prefix is cleared */
 }

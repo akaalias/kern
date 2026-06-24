@@ -38,7 +38,7 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 - [~] Extract `kern_dispatch_key` + de-globalize the command table, in batches → `Editor/commands.{c,h}` (explicit `EditorState*`/`ViewState*`); `editor_main` calls `kern_dispatch_key` before the shrinking legacy table; each batch feature-tested in `tests/unit_commands.c`.
   - [x] Batch 1: cursor movement (C-a/C-e/C-f/C-b/C-n/C-p, M-f/M-b) — 7 tests.
   - [x] Batch 2a: table-only editing (C-d, Backspace, Return, C-t, C-o, C-/, C-Space, C-g) — 7 tests.
-  - [ ] Batch 2b: kill/yank/copy/case (C-k, C-w, C-y, M-w, M-d, M-DEL, M-u/M-l/M-c) — needs a test `clipboard_fake.c`, and exposing the modal-handler-shared commands in `commands.h`.
+  - [x] Batch 2b: kill/yank/copy/case (C-k, C-w, C-y, M-w, M-d, M-DEL, M-u/M-l/M-c) — added `tests/clipboard_fake.c`; exposed the 5 ESC/meta-shared commands in `commands.h` and updated those call sites. 7 tests (incl. copy→yank via clipboard). The `clipboard_set_from_kill` helper moved into `commands.c`.
   - [ ] Batch 3: page/recenter/font (C-v, M-v, C-l, Cmd-=/Cmd--); buffer-ends + mark (C-x h, C-x C-x).
   - [ ] `cmd_goto_line` — after minibuffer state moves into ViewState.
 - [ ] Extract `kern_input_text` (text insertion) + `kern_render_to(...)`; `editor_main` reduced to a thin bootstrap

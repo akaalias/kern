@@ -1,9 +1,11 @@
 /* unit_commands.c — feature tests for the de-globalized command dispatch.
  * Feeds key chords to kern_dispatch_key and asserts on EditorState. */
+#include <stdlib.h>
 #include <SDL2/SDL.h>
 #include "test.h"
 #include "ed_fixture.h"
 #include "commands.h"
+#include "clipboard.h"
 
 /* A ViewState with a realistic viewport so nav_ensure_cursor_visible behaves. */
 static ViewState vs_make(void) {
@@ -153,7 +155,89 @@ static void test_transpose_chars(void) {
   ed_teardown(&ed);
 }
 
+/* ---- kill / yank / copy / case (batch 2b) ---- */
+
+static void test_ctrl_k_kill_line_to_clipboard(void) {
+  EditorState ed = {0}; ed_load(&ed, "hello world"); ed.cursor_col = 5;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_k);
+  CHECK_SEQ(LINE(ed, 0), "hello");
+  char *clip = kern_clipboard_get();
+  CHECK_SEQ(clip, " world");          /* mirrored to the clipboard */
+  free(clip);
+  ed_teardown(&ed);
+}
+
+static void test_ctrl_w_kill_region(void) {
+  EditorState ed = {0}; ed_load(&ed, "hello world");
+  ed.cursor_col = 0; buf_mark_set(&ed); ed.cursor_col = 6;   /* "hello " */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_w);
+  CHECK_SEQ(LINE(ed, 0), "world");
+  ed_teardown(&ed);
+}
+
+static void test_meta_w_copy_region_keeps_text(void) {
+  EditorState ed = {0}; ed_load(&ed, "hello world");
+  ed.cursor_col = 0; buf_mark_set(&ed); ed.cursor_col = 5;   /* "hello" */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_w);
+  CHECK_SEQ(LINE(ed, 0), "hello world");   /* buffer unchanged */
+  CHECK_IEQ(ed.mark_active, 0);            /* mark cleared */
+  char *clip = kern_clipboard_get();
+  CHECK_SEQ(clip, "hello");
+  free(clip);
+  ed_teardown(&ed);
+}
+
+static void test_ctrl_y_yank_from_clipboard(void) {
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = vs_make();
+  kern_clipboard_set("XY");
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_y);
+  CHECK_SEQ(LINE(ed, 0), "XY");
+  ed_teardown(&ed);
+}
+
+static void test_copy_then_yank_via_dispatch(void) {
+  EditorState ed = {0}; ed_load(&ed, "hello world");
+  ed.cursor_col = 0; buf_mark_set(&ed); ed.cursor_col = 5;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_w);   /* copy "hello" */
+  ed.cursor_col = ed.lines[0].len;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_y);  /* yank at end */
+  CHECK_SEQ(LINE(ed, 0), "hello worldhello");
+  ed_teardown(&ed);
+}
+
+static void test_meta_d_kill_word_forward(void) {
+  EditorState ed = {0}; ed_load(&ed, "alpha beta"); ed.cursor_col = 0;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_d);
+  CHECK_SEQ(LINE(ed, 0), "beta");   /* kills "alpha " through the trailing space */
+  ed_teardown(&ed);
+}
+
+static void test_meta_case_words(void) {
+  ViewState vs = vs_make();
+  EditorState ed = {0}; ed_load(&ed, "abc"); ed.cursor_col = 0;
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_u);
+  CHECK_SEQ(LINE(ed, 0), "ABC");
+  ed_teardown(&ed);
+
+  EditorState ed2 = {0}; ed_load(&ed2, "ABC"); ed2.cursor_col = 0;
+  kern_dispatch_key(&ed2, &vs, KMOD_ALT, SDLK_l);
+  CHECK_SEQ(LINE(ed2, 0), "abc");
+  ed_teardown(&ed2);
+
+  EditorState ed3 = {0}; ed_load(&ed3, "hello"); ed3.cursor_col = 0;
+  kern_dispatch_key(&ed3, &vs, KMOD_ALT, SDLK_c);
+  CHECK_SEQ(LINE(ed3, 0), "Hello");
+  ed_teardown(&ed3);
+}
+
 void suite_commands(void) {
+  kern_clipboard_set("");   /* start from a known clipboard state */
   RUN(test_dispatch_unbound_returns_zero);
   RUN(test_ctrl_a_beginning_of_line);
   RUN(test_ctrl_e_end_of_line);
@@ -168,4 +252,11 @@ void suite_commands(void) {
   RUN(test_undo_via_dispatch);
   RUN(test_open_line_keeps_point);
   RUN(test_transpose_chars);
+  RUN(test_ctrl_k_kill_line_to_clipboard);
+  RUN(test_ctrl_w_kill_region);
+  RUN(test_meta_w_copy_region_keeps_text);
+  RUN(test_ctrl_y_yank_from_clipboard);
+  RUN(test_copy_then_yank_via_dispatch);
+  RUN(test_meta_d_kill_word_forward);
+  RUN(test_meta_case_words);
 }

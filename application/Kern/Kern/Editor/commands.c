@@ -1,10 +1,13 @@
 /* commands.c — de-globalized editor commands + dispatch (see commands.h). */
 #include <SDL2/SDL.h>
+#include <stdlib.h>
+#include <string.h>
 #include "commands.h"
 #include "navigation.h"
 #include "editing.h"
 #include "buffer.h"
 #include "undo.h"
+#include "clipboard.h"
 
 /* ---- cursor movement ---- */
 
@@ -122,6 +125,81 @@ static void cmd_keyboard_quit(EditorState *ed, ViewState *vs) {
   nav_status_set(vs, "Quit");
 }
 
+/* ---- kill ring / clipboard ---- */
+
+/* mirror the kill buffer to the system clipboard */
+static void mirror_kill_to_clipboard(EditorState *ed) {
+  if (ed->kill_buf && ed->kill_len > 0) {
+    char *tmp = malloc(ed->kill_len + 1);
+    if (tmp) {
+      memcpy(tmp, ed->kill_buf, ed->kill_len);
+      tmp[ed->kill_len] = '\0';
+      kern_clipboard_set(tmp);
+      free(tmp);
+    }
+  }
+}
+
+static void cmd_kill_line(EditorState *ed, ViewState *vs) {     /* C-k */
+  buf_mark_clear(ed);
+  ed_emacs_kill_line(ed);
+  mirror_kill_to_clipboard(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_kill_region(EditorState *ed, ViewState *vs) {   /* C-w */
+  ed_emacs_kill_region(ed);
+  mirror_kill_to_clipboard(ed);
+  nav_status_set(vs, "Region killed");
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_yank(EditorState *ed, ViewState *vs) {          /* C-y */
+  /* prefer the system clipboard so text from other apps can be pasted */
+  char *cb = kern_clipboard_get();
+  if (cb && cb[0]) buf_kill_set(ed, cb, (int)strlen(cb));
+  if (cb) kern_clipboard_free(cb);
+  buf_mark_clear(ed);
+  ed_emacs_yank(ed);
+  nav_status_set(vs, "Yanked");
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_copy_region(EditorState *ed, ViewState *vs) {          /* M-w */
+  ed_emacs_copy_region(ed);
+  mirror_kill_to_clipboard(ed);
+  buf_mark_clear(ed);
+  nav_status_set(vs, "Copied region");
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_kill_word_fwd(EditorState *ed, ViewState *vs) {        /* M-d */
+  ed_emacs_kill_word_forward(ed);
+  mirror_kill_to_clipboard(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_kill_word_back(EditorState *ed, ViewState *vs) { /* M-DEL */
+  ed_emacs_kill_word_backward(ed);
+  mirror_kill_to_clipboard(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_upcase_word(EditorState *ed, ViewState *vs) {          /* M-u */
+  ed_emacs_case_word(ed, 0);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_downcase_word(EditorState *ed, ViewState *vs) {        /* M-l */
+  ed_emacs_case_word(ed, 1);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_capitalize_word(EditorState *ed, ViewState *vs) {      /* M-c */
+  ed_emacs_case_word(ed, 2);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
 /* ---- dispatch ---- */
 
 static const Command g_commands[] = {
@@ -142,6 +220,15 @@ static const Command g_commands[] = {
   { 0, SDLK_BACKSPACE,      cmd_backspace },
   { 0, SDLK_DELETE,         cmd_delete },
   { 0, SDLK_RETURN,         cmd_enter },
+  { KMOD_CTRL, SDLK_k,         cmd_kill_line },
+  { KMOD_CTRL, SDLK_w,         cmd_kill_region },
+  { KMOD_CTRL, SDLK_y,         cmd_yank },
+  { KMOD_ALT,  SDLK_w,         cmd_copy_region },
+  { KMOD_ALT,  SDLK_d,         cmd_kill_word_fwd },
+  { KMOD_ALT,  SDLK_BACKSPACE, cmd_kill_word_back },
+  { KMOD_ALT,  SDLK_u,         cmd_upcase_word },
+  { KMOD_ALT,  SDLK_l,         cmd_downcase_word },
+  { KMOD_ALT,  SDLK_c,         cmd_capitalize_word },
   { 0, 0, NULL },  /* sentinel */
 };
 

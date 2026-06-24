@@ -18,4 +18,11 @@ typedef struct {
 /* Run the command bound to (kmod,sym); returns 1 if one matched, else 0. */
 int kern_dispatch_key(EditorState *ed, ViewState *vs, int kmod, int sym);
 
+/* Commands also invoked directly by textview.c's ESC/meta prefix handler. */
+void cmd_copy_region(EditorState *ed, ViewState *vs);
+void cmd_kill_word_fwd(EditorState *ed, ViewState *vs);
+void cmd_upcase_word(EditorState *ed, ViewState *vs);
+void cmd_downcase_word(EditorState *ed, ViewState *vs);
+void cmd_capitalize_word(EditorState *ed, ViewState *vs);
+
 #endif /* COMMANDS_H */
