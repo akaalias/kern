@@ -45,5 +45,23 @@ $(BIN): $(SRC) $(HDRS)
 test: $(BIN)
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./$(BIN)
 
+# ---- performance harness ----
+# Built WITHOUT sanitizers at -O2 for realistic timing. Measures the algorithm
+# (wrap/search/load) via the deterministic stub renderer, not GL.
+PERF_BIN := kern_perf
+PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c \
+            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c \
+            $(APP)/ThirdParty/microui.c
+
+$(PERF_BIN): $(PERF_SRC) stub_renderer.h clock_fake.h
+	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC)
+
+# Usage: make perf CORPUS=../test_100mb.txt        (add PERF_ARGS=--check for CI)
+# Generate a corpus first: python3 ../tools/gen_prose.py 100MB ../test_100mb.txt
+.PHONY: perf
+perf: $(PERF_BIN)
+	@test -n "$(CORPUS)" || { echo "set CORPUS=<file>  (e.g. python3 ../tools/gen_prose.py 100MB ../test_100mb.txt)"; exit 1; }
+	./$(PERF_BIN) "$(CORPUS)" $(PERF_ARGS)
+
 clean:
-	rm -rf $(BIN) $(BIN).dSYM
+	rm -rf $(BIN) $(BIN).dSYM $(PERF_BIN) $(PERF_BIN).dSYM

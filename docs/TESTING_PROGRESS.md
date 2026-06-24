@@ -51,9 +51,11 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 - [ ] Scenarios: write/delete/open/save, search fwd/back, wikilink follow+autocomplete+nav, list indent, copy/cut/paste/yank, font size
 
 **Phase E — Performance harness + corpora**
-- [ ] `tools/gen_prose.py` (100K / 1M / 100MB, deterministic)
-- [ ] `tests/perf/` benchmarks + budgets (load, jump end/top, search, re-wrap, scroll)
-- [ ] Guarded optimization of hotspots (per-char wrap metrics, invalidate_all_wraps, autosave)
+- [x] `tools/gen_prose.py` — deterministic Markdown-ish corpus generator (`<size> <out>`, e.g. `100MB`).
+- [x] `tests/perf/perf_main.c` + `make perf CORPUS=…` — times load, cold/warm wrap-all, jump-to-end/top, search, full re-wrap, via the deterministic stub renderer (`-O2`, no sanitizers). `--check` enforces generous budgets. CI `perf-smoke` job runs `--check` on a 25MB corpus.
+- [ ] Guarded optimization of hotspots (incremental wrap invalidation, autosave) — baseline captured, ready to refactor against.
+
+**Baseline (2026-06-24, 100MB / 1.32M lines, Apple silicon, -O2):** load 106ms · wrap-all cold 523ms · wrap-all warm 1.7ms · jump-to-end 1.6ms · re-wrap(resize) 510ms · search ~0ms. The two ~0.5s costs (cold wrap, full re-wrap on resize) are the `invalidate_all_wraps` hotspot (REFACTORING #6).
 
 **Phase F — GUI smoke + CI matrix**
 - [ ] Handful of end-to-end smoke tests (SDL_PushEvent / XCUITest)

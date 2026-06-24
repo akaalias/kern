@@ -22,3 +22,18 @@ jobs:
         # SDL_CFLAGS= → resolve <SDL2/SDL.h> from the system libsdl2-dev headers.
         # On Linux, ASan enables LeakSanitizer by default.
         run: make test CC=clang SDL_CFLAGS=
+
+  perf-smoke:
+    name: Performance smoke (Linux, 25MB corpus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang libsdl2-dev
+      - name: Generate corpus
+        run: python3 tools/gen_prose.py 25MB test_corpus.txt
+      - name: Build & run perf budgets
+        working-directory: tests
+        # --check fails on gross/algorithmic regressions (budgets are generous,
+        # sized for 100MB, so a 25MB run has wide slack and won't flake on noise).
+        run: make perf CC=clang SDL_CFLAGS= CORPUS=../test_corpus.txt PERF_ARGS=--check
