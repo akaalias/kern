@@ -530,15 +530,31 @@ void macos_style_window(SDL_Window *sdl_window) {
   NSButton *helpBtn = kern_titlebar_button(@"info.circle", @"Keyboard shortcuts",
                                            @"Keyboard shortcuts",
                                            @selector(showShortcuts:),
-                                           NSMakeRect(0, 0, 38, 30));
+                                           NSZeroRect);
   NSButton *folder = kern_titlebar_button(@"folder", @"Open documents folder",
                                           @"Open documents folder in Finder",
                                           @selector(openDocsFolder:),
-                                          NSMakeRect(38, 0, 38, 30));
+                                          NSZeroRect);
 
+  /* AppKit stretches the accessory view to the full (toolbar-tall) title bar
+     height. Pin the buttons to its vertical center via Auto Layout so they line
+     up with the window title instead of sinking to the bottom edge. */
   NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 82, 30)];
+  helpBtn.translatesAutoresizingMaskIntoConstraints = NO;
+  folder.translatesAutoresizingMaskIntoConstraints = NO;
   [buttons addSubview:helpBtn];
   [buttons addSubview:folder];
+  [NSLayoutConstraint activateConstraints:@[
+    [helpBtn.widthAnchor constraintEqualToConstant:32],
+    [helpBtn.heightAnchor constraintEqualToConstant:24],
+    [folder.widthAnchor constraintEqualToConstant:32],
+    [folder.heightAnchor constraintEqualToConstant:24],
+    [helpBtn.leadingAnchor constraintEqualToAnchor:buttons.leadingAnchor constant:4],
+    [folder.leadingAnchor constraintEqualToAnchor:helpBtn.trailingAnchor constant:6],
+    [folder.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-8],
+    [helpBtn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
+    [folder.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
+  ]];
 
   NSTitlebarAccessoryViewController *acc = [[NSTitlebarAccessoryViewController alloc] init];
   acc.layoutAttribute = NSLayoutAttributeRight;

@@ -106,6 +106,38 @@ static void test_reflow_only_on_width_change(void) {
   ed_teardown(&ed);
 }
 
+/* Regression: wrap measurement must ignore the renderer's ambient font style.
+   The frame ends with the status bar's FONT_MONO active; an event-time wrap
+   recompute (ensure-cursor-visible after an edit) used to cache mono-measured
+   wrap counts that disagreed with the FONT_REGULAR render pass, producing a
+   phantom unwrapped row and mis-placing click-to-cursor. nav_get_wrap_breaks
+   and nav_count_wraps must both measure in the body font regardless. */
+static void test_wrap_count_ignores_ambient_font(void) {
+  stub_set_style_extra(FONT_MONO, 5);          /* mono is 15px/glyph vs 10px body */
+
+  char s[141];
+  memset(s, 'a', 140);
+  s[140] = '\0';                               /* 140 body glyphs → exactly 2 rows */
+  Line l = mkline(s);
+
+  /* populate the cache while MONO is active (simulating post-status-bar state) */
+  r_set_font_style(FONT_MONO);
+  int cached = nav_count_wraps(&l);
+
+  /* the render pass measures fresh in REGULAR */
+  r_set_font_style(FONT_REGULAR);
+  int starts[16];
+  int rendered = nav_get_wrap_breaks(&l, starts, 16);
+
+  /* both must agree on the body-font wrap (2 rows). Measured in mono this line
+     would span 3 rows — the stale-cache bug that produced phantom wrap rows. */
+  CHECK_IEQ(rendered, 2);
+  CHECK_IEQ(cached, rendered);
+
+  free(l.text);
+  stub_reset();                                /* clear the style-extra knob */
+}
+
 void suite_navigation(void) {
   RUN(test_wrap_empty_line);
   RUN(test_reflow_only_on_width_change);
@@ -114,4 +146,5 @@ void suite_navigation(void) {
   RUN(test_wrap_breaks_midword_without_space);
   RUN(test_wrap_breaks_at_last_space);
   RUN(test_count_wraps_caches);
+  RUN(test_wrap_count_ignores_ambient_font);
 }

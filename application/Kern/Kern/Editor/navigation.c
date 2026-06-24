@@ -15,8 +15,22 @@
 int nav_win_w(void) { int w, h; r_get_size(&w, &h); return w; }
 int nav_win_h(void) { int w, h; r_get_size(&w, &h); return h; }
 
+/* Wrap and column math must measure in the body font (FONT_REGULAR) no matter
+   which style the renderer was last left in. The frame ends with the status
+   bar's FONT_MONO active, so an event-time wrap recompute (e.g. ensure-cursor-
+   visible after an edit) would otherwise cache mono-measured wrap counts that
+   disagree with the FONT_REGULAR render pass — producing phantom wrap rows and
+   making click-to-cursor land in the wrong place. */
+static int body_width(const char *s, int len) {
+  int saved = r_get_font_style();
+  if (saved != FONT_REGULAR) r_set_font_style(FONT_REGULAR);
+  int w = r_get_text_width(s, len);
+  if (saved != FONT_REGULAR) r_set_font_style(saved);
+  return w;
+}
+
 int nav_page_w(void) {
-  int ideal = r_get_text_width("n", 1) * CHARS_PER_LINE;
+  int ideal = body_width("n", 1) * CHARS_PER_LINE;
   int max_w = nav_win_w() - 2 * MIN_MARGIN;
   return ideal < max_w ? ideal : max_w;
 }
@@ -36,6 +50,10 @@ int nav_line_height(void) {
 int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
   starts[0] = 0;
   if (l->len == 0) return 1;
+
+  /* measure the whole line in the body font (see body_width above) */
+  int saved_style = r_get_font_style();
+  if (saved_style != FONT_REGULAR) r_set_font_style(FONT_REGULAR);
 
   int count = 1;
   int x = 0;
@@ -63,6 +81,7 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
     i++;
   }
 
+  if (saved_style != FONT_REGULAR) r_set_font_style(saved_style);
   return count;
 }
 
@@ -166,7 +185,7 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
   if (mx > pm) {
     int px = pm;
     for (int i = row_start; i < row_end; i++) {
-      int cw = r_get_text_width(ed->lines[ln].text + i, 1);
+      int cw = body_width(ed->lines[ln].text + i, 1);
       if (px + cw / 2 > mx) break;
       px += cw;
       col = i + 1;

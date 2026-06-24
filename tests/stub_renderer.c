@@ -14,20 +14,32 @@ int      stub_op_count;
 
 static int s_cell_w = 10, s_cell_h = 20, s_win_w = 800, s_win_h = 600;
 static int s_style = FONT_REGULAR;
+/* per-style extra width per char (default 0 = style-independent, matching real
+   life closely enough for most tests). A test can widen e.g. FONT_MONO to model
+   the real renderer, where measuring in the wrong font corrupts wrap caches. */
+static int s_style_extra[FONT_COUNT];
 
 void stub_reset(void) {
   stub_text_count = 0;
   stub_rect_count = 0;
   stub_op_count = 0;
   s_style = FONT_REGULAR;
+  for (int i = 0; i < FONT_COUNT; i++) s_style_extra[i] = 0;
 }
 
 void stub_set_metrics(int cell_w, int cell_h, int win_w, int win_h) {
   s_cell_w = cell_w; s_cell_h = cell_h; s_win_w = win_w; s_win_h = win_h;
 }
 
+void stub_set_style_extra(int style, int extra) {
+  if (style >= 0 && style < FONT_COUNT) s_style_extra[style] = extra;
+}
+
 /* ---- metrics ---- */
-int  r_get_text_width(const char *text, int len) { (void)text; return len * s_cell_w; }
+int  r_get_text_width(const char *text, int len) {
+  (void)text;
+  return len * (s_cell_w + s_style_extra[s_style]);
+}
 int  r_get_text_height(void)                     { return s_cell_h; }
 void r_get_size(int *w, int *h)                  { if (w) *w = s_win_w; if (h) *h = s_win_h; }
 
