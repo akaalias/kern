@@ -17,11 +17,14 @@
 #define STATUS_DURATION   3000   /* ms to show a transient status message */
 
 /* ---- line ---- */
+struct MdSpan;          /* inline-markdown span; defined in md_render.c */
 typedef struct {
   char *text;
   int   len;
   int   cap;
-  int   wrap_count;   /* cached visual line count, -1 = dirty */
+  int   wrap_count;             /* cached visual line count, -1 = dirty */
+  struct MdSpan *md_spans;      /* cached inline-span map (lazy, owned) */
+  int   md_span_count;          /* spans in md_spans; -1 = not yet computed */
 } Line;
 
 /* ---- undo (operation-based) ---- */

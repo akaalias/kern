@@ -1,16 +1,27 @@
 /* unit_md_render.c — unit tests for Editor/md_render.c inline formatting,
  * via the capture stub renderer. Focus: styles carry across a visual-row
  * boundary (the multi-row span bug) and the ==highlight== span. */
+#include <stdlib.h>
 #include <string.h>
 #include "test.h"
+#include "buffer.h"
 #include "md_render.h"
 #include "stub_renderer.h"
 
 static mu_Color GREY;
 
+static Line mkline(const char *s) {
+  Line l;
+  line_init(&l, s, (int)strlen(s));
+  return l;
+}
+static void freeline(Line *l) { free(l->text); free(l->md_spans); }
+
 static void draw_window(const char *t, int start, int end) {
+  Line l = mkline(t);
   int out = -1;
-  md_draw_text(t, start, end, (int)strlen(t), 0, 0, GREY, 0, -1, &out, 1);
+  md_draw_text(&l, start, end, 0, 0, GREY, 0, -1, &out, 1);
+  freeline(&l);
 }
 
 /* The bug: a span that opened on a previous visual row lost its style. Drawing
@@ -61,7 +72,9 @@ static void test_wikilink_draws_bg_for_token(void) {
 
 /* Measurement is linear in the stub (every glyph 10px), independent of style. */
 static void test_col_x_is_linear(void) {
-  CHECK_IEQ(md_col_x("**abcdef**", 0, 10, 10, 0, 0, 5), 50);
+  Line l = mkline("**abcdef**");
+  CHECK_IEQ(md_col_x(&l, 0, 10, 0, 0, 5), 50);
+  freeline(&l);
 }
 
 void suite_md_render(void) {

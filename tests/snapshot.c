@@ -73,10 +73,11 @@ static void render_document(const char *const *lines, int n) {
       int x0 = margin + indent + (r > 0 ? marker : 0);
       int y  = vrow * lh;
       int out = -1;
-      md_draw_text(L.text, rs, re, L.len, x0, y, SNAP_TEXT, heading, -1, &out, 1);
+      md_draw_text(&L, rs, re, x0, y, SNAP_TEXT, heading, -1, &out, 1);
       vrow++;
     }
     free(L.text);
+    free(L.md_spans);
   }
 }
 

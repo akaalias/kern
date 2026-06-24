@@ -1,5 +1,6 @@
 /* md_render.c — Markdown-aware text rendering */
 
+#include <stdlib.h>
 #include <string.h>
 #include "md_render.h"
 #include "renderer.h"
@@ -128,15 +129,61 @@ static int md_detect_span(const char *t, int i, int line_len,
   return SP_NONE;
 }
 
+/* a cached inline span: kind + the boundaries from md_detect_span.
+   [open,content) and [close,end) are the delimiter runs; [content,close) is the
+   styled inner text (the whole token for links). */
+struct MdSpan { int kind, open, content, close, end; };
+
+/* Scan a whole line into its inline spans in one pass — detection resumes after
+   each span (no nesting), matching md_draw_text's draw order. With out==NULL
+   this only counts, so callers can size an exact allocation. */
+static int md_scan_spans(const char *t, int len, struct MdSpan *out) {
+  int n = 0, i = 0;
+  while (i < len) {
+    int content, close, end;
+    int kind = md_detect_span(t, i, len, &content, &close, &end);
+    if (kind) {
+      if (out) {
+        out[n].kind = kind; out[n].open = i; out[n].content = content;
+        out[n].close = close; out[n].end = end;
+      }
+      n++;
+      i = end;
+    } else {
+      i++;
+    }
+  }
+  return n;
+}
+
+/* Lazily compute and cache the line's span map (recomputed when md_span_count is
+   -1, which line_dirty sets on every edit). Returns the count; *out gets the
+   array. This replaces re-parsing the line for each wrapped visual row. */
+static int md_line_spans(Line *l, const struct MdSpan **out) {
+  if (l->md_span_count < 0) {
+    free(l->md_spans);
+    l->md_spans = NULL;
+    int n = md_scan_spans(l->text, l->len, NULL);
+    if (n > 0) {
+      l->md_spans = malloc((size_t)n * sizeof(struct MdSpan));
+      if (l->md_spans) md_scan_spans(l->text, l->len, l->md_spans);
+      else n = 0;
+    }
+    l->md_span_count = n;
+  }
+  *out = l->md_spans;
+  return l->md_span_count;
+}
+
 /* Draw (or, when draw==0, just measure) the visual-row window [start,end) of a
-   logical line. Inline spans are parsed from the logical-line start (0..line_len)
-   so formatting that wraps across rows still applies. Renders one character at a
-   time, so the active font carries across the row boundary.
+   line, using its cached inline-span map so formatting carries across wrapped
+   rows. Renders one character at a time.
      track_cursor_col: if in [start,end] the pen x at that column is written to
      *out_cursor_x. Returns the pen x after the window. */
-float md_draw_text(const char *text, int start, int end, int line_len,
+float md_draw_text(Line *l, int start, int end,
                    float x, float y, mu_Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw) {
+  const char *text = l->text;
   int saved_style = r_get_font_style();
   int base_style  = heading ? FONT_BOLD : FONT_REGULAR;
   int font_h      = r_get_text_height();
@@ -148,26 +195,27 @@ float md_draw_text(const char *text, int start, int end, int line_len,
   mu_Color hl_bg   = mu_color(240, 214, 92, 70);   /* soft highlighter yellow */
   static const int wave[4] = { 0, 1, 2, 1 };       /* hand-drawn wobble */
 
-  int mode = SP_NONE, content = 0, close = 0, span_end = 0;
-  float px = x;
+  const struct MdSpan *spans;
+  int span_count = md_line_spans(l, &spans);
+  int si = 0;
+  while (si < span_count && spans[si].end <= start) si++;   /* first span over `start` */
 
-  for (int i = 0; i < end; i++) {
-    if (mode == SP_NONE) {
-      int sp = md_detect_span(text, i, line_len, &content, &close, &span_end);
-      if (sp) mode = sp;
-    }
+  float px = x;
+  for (int i = start; i < end; i++) {
+    while (si < span_count && i >= spans[si].end) si++;
 
     /* attributes for the character at i */
     int style = base_style;
     mu_Color fg = base_color;
     int bg = 0;   /* 0 none, 1 link, 2 highlight */
-    if (mode != SP_NONE) {
-      if (mode == SP_LINK || mode == SP_WIKI) {
+    if (si < span_count && i >= spans[si].open && i < spans[si].end) {
+      const struct MdSpan *s = &spans[si];
+      if (s->kind == SP_LINK || s->kind == SP_WIKI) {
         fg = link_fg; bg = 1;
-      } else if (i < content || i >= close) {
+      } else if (i < s->content || i >= s->close) {
         fg = dim;   /* the delimiter characters themselves */
       } else {
-        switch (mode) {
+        switch (s->kind) {
           case SP_BOLD:   style = FONT_BOLD; break;
           case SP_ITALIC: style = heading ? FONT_BOLD : FONT_ITALIC; break;
           case SP_MONO:   style = FONT_MONO; fg = code_fg; break;
@@ -176,25 +224,21 @@ float md_draw_text(const char *text, int start, int end, int line_len,
       }
     }
 
-    if (i == track_cursor_col && i >= start) *out_cursor_x = (int)px;
+    if (i == track_cursor_col) *out_cursor_x = (int)px;
 
-    if (i >= start) {
-      r_set_font_style(style);
-      char ch[2] = { text[i], '\0' };
-      int w = r_get_text_width(ch, 1);
-      if (draw) {
-        if (bg == 1) {
-          r_draw_rect(mu_rect((int)px, (int)y, w, font_h), link_bg);
-        } else if (bg == 2) {
-          int woff = wave[i & 3];
-          r_draw_rect(mu_rect((int)px, (int)y + woff, w, font_h - 1), hl_bg);
-        }
-        r_draw_text(ch, mu_vec2((int)px, (int)y), fg);
+    r_set_font_style(style);
+    char ch[2] = { text[i], '\0' };
+    int w = r_get_text_width(ch, 1);
+    if (draw) {
+      if (bg == 1) {
+        r_draw_rect(mu_rect((int)px, (int)y, w, font_h), link_bg);
+      } else if (bg == 2) {
+        int woff = wave[i & 3];
+        r_draw_rect(mu_rect((int)px, (int)y + woff, w, font_h - 1), hl_bg);
       }
-      px += w;
+      r_draw_text(ch, mu_vec2((int)px, (int)y), fg);
     }
-
-    if (mode != SP_NONE && i + 1 >= span_end) mode = SP_NONE;
+    px += w;
   }
 
   if (track_cursor_col >= end) *out_cursor_x = (int)px;
@@ -203,10 +247,9 @@ float md_draw_text(const char *text, int start, int end, int line_len,
   return px;
 }
 
-int md_col_x(const char *text, int start, int end, int line_len,
-             int x0, int heading, int col) {
+int md_col_x(Line *l, int start, int end, int x0, int heading, int col) {
   int out = x0;
-  md_draw_text(text, start, end, line_len, (float)x0, 0.0f, mu_color(0, 0, 0, 0),
+  md_draw_text(l, start, end, (float)x0, 0.0f, mu_color(0, 0, 0, 0),
                heading, col, &out, 0 /* measure only */);
   return out;
 }

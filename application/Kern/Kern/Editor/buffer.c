@@ -154,9 +154,12 @@ void line_init(Line *l, const char *s, int len) {
   l->text[len] = '\0';
   l->len = len;
   l->wrap_count = -1;
+  l->md_spans = NULL;
+  l->md_span_count = -1;
 }
 
-void line_dirty(Line *l) { l->wrap_count = -1; }
+/* any edit invalidates this line's cached wraps and inline-span map */
+void line_dirty(Line *l) { l->wrap_count = -1; l->md_span_count = -1; }
 
 void buf_ensure_lines_cap(EditorState *ed, int need) {
   if (need > ed->line_cap) {
@@ -176,6 +179,7 @@ void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len) {
 
 void buf_delete_line_at(EditorState *ed, int idx) {
   free(ed->lines[idx].text);
+  free(ed->lines[idx].md_spans);
   memmove(&ed->lines[idx], &ed->lines[idx + 1], (ed->line_count - idx - 1) * sizeof(Line));
   ed->line_count--;
 }
@@ -236,7 +240,10 @@ int buf_load_file(EditorState *ed, const char *path) {
 }
 
 void buf_free_all_lines(EditorState *ed) {
-  for (int i = 0; i < ed->line_count; i++) free(ed->lines[i].text);
+  for (int i = 0; i < ed->line_count; i++) {
+    free(ed->lines[i].text);
+    free(ed->lines[i].md_spans);
+  }
   ed->line_count = 0;
 }
 
