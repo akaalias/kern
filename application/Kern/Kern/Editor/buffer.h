@@ -17,6 +17,8 @@ int  buf_load_file(EditorState *ed, const char *path);
 void buf_free_all_lines(EditorState *ed);
 void buf_init_empty(EditorState *ed);
 int  buf_save(EditorState *ed, const char *path);
+int  buf_save_text(const char *path, const char *text, int len);
+void buf_sanitize_note_title(const char *text, int len, char *out, int outsz);
 
 /* sandboxed file location: all user paths resolve under this directory */
 void buf_set_documents_dir(const char *dir);

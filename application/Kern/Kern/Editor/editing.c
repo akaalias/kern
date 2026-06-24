@@ -8,6 +8,8 @@
 #include "buffer.h"
 #include "undo.h"
 
+static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec);
+
 /* ---- basic editing ---- */
 
 void ed_insert_char(EditorState *ed, const char *text) {
@@ -220,8 +222,12 @@ void ed_emacs_yank(EditorState *ed) {
 }
 
 /* M-w (kill-ring-save): copy the region into the kill buffer without deleting. */
-void ed_emacs_copy_region(EditorState *ed) {
-  if (!ed->mark_active) return;
+/* Return the marked region as a freshly malloc'd, NUL-terminated string (lines
+   joined with '\n'), or NULL if there's no region. *len_out gets the byte
+   length (excluding the NUL). Caller frees. */
+char *ed_region_dup(EditorState *ed, int *len_out) {
+  if (len_out) *len_out = 0;
+  if (!ed->mark_active) return NULL;
   int sl, sc, el, ec;
   buf_region_ordered(ed, &sl, &sc, &el, &ec);
 
@@ -233,7 +239,7 @@ void ed_emacs_copy_region(EditorState *ed) {
     if (ln < el) total++;
   }
   char *region = malloc(total + 1);
-  if (!region) return;
+  if (!region) return NULL;
   int pos = 0;
   for (int ln = sl; ln <= el; ln++) {
     int cs = (ln == sl) ? sc : 0;
@@ -243,12 +249,36 @@ void ed_emacs_copy_region(EditorState *ed) {
     if (ln < el) region[pos++] = '\n';
   }
   region[pos] = '\0';
-  buf_kill_set(ed, region, total);
+  if (len_out) *len_out = total;
+  return region;
+}
+
+void ed_emacs_copy_region(EditorState *ed) {
+  int len;
+  char *region = ed_region_dup(ed, &len);
+  if (!region) return;
+  buf_kill_set(ed, region, len);
   free(region);
 }
 
+/* Replace the marked region with `replacement` as a single undoable action:
+   cut the region (to the kill buffer) then insert the text at its start. Clears
+   the mark. Used by the extract-region-to-note command. */
+void ed_replace_region(EditorState *ed, const char *replacement) {
+  if (!ed->mark_active) return;
+  int sl, sc, el, ec;
+  buf_region_ordered(ed, &sl, &sc, &el, &ec);
+  undo_begin_group(ed);
+  ed_kill_range(ed, sl, sc, el, ec);   /* one UNDO_DELETE, cursor at sl,sc */
+  ed_insert_char(ed, replacement);     /* UNDO_INSERT(s) at the cursor */
+  undo_end_group(ed);
+  buf_mark_clear(ed);
+}
+
 /* Kill (cut to kill buffer, with undo) the ordered range [sl,sc] .. [el,ec].
-   Leaves the cursor at the start of the range. Mark is left untouched. */
+   Leaves the cursor at the start of the range. Mark is left untouched. Records
+   one UNDO_DELETE op (ungrouped), so a caller can wrap several edits in its own
+   undo group — see ed_replace_region. */
 static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec) {
   int total = 0;
   for (int ln = sl; ln <= el; ln++) {
@@ -274,9 +304,7 @@ static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec) {
   region[pos] = '\0';
   buf_kill_set(ed, region, total);
 
-  undo_begin_group(ed);
   undo_push_op(ed, UNDO_DELETE, sl, sc, region, total);
-  undo_end_group(ed);
   free(region);
 
   ed->cursor_line = sl; ed->cursor_col = sc;

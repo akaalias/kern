@@ -211,6 +211,22 @@ static void test_complete_and_list_filenames(void) {
   rmdir(dir);
 }
 
+static void test_sanitize_note_title(void) {
+  char out[64];
+  /* spaces between words are kept */
+  buf_sanitize_note_title("Foo Bar Baz", 11, out, sizeof out);
+  CHECK_SEQ(out, "Foo Bar Baz");
+  /* punctuation and markdown markers dropped; surrounding spaces trimmed */
+  buf_sanitize_note_title("## Heading: Wow!", 16, out, sizeof out);
+  CHECK_SEQ(out, "Heading Wow");
+  /* only the first line is used */
+  buf_sanitize_note_title("first line\nsecond", 17, out, sizeof out);
+  CHECK_SEQ(out, "first line");
+  /* nothing usable -> empty (caller refuses) */
+  buf_sanitize_note_title("###", 3, out, sizeof out);
+  CHECK_SEQ(out, "");
+}
+
 void suite_buffer(void) {
   RUN(test_load_basic);
   RUN(test_load_strips_crlf);
@@ -221,4 +237,5 @@ void suite_buffer(void) {
   RUN(test_region_orders_endpoints);
   RUN(test_resolve_path);
   RUN(test_complete_and_list_filenames);
+  RUN(test_sanitize_note_title);
 }

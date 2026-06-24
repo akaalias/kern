@@ -260,6 +260,57 @@ static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
   nav_goto(&e);
 }
 
+/* Cmd-Shift-N: spin the marked region out into its own note. The note is named
+   after the first line of the selection (alphanumerics only) + ".md", written
+   to the documents folder, and the selection is replaced in place with a
+   [[wikilink]] to the new note. */
+static void cmd_extract_region_to_note(void) {
+  if (!mark_active) { status_set("Mark a region first (C-Space)"); return; }
+
+  int rlen;
+  char *region = ed_region_dup(&g_ed, &rlen);
+  if (!region || rlen == 0) { free(region); status_set("Region is empty"); return; }
+
+  /* title := first line of the selection (letters, digits and spaces kept) */
+  char base[256];
+  buf_sanitize_note_title(region, rlen, base, sizeof(base));
+  if (base[0] == '\0') {
+    free(region);
+    status_set("First line has no letters or digits to name the note");
+    return;
+  }
+
+  /* resolve to a filename that won't clobber an existing note */
+  char fname[300], path[1024];
+  int taken = 1;
+  for (int n = 1; n <= 1000; n++) {
+    if (n == 1) snprintf(fname, sizeof(fname), "%s.md", base);
+    else        snprintf(fname, sizeof(fname), "%s-%d.md", base, n);
+    buf_resolve_path(fname, path, sizeof(path));
+    FILE *probe = fopen(path, "rb");
+    if (!probe) { taken = 0; break; }
+    fclose(probe);
+  }
+  if (taken) { free(region); status_set("Too many notes with that title"); return; }
+
+  if (buf_save_text(path, region, rlen) != 0) {
+    free(region);
+    status_set("Couldn't write the new note");
+    return;
+  }
+  free(region);
+
+  /* replace the selection with a link to the new note, as one undo step */
+  char link[320];
+  snprintf(link, sizeof(link), "[[%s]]", fname);
+  ed_replace_region(&g_ed, link);
+  ensure_cursor_visible();
+
+  char msg[256];
+  snprintf(msg, sizeof(msg), "Created %s", fname);
+  status_set(msg);
+}
+
 /* word wrapping, cursor navigation, editing, and markdown rendering
    now in navigation.c, editing.c, md_render.c (accessed via shims above) */
 
@@ -1192,6 +1243,11 @@ int editor_main(int argc, char **argv) {
             if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
                 sym == SDLK_RIGHT) {
               cmd_nav_forward(); break;
+            }
+            /* Cmd-Shift-N: extract the marked region into a new linked note */
+            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+                sym == SDLK_n) {
+              cmd_extract_region_to_note(); break;
             }
 
             /* 1d. Tab / Shift-Tab indent or outdent the current list item.

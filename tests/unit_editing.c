@@ -1,9 +1,12 @@
 /* unit_editing.c — unit tests for Editor/editing.c.
  * Pure EditorState operations: no window, no GL, no SDL runtime. */
 #include <string.h>
+#include <stdlib.h>
 #include "test.h"
 #include "ed_fixture.h"
 #include "editing.h"
+#include "buffer.h"
+#include "undo.h"
 
 /* ---- ed_insert_char ---- */
 
@@ -210,6 +213,57 @@ static void test_copy_then_yank_roundtrip(void) {
   ed_teardown(&ed);
 }
 
+static void test_region_dup_returns_marked_text(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  buf_insert_line_at(&ed, 1, "def", 3);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);                 /* mark at (0,1) */
+  ed.cursor_line = 1; ed.cursor_col = 2;
+  int len = -1;
+  char *r = ed_region_dup(&ed, &len);
+  CHECK_SEQ(r, "bc\nde");
+  CHECK_IEQ(len, 5);
+  CHECK_SEQ(LINE(ed, 0), "abc");     /* buffer untouched */
+  free(r);
+  /* no region -> NULL, len 0 */
+  buf_mark_clear(&ed);
+  len = 99;
+  CHECK(ed_region_dup(&ed, &len) == NULL);
+  CHECK_IEQ(len, 0);
+  ed_teardown(&ed);
+}
+
+static void test_replace_region_swaps_in_text(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "before MARK after");
+  ed.cursor_col = 7;
+  buf_mark_set(&ed);                 /* mark before "MARK" */
+  ed.cursor_col = 11;                /* point after "MARK" */
+  ed_replace_region(&ed, "[[Note.md]]");
+  CHECK_SEQ(LINE(ed, 0), "before [[Note.md]] after");
+  CHECK_IEQ(ed.mark_active, 0);      /* mark cleared */
+  ed_teardown(&ed);
+}
+
+static void test_replace_region_multiline_is_one_undo(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  buf_insert_line_at(&ed, 1, "def", 3);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);
+  ed.cursor_line = 1; ed.cursor_col = 2;   /* region "bc\nde" */
+  ed_replace_region(&ed, "[[X.md]]");
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "a[[X.md]]f");
+  /* a single undo step restores both the cut and the link insertion */
+  undo_perform(&ed);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  CHECK_SEQ(LINE(ed, 1), "def");
+  ed_teardown(&ed);
+}
+
 void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
@@ -229,4 +283,7 @@ void suite_editing(void) {
   RUN(test_yank_inserts_kill_buffer);
   RUN(test_yank_multiline_splits);
   RUN(test_copy_then_yank_roundtrip);
+  RUN(test_region_dup_returns_marked_text);
+  RUN(test_replace_region_swaps_in_text);
+  RUN(test_replace_region_multiline_is_one_undo);
 }

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <strings.h>
@@ -271,6 +272,37 @@ int buf_save(EditorState *ed, const char *path) {
   int ok = (ferror(f) == 0);
   if (fclose(f) != 0) ok = 0;
   if (ok) ed->dirty = 0;   /* in sync with disk again */
+  return ok ? 0 : -1;
+}
+
+/* Derive a note filename base from the first line of `text`: keep letters,
+   digits and spaces (so "Foo Bar Baz" stays intact), drop other punctuation,
+   and trim surrounding spaces. Writes a NUL-terminated result — empty if the
+   first line has nothing usable. Does not append ".md". */
+void buf_sanitize_note_title(const char *text, int len, char *out, int outsz) {
+  if (outsz <= 0) return;
+  int oi = 0;
+  for (int i = 0; i < len && text[i] != '\n' && oi < outsz - 1; i++) {
+    unsigned char c = (unsigned char)text[i];
+    if (isalnum(c) || c == ' ') out[oi++] = (char)c;
+  }
+  out[oi] = '\0';
+  int s = 0;
+  while (out[s] == ' ') s++;
+  if (s > 0) memmove(out, out + s, strlen(out + s) + 1);
+  int e = (int)strlen(out);
+  while (e > 0 && out[e - 1] == ' ') out[--e] = '\0';
+}
+
+/* Write a raw text blob to `path` (creating parent dirs). Used to spin off a
+   new note file without disturbing the open EditorState. Returns 0 on success. */
+int buf_save_text(const char *path, const char *text, int len) {
+  mkdir_parents(path);
+  FILE *f = fopen(path, "wb");
+  if (!f) return -1;
+  if (len > 0) fwrite(text, 1, len, f);
+  int ok = (ferror(f) == 0);
+  if (fclose(f) != 0) ok = 0;
   return ok ? 0 : -1;
 }
 
