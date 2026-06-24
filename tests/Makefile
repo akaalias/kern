@@ -1,8 +1,8 @@
 # tests/Makefile — headless test build for Kern's portable core.
 #
 # Compiles only the pure EditorState code (buffer/editing/undo) plus the SDL
-# and microui *headers* (needed for typedefs via editor_types.h). No SDL
-# runtime, no OpenGL, no Cocoa — so it runs anywhere, including Linux CI.
+# *headers* (needed for typedefs via editor_types.h). No SDL runtime, no
+# OpenGL, no Cocoa — so it runs anywhere, including Linux CI.
 # Built under AddressSanitizer + UndefinedBehaviorSanitizer; LeakSanitizer
 # activates automatically on Linux.
 
@@ -25,14 +25,12 @@ SAN     := -fsanitize=address,undefined -fno-omit-frame-pointer
 INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
 # _GNU_SOURCE exposes POSIX helpers (mkstemp/unlink/mkdir) that glibc hides
 # under -std=c11; harmless on macOS where they're visible by default.
-# -Wno-deprecated-declarations silences a vendored microui.c sprintf() warning
-# (our own code uses snprintf); microui is slated for removal (REFACTORING #1).
 CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter \
-           -Wno-deprecated-declarations $(SAN) $(INCS)
+           $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
-# the stub) + microui (for mu_color/mu_rect/mu_vec2 used by md_render).
+# the stub). Geometry types (mu_color/mu_rect/mu_vec2) come from gfx.h.
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c
@@ -63,7 +61,7 @@ test: $(BIN)
 COV_BIN := kern_cov
 .PHONY: coverage
 coverage:
-	$(CC) -std=c11 -D_GNU_SOURCE -O0 -Wno-deprecated-declarations \
+	$(CC) -std=c11 -D_GNU_SOURCE -O0 \
 	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata

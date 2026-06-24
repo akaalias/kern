@@ -4,7 +4,7 @@
  * (wrap each logical line, then md_draw_text per visual row) into the capture
  * stub, serializes the ordered draw-op stream, and compares it to a committed
  * golden under tests/snapshots/. This is the parity proof for future refactors
- * of md_render/navigation/microui: the serialized model must stay identical.
+ * of md_render/navigation: the serialized model must stay identical.
  *
  * Regenerate goldens after an intentional change:
  *     KERN_UPDATE_SNAPSHOTS=1 make test

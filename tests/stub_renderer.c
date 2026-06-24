@@ -80,7 +80,6 @@ void r_draw_rect(mu_Rect rect, mu_Color color) {
 
 /* ---- unused by the headless layout paths: no-ops ---- */
 void r_init(void)                              {}
-void r_draw_icon(int id, mu_Rect r, mu_Color c){ (void)id; (void)r; (void)c; }
 void r_set_clip_rect(mu_Rect rect)             { (void)rect; }
 void r_clear(mu_Color color)                   { (void)color; }
 void r_present(void)                           {}
