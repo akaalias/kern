@@ -49,7 +49,7 @@ int  r_get_font_style(void)      { return s_style; }
 void r_set_font_size(float size) { (void)size; }
 
 /* ---- draw capture ---- */
-void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
+void r_draw_text(const char *text, Vec2 pos, Color color) {
   const char *s = text ? text : "";
   if (stub_text_count < STUB_MAX) {
     StubText *t = &stub_texts[stub_text_count++];
@@ -60,12 +60,12 @@ void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
     StubOp *o = &stub_ops[stub_op_count++];
     o->kind = STUB_OP_TEXT;
     snprintf(o->ch, sizeof o->ch, "%s", s);
-    o->rect = mu_rect(pos.x, pos.y, 0, 0);
+    o->rect = rect(pos.x, pos.y, 0, 0);
     o->style = s_style; o->color = color;
   }
 }
 
-void r_draw_rect(mu_Rect rect, mu_Color color) {
+void r_draw_rect(Rect rect, Color color) {
   if (stub_rect_count < STUB_MAX) {
     StubRect *r = &stub_rects[stub_rect_count++];
     r->rect = rect; r->color = color;
@@ -80,8 +80,8 @@ void r_draw_rect(mu_Rect rect, mu_Color color) {
 
 /* ---- unused by the headless layout paths: no-ops ---- */
 void r_init(void)                              {}
-void r_set_clip_rect(mu_Rect rect)             { (void)rect; }
-void r_clear(mu_Color color)                   { (void)color; }
+void r_set_clip_rect(Rect rect)             { (void)rect; }
+void r_clear(Color color)                   { (void)color; }
 void r_present(void)                           {}
 void r_set_title(const char *title)            { (void)title; }
 SDL_Window *r_get_window(void)                 { return NULL; }

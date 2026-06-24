@@ -181,18 +181,18 @@ static int md_line_spans(Line *l, const struct MdSpan **out) {
      track_cursor_col: if in [start,end] the pen x at that column is written to
      *out_cursor_x. Returns the pen x after the window. */
 float md_draw_text(Line *l, int start, int end,
-                   float x, float y, mu_Color base_color, int heading,
+                   float x, float y, Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw) {
   const char *text = l->text;
   int saved_style = r_get_font_style();
   int base_style  = heading ? FONT_BOLD : FONT_REGULAR;
   int font_h      = r_get_text_height();
 
-  mu_Color dim     = mu_color(80, 80, 80, 255);
-  mu_Color link_fg = mu_color(180, 160, 220, 255);
-  mu_Color link_bg = mu_color(80, 50, 120, 255);
-  mu_Color code_fg = mu_color(180, 140, 100, 255);
-  mu_Color hl_bg   = mu_color(240, 214, 92, 70);   /* soft highlighter yellow */
+  Color dim     = color(80, 80, 80, 255);
+  Color link_fg = color(180, 160, 220, 255);
+  Color link_bg = color(80, 50, 120, 255);
+  Color code_fg = color(180, 140, 100, 255);
+  Color hl_bg   = color(240, 214, 92, 70);   /* soft highlighter yellow */
   static const int wave[4] = { 0, 1, 2, 1 };       /* hand-drawn wobble */
 
   const struct MdSpan *spans;
@@ -206,7 +206,7 @@ float md_draw_text(Line *l, int start, int end,
 
     /* attributes for the character at i */
     int style = base_style;
-    mu_Color fg = base_color;
+    Color fg = base_color;
     int bg = 0;   /* 0 none, 1 link, 2 highlight */
     if (si < span_count && i >= spans[si].open && i < spans[si].end) {
       const struct MdSpan *s = &spans[si];
@@ -231,12 +231,12 @@ float md_draw_text(Line *l, int start, int end,
     int w = r_get_text_width(ch, 1);
     if (draw) {
       if (bg == 1) {
-        r_draw_rect(mu_rect((int)px, (int)y, w, font_h), link_bg);
+        r_draw_rect(rect((int)px, (int)y, w, font_h), link_bg);
       } else if (bg == 2) {
         int woff = wave[i & 3];
-        r_draw_rect(mu_rect((int)px, (int)y + woff, w, font_h - 1), hl_bg);
+        r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), hl_bg);
       }
-      r_draw_text(ch, mu_vec2((int)px, (int)y), fg);
+      r_draw_text(ch, vec2((int)px, (int)y), fg);
     }
     px += w;
   }
@@ -249,7 +249,7 @@ float md_draw_text(Line *l, int start, int end,
 
 int md_col_x(Line *l, int start, int end, int x0, int heading, int col) {
   int out = x0;
-  md_draw_text(l, start, end, (float)x0, 0.0f, mu_color(0, 0, 0, 0),
+  md_draw_text(l, start, end, (float)x0, 0.0f, color(0, 0, 0, 0),
                heading, col, &out, 0 /* measure only */);
   return out;
 }

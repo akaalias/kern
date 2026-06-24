@@ -191,7 +191,7 @@ static void switch_texture(GLuint tex) {
 
 static void push_quad_uv(float dst_x, float dst_y, float dst_w, float dst_h,
                           float u0, float v0, float u1, float v1,
-                          mu_Color color) {
+                          Color color) {
   if (buf_idx == BUFFER_SIZE) { flush(); }
 
   int texvert_idx = buf_idx *  8;
@@ -259,8 +259,8 @@ void r_init(void) {
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   glEnableClientState(GL_COLOR_ARRAY);
 
-  /* 1x1 white texture: solid rects sample it and multiply by their color
-     (replaces the white pixel that used to live in microui's atlas) */
+  /* 1x1 white texture: solid rects sample it and multiply by their color,
+     so r_draw_rect reuses the same textured-quad path as glyphs */
   static const unsigned char white_px = 255;
   glGenTextures(1, &white_tex);
   glBindTexture(GL_TEXTURE_2D, white_tex);
@@ -287,13 +287,13 @@ void r_init(void) {
 }
 
 
-void r_draw_rect(mu_Rect rect, mu_Color color) {
+void r_draw_rect(Rect rect, Color color) {
   switch_texture(white_tex);
   push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 0, 1, 1, color);
 }
 
 
-void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
+void r_draw_text(const char *text, Vec2 pos, Color color) {
   FontData *fd = &fonts[current_font];
   switch_texture(fd->tex);
   float x = pos.x;
@@ -360,14 +360,14 @@ int r_get_font_style(void) {
 }
 
 
-void r_set_clip_rect(mu_Rect rect) {
+void r_set_clip_rect(Rect rect) {
   flush();
   glScissor(rect.x * dpi_scale, draw_height - (rect.y + rect.h) * dpi_scale,
             rect.w * dpi_scale, rect.h * dpi_scale);
 }
 
 
-void r_clear(mu_Color clr) {
+void r_clear(Color clr) {
   flush();
   glClearColor(clr.r / 255., clr.g / 255., clr.b / 255., clr.a / 255.);
   glClear(GL_COLOR_BUFFER_BIT);

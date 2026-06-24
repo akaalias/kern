@@ -6,10 +6,10 @@
 #ifndef KERN_STUB_RENDERER_H
 #define KERN_STUB_RENDERER_H
 
-#include "renderer.h"   /* mu_Rect, mu_Color, mu_Vec2, FONT_* */
+#include "renderer.h"   /* Rect, Color, Vec2, FONT_* */
 
-typedef struct { char ch[8]; int x, y, style; mu_Color color; } StubText;
-typedef struct { mu_Rect rect; mu_Color color; } StubRect;
+typedef struct { char ch[8]; int x, y, style; Color color; } StubText;
+typedef struct { Rect rect; Color color; } StubRect;
 
 /* a single op stream in draw order (text + rects interleaved) — used by the
  * snapshot harness so goldens capture exact draw ordering. */
@@ -17,9 +17,9 @@ typedef enum { STUB_OP_TEXT, STUB_OP_RECT } StubOpKind;
 typedef struct {
   StubOpKind kind;
   char    ch[8];   /* TEXT only */
-  mu_Rect rect;    /* TEXT: x,y at glyph origin (w,h = 0); RECT: full rect */
+  Rect rect;    /* TEXT: x,y at glyph origin (w,h = 0); RECT: full rect */
   int     style;   /* TEXT only */
-  mu_Color color;
+  Color color;
 } StubOp;
 
 #define STUB_MAX 8192

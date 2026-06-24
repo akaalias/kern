@@ -8,7 +8,7 @@
 #include "md_render.h"
 #include "stub_renderer.h"
 
-static mu_Color GREY;
+static Color GREY;
 
 static Line mkline(const char *s) {
   Line l;
@@ -78,7 +78,7 @@ static void test_col_x_is_linear(void) {
 }
 
 void suite_md_render(void) {
-  GREY = mu_color(200, 200, 200, 255);
+  GREY = color(200, 200, 200, 255);
   RUN(test_bold_carries_into_tail_window);
   RUN(test_markers_use_base_style);
   RUN(test_bold_full_line);

@@ -23,7 +23,7 @@
 #include "md_render.h"
 #include "stub_renderer.h"
 
-#define SNAP_TEXT mu_color(204, 200, 195, 255)   /* the app's MU_COLOR_TEXT */
+#define SNAP_TEXT color(204, 200, 195, 255)   /* the app's body text color */
 
 /* ---- serialization buffer ---- */
 

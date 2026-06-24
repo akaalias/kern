@@ -30,7 +30,7 @@ CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter \
 LDFLAGS := $(SAN)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
-# the stub). Geometry types (mu_color/mu_rect/mu_vec2) come from gfx.h.
+# the stub). Geometry types (color/rect/vec2) come from gfx.h.
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c

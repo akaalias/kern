@@ -28,7 +28,7 @@ int md_heading_prefix_len(Line *l);
    track_cursor_col: if in [start,end], record x position at that column
    (written to *out_cursor_x). Returns the x position after drawing. */
 float md_draw_text(Line *l, int start, int end,
-                   float x, float y, mu_Color base_color, int heading,
+                   float x, float y, Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw);
 
 /* x position (px) where column `col` renders, using the same per-span font

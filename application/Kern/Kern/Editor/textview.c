@@ -284,8 +284,8 @@ static int heading_markers_hang(Line *l) {
 
 /* ---- frame ---- */
 
-/* mouse state, tracked from SDL events (replaces microui's input aggregation);
-   only the scrollbar consumes it. g_mouse_pressed is the edge for this frame. */
+/* mouse state, tracked from SDL events; only the scrollbar consumes it.
+   g_mouse_pressed is the press edge for this frame. */
 static int g_mouse_x, g_mouse_y, g_mouse_down, g_mouse_pressed;
 
 /* Lay out and immediately draw the frame's chrome: window background, content
@@ -302,8 +302,8 @@ static void process_frame(void) {
   r_set_font_size(font_size);
   r_set_font_style(FONT_REGULAR);
 
-  /* window background (was microui's MU_COLOR_WINDOWBG) */
-  r_draw_rect(mu_rect(0, 0, win_w(), win_h()), mu_color(50, 50, 50, 255));
+  /* window background */
+  r_draw_rect(rect(0, 0, win_w(), win_h()), color(50, 50, 50, 255));
 
   {
     int lh = line_height();
@@ -325,7 +325,7 @@ static void process_frame(void) {
     int vis_on_screen = g_content_h / lh + 4;
 
     /* clip to content area */
-    r_set_clip_rect(mu_rect(0, g_content_y, win_w(), g_content_h));
+    r_set_clip_rect(rect(0, g_content_y, win_w(), g_content_h));
 
     /* render visible visual lines */
     for (int vi = 0; vi < vis_on_screen; vi++) {
@@ -373,8 +373,8 @@ static void process_frame(void) {
               int hx = md_col_x(l, dstart, row_end, x0, is_heading(l), hs);
               int hw = md_col_x(l, dstart, row_end, x0, is_heading(l), he) - hx;
               int font_h = r_get_text_height();
-              r_draw_rect(mu_rect(hx, py, hw, font_h),
-                          mu_color(60, 100, 160, 180));
+              r_draw_rect(rect(hx, py, hw, font_h),
+                          color(60, 100, 160, 180));
             }
           }
         }
@@ -400,11 +400,11 @@ static void process_frame(void) {
             int font_h = r_get_text_height();
             /* current match gets brighter highlight */
             if (ln == search_match_line && sc == search_match_col) {
-              r_draw_rect(mu_rect(hx, py, hw, font_h),
-                          mu_color(200, 150, 0, 180));
+              r_draw_rect(rect(hx, py, hw, font_h),
+                          color(200, 150, 0, 180));
             } else {
-              r_draw_rect(mu_rect(hx, py, hw, font_h),
-                          mu_color(120, 90, 0, 120));
+              r_draw_rect(rect(hx, py, hw, font_h),
+                          color(120, 90, 0, 120));
             }
           }
         }
@@ -413,7 +413,7 @@ static void process_frame(void) {
       /* cursor drawing moved to post-render pass (uses g_cursor_x) */
     }
 
-    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));   /* back to full window */
+    r_set_clip_rect(rect(0, 0, win_w(), win_h()));   /* back to full window */
 
     /* scrollbar */
     if (max_scroll > 0) {
@@ -429,7 +429,7 @@ static void process_frame(void) {
       int mouse_in_track = (mx >= sb_x - 4 && mx < sb_x + sb_w + 4 && my >= g_content_y && my < g_content_y + sb_h);
 
       if (scrollbar_dragging) {
-        if (g_mouse_down & MU_MOUSE_LEFT) {
+        if (g_mouse_down & MOUSE_LEFT) {
           float ratio = (my - drag_offset - g_content_y) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
@@ -437,7 +437,7 @@ static void process_frame(void) {
         } else {
           scrollbar_dragging = 0;
         }
-      } else if (mouse_in_track && (g_mouse_pressed & MU_MOUSE_LEFT)) {
+      } else if (mouse_in_track && (g_mouse_pressed & MOUSE_LEFT)) {
         if (my >= thumb_y && my < thumb_y + thumb_h) {
           scrollbar_dragging = 1;
           drag_offset = my - thumb_y;
@@ -451,10 +451,10 @@ static void process_frame(void) {
         }
       }
 
-      mu_Color thumb_color = scrollbar_dragging ? mu_color(140, 140, 140, 255) :
-                             mouse_in_track     ? mu_color(120, 120, 120, 255) :
-                                                  mu_color(80, 80, 80, 255);
-      r_draw_rect(mu_rect(sb_x, thumb_y, sb_w, thumb_h), thumb_color);
+      Color thumb_color = scrollbar_dragging ? color(140, 140, 140, 255) :
+                             mouse_in_track     ? color(120, 120, 120, 255) :
+                                                  color(80, 80, 80, 255);
+      r_draw_rect(rect(sb_x, thumb_y, sb_w, thumb_h), thumb_color);
     }
   }
 
@@ -751,9 +751,9 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
 /* ---- SDL boilerplate ---- */
 
 static const char button_map[256] = {
-  [ SDL_BUTTON_LEFT   & 0xff ] =  MU_MOUSE_LEFT,
-  [ SDL_BUTTON_RIGHT  & 0xff ] =  MU_MOUSE_RIGHT,
-  [ SDL_BUTTON_MIDDLE & 0xff ] =  MU_MOUSE_MIDDLE,
+  [ SDL_BUTTON_LEFT   & 0xff ] =  MOUSE_LEFT,
+  [ SDL_BUTTON_RIGHT  & 0xff ] =  MOUSE_RIGHT,
+  [ SDL_BUTTON_MIDDLE & 0xff ] =  MOUSE_MIDDLE,
 };
 
 
@@ -845,15 +845,15 @@ static int handle_wikilink_key(int sym, int ctrl) {
 }
 
 static void do_render(void) {
-  r_clear(mu_color(30, 30, 32, 255));
+  r_clear(color(30, 30, 32, 255));
   process_frame();          /* lays out + draws bg, highlights, scrollbar */
   wikilink_refresh();
 
   /* draw markdown-formatted text */
   r_set_font_size(font_size);
   r_set_font_style(FONT_REGULAR);
-  r_set_clip_rect(mu_rect(0, g_content_y, win_w(), g_content_h));
-  mu_Color text_color = mu_color(204, 200, 195, 255);
+  r_set_clip_rect(rect(0, g_content_y, win_w(), g_content_h));
+  Color text_color = color(204, 200, 195, 255);
   g_cursor_x = -1;
   for (int i = 0; i < g_vis_row_count; i++) {
     VisRow *vr = &g_vis_rows[i];
@@ -886,7 +886,7 @@ static void do_render(void) {
         int hw = r_get_text_width(hashes, hcount);
         int gap = r_get_text_width(" ", 1);
         int hx = page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
-        r_draw_text(hashes, mu_vec2(hx, vr->py), mu_color(110, 110, 115, 255));
+        r_draw_text(hashes, vec2(hx, vr->py), color(110, 110, 115, 255));
         r_set_font_style(FONT_REGULAR);
         if (prefix <= vr->row_end) draw_start = prefix;
       }
@@ -906,8 +906,8 @@ static void do_render(void) {
       VisRow *vr = &g_vis_rows[i];
       if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
           (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
-        r_draw_rect(mu_rect(g_cursor_x, vr->py, 3, font_h),
-                    mu_color(90, 200, 250, 255));
+        r_draw_rect(rect(g_cursor_x, vr->py, 3, font_h),
+                    color(90, 200, 250, 255));
         cursor_py = vr->py;
         break;
       }
@@ -917,7 +917,7 @@ static void do_render(void) {
   /* wikilink autocomplete dropdown, anchored under the "[[" query */
   if (wl_active && wl_count > 0 && g_cursor_x >= 0 && cursor_py >= 0) {
     r_set_font_style(FONT_REGULAR);
-    r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
+    r_set_clip_rect(rect(0, 0, win_w(), win_h()));
     int fh = r_get_text_height();
     int lh = line_height();
     int item_h = fh + 6;
@@ -934,14 +934,14 @@ static void do_render(void) {
     if (bx < page_margin()) bx = page_margin();
     int by = cursor_py + lh;
     /* border + background */
-    r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
-    r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
+    r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
+    r_draw_rect(rect(bx, by, box_w, box_h), color(48, 48, 52, 255));
     for (int i = 0; i < wl_count; i++) {
       int iy = by + i * item_h;
       if (i == wl_sel)
-        r_draw_rect(mu_rect(bx, iy, box_w, item_h), mu_color(104, 68, 158, 235));
-      r_draw_text(wl_matches[i], mu_vec2(bx + 9, iy + (item_h - fh) / 2),
-                  mu_color(222, 218, 212, 255));
+        r_draw_rect(rect(bx, iy, box_w, item_h), color(104, 68, 158, 235));
+      r_draw_text(wl_matches[i], vec2(bx + 9, iy + (item_h - fh) / 2),
+                  color(222, 218, 212, 255));
     }
   }
 
@@ -950,12 +950,12 @@ static void do_render(void) {
   r_set_font_style(FONT_MONO);
   int bar_h = r_get_text_height() + 16;
   int bar_y = win_h() - bar_h;
-  r_set_clip_rect(mu_rect(0, 0, win_w(), win_h()));
+  r_set_clip_rect(rect(0, 0, win_w(), win_h()));
 
   /* background */
-  r_draw_rect(mu_rect(0, bar_y, win_w(), bar_h), mu_color(40, 40, 42, 255));
+  r_draw_rect(rect(0, bar_y, win_w(), bar_h), color(40, 40, 42, 255));
   /* top border */
-  r_draw_rect(mu_rect(0, bar_y, win_w(), 1), mu_color(55, 55, 57, 255));
+  r_draw_rect(rect(0, bar_y, win_w(), 1), color(55, 55, 57, 255));
 
   /* C-x b candidate list, stacked above the status bar (Tab cycles selection) */
   if (bufsw_active && bufsw_listing && bufsw_count > 0) {
@@ -974,42 +974,42 @@ static void do_render(void) {
     if (bx + box_w > win_w() - 10) bx = win_w() - box_w - 10;
     if (bx < 10) bx = 10;
     int by = bar_y - box_h;
-    r_draw_rect(mu_rect(bx - 1, by - 1, box_w + 2, box_h + 2), mu_color(90, 90, 96, 255));
-    r_draw_rect(mu_rect(bx, by, box_w, box_h), mu_color(48, 48, 52, 255));
+    r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
+    r_draw_rect(rect(bx, by, box_w, box_h), color(48, 48, 52, 255));
     for (int i = 0; i < bufsw_count; i++) {
       int iy = by + i * item_h;
       if (i == bufsw_sel)
-        r_draw_rect(mu_rect(bx, iy, box_w, item_h), mu_color(104, 68, 158, 235));
-      r_draw_text(path_base(bufsw_cands[i]), mu_vec2(bx + 9, iy + (item_h - fh) / 2),
-                  mu_color(222, 218, 212, 255));
+        r_draw_rect(rect(bx, iy, box_w, item_h), color(104, 68, 158, 235));
+      r_draw_text(path_base(bufsw_cands[i]), vec2(bx + 9, iy + (item_h - fh) / 2),
+                  color(222, 218, 212, 255));
     }
   }
 
   /* left: minibuffer input, isearch, or status message */
   if (minibuf_active) {
-    r_draw_text(minibuf_prompt, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+    r_draw_text(minibuf_prompt, vec2(10, bar_y + 5), color(170, 170, 170, 255));
     int lw = r_get_text_width(minibuf_prompt, strlen(minibuf_prompt));
-    r_draw_text(minibuf_text, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
+    r_draw_text(minibuf_text, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
     int cx = 10 + lw + r_get_text_width(minibuf_text, minibuf_len);
     int fh = r_get_text_height();
     /* ghost completion of an existing filename (Tab to accept) */
     if (minibuf_suggest[0] && (int)strlen(minibuf_suggest) > minibuf_len) {
       const char *ghost = minibuf_suggest + minibuf_len;
-      r_draw_text(ghost, mu_vec2(cx, bar_y + 5), mu_color(110, 110, 112, 255));
+      r_draw_text(ghost, vec2(cx, bar_y + 5), color(110, 110, 112, 255));
     }
-    r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
+    r_draw_rect(rect(cx, bar_y + 4, 2, fh), color(90, 200, 250, 255));
   } else if (search_active) {
     const char *label = (search_direction == 1) ? "I-search: " : "I-search backward: ";
-    r_draw_text(label, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+    r_draw_text(label, vec2(10, bar_y + 5), color(170, 170, 170, 255));
     int lw = r_get_text_width(label, strlen(label));
-    r_draw_text(search_buf, mu_vec2(10 + lw, bar_y + 5), mu_color(204, 200, 195, 255));
+    r_draw_text(search_buf, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
     int cx = 10 + lw + r_get_text_width(search_buf, search_len);
     int fh = r_get_text_height();
-    r_draw_rect(mu_rect(cx, bar_y + 4, 2, fh), mu_color(90, 200, 250, 255));
+    r_draw_rect(rect(cx, bar_y + 4, 2, fh), color(90, 200, 250, 255));
   } else {
     const char *status = status_get();
     if (status[0]) {
-      r_draw_text(status, mu_vec2(10, bar_y + 5), mu_color(170, 170, 170, 255));
+      r_draw_text(status, vec2(10, bar_y + 5), color(170, 170, 170, 255));
     }
   }
 
@@ -1017,7 +1017,7 @@ static void do_render(void) {
   char info[64];
   snprintf(info, sizeof(info), "(%d,%d)  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
   int info_w = r_get_text_width(info, strlen(info));
-  r_draw_text(info, mu_vec2(win_w() - info_w - 10, bar_y + 5), mu_color(120, 120, 120, 255));
+  r_draw_text(info, vec2(win_w() - info_w - 10, bar_y + 5), color(120, 120, 120, 255));
   r_set_font_size(font_size);
 
   r_present();
@@ -1030,7 +1030,7 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
        event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
     /* just update GL viewport so the clear color fills correctly, but don't reflow */
     r_handle_resize();
-    r_clear(mu_color(30, 30, 32, 255));
+    r_clear(color(30, 30, 32, 255));
     r_present();
   }
   return 0;
@@ -1148,7 +1148,7 @@ int editor_main(int argc, char **argv) {
           if (b && e.type == SDL_MOUSEBUTTONDOWN) {
             g_mouse_x = e.button.x; g_mouse_y = e.button.y;
             g_mouse_down |= b; g_mouse_pressed |= b;
-            if (b == MU_MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < win_w() - 12) {
+            if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < win_w() - 12) {
               click_to_cursor(e.button.x, e.button.y);
             }
           }
