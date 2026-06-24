@@ -24,9 +24,11 @@ void kt_run(const char *name, kt_test_fn fn) {
 
 /* suite entry points — one per unit_*.c */
 void suite_editing(void);
+void suite_undo(void);
 
 int main(void) {
   suite_editing();
+  suite_undo();
 
   fprintf(stdout, "\n%d tests (%d failed), %d checks (%d failed)\n",
           kt_tests, kt_tests_failed, kt_checks, kt_failed_checks);

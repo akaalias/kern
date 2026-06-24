@@ -22,7 +22,7 @@ CFLAGS  := -std=c11 -g -O1 -Wall -Wextra -Wno-unused-parameter $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c
-TESTS   := test_main.c unit_editing.c
+TESTS   := test_main.c unit_editing.c unit_undo.c
 SRC     := $(CORE) $(TESTS)
 
 BIN     := kern_tests

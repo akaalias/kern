@@ -18,7 +18,7 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - [x] `tests/Makefile`: headless build of buffer/editing/undo + SDL/microui headers only, under ASan+UBSan (`SDL_CFLAGS` overridable for Linux libsdl2-dev)
 - [x] `tests/test.h` single-header harness + `tests/test_main.c` runner
 - [x] `tests/unit_editing.c` (ed_insert/backspace/enter incl. list continuation + indent/outdent) — 12 tests green, 0 leaks
-- [ ] `tests/unit_undo.c` (push/coalesce/group/perform round-trips)
+- [x] `tests/unit_undo.c` (insert/backspace/enter/list-group/indent undo, coalesced-run, empty-stack no-op) — 7 tests; fixtures factored into `tests/ed_fixture.h`
 - [ ] `tests/unit_buffer.c` (load/save temp files, growth, region/mark, path resolve, completion)
 - [ ] Invariant + characterization tests
 - [x] GitHub Actions Linux job (`.github/workflows/ci.yml`, clang + ASan/UBSan/LSan) — pending first remote run
@@ -57,6 +57,7 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 ## Session log
 - **2026-06-24** — Architecture mapped; strategy decided (4 choices above); plan + this tracker written and promoted from `~/.claude/plans/` into `docs/`. Refactoring-candidates doc created (`REFACTORING.md`).
 - **2026-06-24** — **Phase A first slice landed.** `tests/` headless build (Makefile + test.h + test_main.c) compiling buffer/editing/undo under ASan+UBSan; `unit_editing.c` with 12 tests (insert/backspace/enter/list-continuation/indent/outdent) — all green, 0 leaks (verified via macOS `leaks`). Linux CI workflow added. **No app code changed.** App source untouched; only new `tests/`, `.github/`, `.gitignore` guard.
+- **2026-06-24** — Added `tests/unit_undo.c` (7 tests) and factored shared fixtures into `tests/ed_fixture.h`. Suite now **19 tests / 47 checks**, all green, 0 leaks. App code still untouched.
 
 ## Next action on resume
-Broaden Phase A: `tests/unit_undo.c` (push/coalesce/group/perform round-trips) and `tests/unit_buffer.c` (load/save via temp files, line-array growth, region/mark, `buf_resolve_path`, filename completion), wiring each new `suite_*` into `test_main.c`. Then add invariant/characterization tests (e.g. `load(save(buf)) == buf`, undo round-trips). Confirm the first GitHub Actions run is green.
+`tests/unit_buffer.c`: load/save round-trip via temp files (`mkstemp`), line-array growth, `\r\n` stripping & overlong-line splitting, region/mark ordering, and `buf_resolve_path` / filename completion (needs `buf_set_documents_dir` pointed at a temp dir). Wire `suite_buffer` into `test_main.c`. Then add invariant/characterization tests (`load(save(buf)) == buf`). Confirm the first GitHub Actions run is green.
