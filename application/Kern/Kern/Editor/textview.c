@@ -7,7 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include "renderer.h"
-#include "microui.h"
+#include "gfx.h"
 #include "macos_style.h"
 #include "editor_types.h"
 #include "buffer.h"

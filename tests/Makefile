@@ -35,8 +35,7 @@ LDFLAGS := $(SAN)
 # the stub) + microui (for mu_color/mu_rect/mu_vec2 used by md_render).
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
-           $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
-           $(APP)/ThirdParty/microui.c
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
@@ -76,8 +75,7 @@ coverage:
 # (wrap/search/load) via the deterministic stub renderer, not GL.
 PERF_BIN := kern_perf
 PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c \
-            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c \
-            $(APP)/ThirdParty/microui.c
+            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c
 
 $(PERF_BIN): $(PERF_SRC) stub_renderer.h clock_fake.h
 	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC)

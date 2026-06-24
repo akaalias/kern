@@ -3,7 +3,7 @@
 #define MD_RENDER_H
 
 #include "editor_types.h"
-#include "microui.h"
+#include "gfx.h"
 
 /* check if a logical line is a list item, return indent in pixels (0 if not) */
 int md_list_indent(Line *l);

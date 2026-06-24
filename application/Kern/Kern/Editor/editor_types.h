@@ -4,7 +4,6 @@
 #define EDITOR_TYPES_H
 
 #include <SDL2/SDL.h>
-#include "microui.h"
 
 /* ---- constants ---- */
 #define TOP_PADDING       82
@@ -89,7 +88,7 @@ typedef struct {
   int dirty;
 } EditorState;
 
-/* ---- view state (UI, depends on SDL/microui) ---- */
+/* ---- view state (UI, depends on SDL) ---- */
 typedef struct ViewState ViewState;
 struct ViewState {
   float  scroll_y;
@@ -134,9 +133,6 @@ struct ViewState {
   /* status echo area */
   char   status_msg[256];
   Uint32 status_time;
-
-  /* microui context */
-  mu_Context *ctx;
 };
 
 #endif /* EDITOR_TYPES_H */

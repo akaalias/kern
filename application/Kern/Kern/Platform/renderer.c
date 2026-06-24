@@ -10,9 +10,6 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-/* original atlas for icons + white pixel */
-#include "atlas.inl"
-
 #define BUFFER_SIZE 16384
 
 static GLfloat   tex_buf[BUFFER_SIZE *  8];
@@ -28,7 +25,7 @@ static int buf_idx;
 
 static SDL_Window *window;
 
-static GLuint icon_tex;
+static GLuint white_tex;   /* 1x1 white texel; solid rects sample it */
 static GLuint current_tex;
 
 /* ---- TTF fonts (multi-style) ---- */
@@ -235,15 +232,6 @@ static void push_quad_uv(float dst_x, float dst_y, float dst_w, float dst_h,
 }
 
 
-static void push_quad_icon(mu_Rect dst, mu_Rect src, mu_Color color) {
-  float u0 = src.x / (float) ATLAS_WIDTH;
-  float v0 = src.y / (float) ATLAS_HEIGHT;
-  float u1 = (src.x + src.w) / (float) ATLAS_WIDTH;
-  float v1 = (src.y + src.h) / (float) ATLAS_HEIGHT;
-  push_quad_uv(dst.x, dst.y, dst.w, dst.h, u0, v0, u1, v1, color);
-}
-
-
 void r_init(void) {
   /* use usable screen area on launch (excludes menu bar / dock) */
   SDL_Rect usable = {SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height};
@@ -271,11 +259,13 @@ void r_init(void) {
   glEnableClientState(GL_TEXTURE_COORD_ARRAY);
   glEnableClientState(GL_COLOR_ARRAY);
 
-  /* icon atlas texture */
-  glGenTextures(1, &icon_tex);
-  glBindTexture(GL_TEXTURE_2D, icon_tex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, ATLAS_WIDTH, ATLAS_HEIGHT, 0,
-    GL_ALPHA, GL_UNSIGNED_BYTE, atlas_texture);
+  /* 1x1 white texture: solid rects sample it and multiply by their color
+     (replaces the white pixel that used to live in microui's atlas) */
+  static const unsigned char white_px = 255;
+  glGenTextures(1, &white_tex);
+  glBindTexture(GL_TEXTURE_2D, white_tex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 1, 1, 0,
+    GL_ALPHA, GL_UNSIGNED_BYTE, &white_px);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -298,8 +288,8 @@ void r_init(void) {
 
 
 void r_draw_rect(mu_Rect rect, mu_Color color) {
-  switch_texture(icon_tex);
-  push_quad_icon(rect, atlas[ATLAS_WHITE], color);
+  switch_texture(white_tex);
+  push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 0, 1, 1, color);
 }
 
 
@@ -332,13 +322,6 @@ void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
 }
 
 
-void r_draw_icon(int id, mu_Rect rect, mu_Color color) {
-  switch_texture(icon_tex);
-  mu_Rect src = atlas[id];
-  int x = rect.x + (rect.w - src.w) / 2;
-  int y = rect.y + (rect.h - src.h) / 2;
-  push_quad_icon(mu_rect(x, y, src.w, src.h), src, color);
-}
 
 
 int r_get_text_width(const char *text, int len) {
