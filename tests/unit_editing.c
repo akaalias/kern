@@ -264,6 +264,130 @@ static void test_replace_region_multiline_is_one_undo(void) {
   ed_teardown(&ed);
 }
 
+/* ---- delete joins next line ---- */
+
+static void test_delete_at_eol_joins_next(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "foo");
+  buf_insert_line_at(&ed, 1, "bar", 3);
+  ed.cursor_line = 0; ed.cursor_col = 3;     /* end of "foo" */
+  ed_delete(&ed);
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "foobar");
+  ed_teardown(&ed);
+}
+
+/* ---- kill-line append / end-of-line join ---- */
+
+/* A consecutive C-k (last_kill_was_k) appends to the kill buffer rather than
+   replacing it. */
+static void test_kill_line_appends_when_consecutive(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "world"); ed.cursor_col = 0;
+  ed.last_kill_was_k = 1;                     /* pretend a previous C-k */
+  ed_emacs_kill_line(&ed);
+  CHECK_SEQ(LINE(ed, 0), "");
+  CHECK_SEQ(ed.kill_buf, "world");            /* appended onto an empty kill buf */
+  ed_teardown(&ed);
+}
+
+/* C-k at end-of-line joins the next line and records a newline in the kill buf. */
+static void test_kill_line_at_eol_sets_newline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "foo");
+  buf_insert_line_at(&ed, 1, "bar", 3);
+  ed.cursor_line = 0; ed.cursor_col = 3;
+  ed.last_kill_was_k = 0;
+  ed_emacs_kill_line(&ed);
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "foobar");
+  CHECK_SEQ(ed.kill_buf, "\n");
+  ed_teardown(&ed);
+}
+
+static void test_kill_line_at_eol_appends_newline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "foo");
+  buf_insert_line_at(&ed, 1, "bar", 3);
+  ed.cursor_line = 0; ed.cursor_col = 3;
+  ed.last_kill_was_k = 1;                     /* consecutive → append */
+  ed_emacs_kill_line(&ed);
+  CHECK_SEQ(ed.kill_buf, "\n");
+  ed_teardown(&ed);
+}
+
+/* ---- word motion across line boundaries ---- */
+
+static void test_forward_word_crosses_line(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab");
+  buf_insert_line_at(&ed, 1, "cd", 2);
+  ed.cursor_line = 0; ed.cursor_col = 2;      /* end of line 0 */
+  ed_emacs_forward_word(&ed);
+  CHECK_IEQ(ed.cursor_line, 1);
+  CHECK_IEQ(ed.cursor_col, 0);
+  ed_teardown(&ed);
+}
+
+static void test_backward_word_crosses_line(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab");
+  buf_insert_line_at(&ed, 1, "cd", 2);
+  ed.cursor_line = 1; ed.cursor_col = 0;      /* start of line 1 */
+  ed_emacs_backward_word(&ed);
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK_IEQ(ed.cursor_col, 0);
+  ed_teardown(&ed);
+}
+
+static void test_kill_word_backward(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "alpha beta");                 /* caret at end */
+  ed_emacs_kill_word_backward(&ed);
+  CHECK_SEQ(LINE(ed, 0), "alpha ");           /* "beta" killed */
+  ed_teardown(&ed);
+}
+
+/* Case change on a word already in the target case moves point past it without
+   recording an undo step. */
+static void test_case_word_noop_moves_point(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ABC"); ed.cursor_col = 0;
+  ed_emacs_case_word(&ed, 0);                 /* upcase already-upper */
+  CHECK_SEQ(LINE(ed, 0), "ABC");
+  CHECK_IEQ(ed.cursor_col, 3);               /* advanced to end of word */
+  ed_teardown(&ed);
+}
+
+/* ---- transpose at the two non-end positions ---- */
+
+static void test_transpose_at_line_start(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc"); ed.cursor_col = 0;     /* point at column 0 */
+  ed_emacs_transpose_chars(&ed);
+  CHECK_SEQ(LINE(ed, 0), "bac");
+  ed_teardown(&ed);
+}
+
+static void test_transpose_midline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abcd"); ed.cursor_col = 2;    /* between 'b' and 'c' */
+  ed_emacs_transpose_chars(&ed);
+  CHECK_SEQ(LINE(ed, 0), "acbd");
+  ed_teardown(&ed);
+}
+
+/* Killing an empty region (mark == point) is a no-op that just clears the mark. */
+static void test_kill_region_empty_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc"); ed.cursor_col = 1;
+  buf_mark_set(&ed);                          /* mark == point at (0,1) */
+  ed_emacs_kill_region(&ed);
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  CHECK_IEQ(ed.mark_active, 0);
+  ed_teardown(&ed);
+}
+
 void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
@@ -286,4 +410,15 @@ void suite_editing(void) {
   RUN(test_region_dup_returns_marked_text);
   RUN(test_replace_region_swaps_in_text);
   RUN(test_replace_region_multiline_is_one_undo);
+  RUN(test_delete_at_eol_joins_next);
+  RUN(test_kill_line_appends_when_consecutive);
+  RUN(test_kill_line_at_eol_sets_newline);
+  RUN(test_kill_line_at_eol_appends_newline);
+  RUN(test_forward_word_crosses_line);
+  RUN(test_backward_word_crosses_line);
+  RUN(test_kill_word_backward);
+  RUN(test_case_word_noop_moves_point);
+  RUN(test_transpose_at_line_start);
+  RUN(test_transpose_midline);
+  RUN(test_kill_region_empty_is_noop);
 }

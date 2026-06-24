@@ -138,6 +138,48 @@ static void test_wrap_count_ignores_ambient_font(void) {
   stub_reset();                                /* clear the style-extra knob */
 }
 
+static void test_win_metrics(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  CHECK_IEQ(nav_win_w(), 800);
+  CHECK_IEQ(nav_win_h(), 600);
+}
+
+/* A visual index past the end clamps to the last logical line, offset 0. */
+static void test_visual_to_logical_past_end(void) {
+  EditorState ed = {0}; buf_init_empty(&ed);
+  int off = -1;
+  int ln = nav_visual_to_logical(&ed, 999, &off);
+  CHECK_IEQ(ln, ed.line_count - 1);
+  CHECK_IEQ(off, 0);
+  ed_teardown(&ed);
+}
+
+/* nav_click_to_cursor: page margin 50, glyph 10px, line height 30 at 800x600. */
+static void test_click_to_cursor(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  EditorState ed = {0}; ed_load(&ed, "hello world");
+  ViewState vs = {0}; vs.content_y = 80; vs.content_h = 600; vs.scroll_y = 0;
+
+  /* click inside the line: x=85 lands between columns (margin 50 + ~3.5 glyphs) */
+  nav_click_to_cursor(&ed, &vs, 85, 85);
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK_IEQ(ed.cursor_col, 4);
+
+  /* click left of the page margin → column 0 */
+  nav_click_to_cursor(&ed, &vs, 10, 85);
+  CHECK_IEQ(ed.cursor_col, 0);
+
+  /* click far below the last row clamps to the last visual line */
+  nav_click_to_cursor(&ed, &vs, 85, 99999);
+  CHECK_IEQ(ed.cursor_line, 0);
+
+  /* click above the content area clamps the visual line up to 0 */
+  nav_click_to_cursor(&ed, &vs, 85, 0);
+  CHECK_IEQ(ed.cursor_line, 0);
+
+  ed_teardown(&ed);
+}
+
 void suite_navigation(void) {
   RUN(test_wrap_empty_line);
   RUN(test_reflow_only_on_width_change);
@@ -147,4 +189,7 @@ void suite_navigation(void) {
   RUN(test_wrap_breaks_at_last_space);
   RUN(test_count_wraps_caches);
   RUN(test_wrap_count_ignores_ambient_font);
+  RUN(test_win_metrics);
+  RUN(test_visual_to_logical_past_end);
+  RUN(test_click_to_cursor);
 }

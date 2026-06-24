@@ -95,6 +95,23 @@ static void test_undo_kill_multiline_region(void) {
   ed_teardown(&ed);
 }
 
+/* Backspace at column 0 joins the line into the previous one (UNDO_JOIN_LINE);
+   undoing must split it back apart. */
+static void test_undo_join_line_resplits(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "foo");
+  buf_insert_line_at(&ed, 1, "bar", 3);
+  ed.cursor_line = 1; ed.cursor_col = 0;
+  ed_backspace(&ed);                 /* join → "foobar" */
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "foobar");
+  undo_perform(&ed);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "foo");
+  CHECK_SEQ(LINE(ed, 1), "bar");
+  ed_teardown(&ed);
+}
+
 static void test_undo_empty_is_noop(void) {
   EditorState ed = {0};
   buf_init_empty(&ed);
@@ -112,5 +129,6 @@ void suite_undo(void) {
   RUN(test_undo_indent);
   RUN(test_undo_coalesces_typed_run);
   RUN(test_undo_kill_multiline_region);
+  RUN(test_undo_join_line_resplits);
   RUN(test_undo_empty_is_noop);
 }

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include "test.h"
 #include "ed_fixture.h"
 
@@ -211,6 +212,57 @@ static void test_complete_and_list_filenames(void) {
   rmdir(dir);
 }
 
+/* getter round-trips the documents dir; when unset, paths resolve verbatim. */
+static void test_documents_dir_and_unsandboxed_resolve(void) {
+  buf_set_documents_dir("/some/docs");
+  CHECK_SEQ(buf_get_documents_dir(), "/some/docs");
+
+  buf_set_documents_dir("");                  /* not sandboxed */
+  char out[128];
+  buf_resolve_path("foo.md", out, sizeof out);
+  CHECK_SEQ(out, "foo.md");                   /* used as-is */
+}
+
+/* completion across a relative subfolder ("notes/dr" → "notes/draft.md"). */
+static void test_complete_filename_subdir(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  char sub[1200]; snprintf(sub, sizeof sub, "%s/notes", dir);
+  CHECK_IEQ(mkdir(sub, 0755), 0);
+  char fp[1400]; snprintf(fp, sizeof fp, "%s/draft.md", sub);
+  FILE *f = fopen(fp, "w"); if (f) fclose(f);
+
+  buf_set_documents_dir(dir);
+  char out[1024];
+  CHECK_IEQ(buf_complete_filename("notes/dr", out, sizeof out), 1);
+  CHECK_SEQ(out, "notes/draft.md");
+
+  buf_set_documents_dir("");
+  unlink(fp); rmdir(sub); rmdir(dir);
+}
+
+/* buf_save_text writes a blob; loading an empty file yields one empty line. */
+static void test_save_text_and_empty_load(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+
+  char path[1200]; snprintf(path, sizeof path, "%s/note.md", dir);
+  CHECK_IEQ(buf_save_text(path, "hi there", 8), 0);
+  char out[64];
+  CHECK_IEQ(read_file(path, out, sizeof out), 8);
+  CHECK_SEQ(out, "hi there");
+
+  char ep[1200]; snprintf(ep, sizeof ep, "%s/empty.md", dir);
+  CHECK_IEQ(buf_save_text(ep, "", 0), 0);     /* zero-length write */
+  EditorState ed = {0};
+  CHECK_IEQ(buf_load_file(&ed, ep), 0);
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "");
+  ed_teardown(&ed);
+
+  unlink(path); unlink(ep); rmdir(dir);
+}
+
 static void test_sanitize_note_title(void) {
   char out[64];
   /* spaces between words are kept */
@@ -237,5 +289,8 @@ void suite_buffer(void) {
   RUN(test_region_orders_endpoints);
   RUN(test_resolve_path);
   RUN(test_complete_and_list_filenames);
+  RUN(test_documents_dir_and_unsandboxed_resolve);
+  RUN(test_complete_filename_subdir);
+  RUN(test_save_text_and_empty_load);
   RUN(test_sanitize_note_title);
 }

@@ -77,6 +77,21 @@ static void test_col_x_is_linear(void) {
   freeline(&l);
 }
 
+/* md_is_list_item recognizes "- " and "N. ", including under leading indent. */
+static void test_is_list_item(void) {
+  Line a = mkline("- top");        CHECK_IEQ(md_is_list_item(&a), 1); freeline(&a);
+  Line b = mkline("  - nested");   CHECK_IEQ(md_is_list_item(&b), 1); freeline(&b);
+  Line c = mkline("3. numbered");  CHECK_IEQ(md_is_list_item(&c), 1); freeline(&c);
+  Line d = mkline("plain text");   CHECK_IEQ(md_is_list_item(&d), 0); freeline(&d);
+}
+
+/* md_heading_prefix_len counts the hashes plus the single trailing space. */
+static void test_heading_prefix_len(void) {
+  Line h2 = mkline("## Title");    CHECK_IEQ(md_heading_prefix_len(&h2), 3); freeline(&h2);
+  Line h1 = mkline("# Title");     CHECK_IEQ(md_heading_prefix_len(&h1), 2); freeline(&h1);
+  Line nn = mkline("not heading"); CHECK_IEQ(md_heading_prefix_len(&nn), 0); freeline(&nn);
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
   RUN(test_bold_carries_into_tail_window);
@@ -85,4 +100,6 @@ void suite_md_render(void) {
   RUN(test_highlight_draws_bg_per_content_glyph);
   RUN(test_wikilink_draws_bg_for_token);
   RUN(test_col_x_is_linear);
+  RUN(test_is_list_item);
+  RUN(test_heading_prefix_len);
 }

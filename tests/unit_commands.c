@@ -299,6 +299,46 @@ static void test_font_size_changes(void) {
   ed_teardown(&ed);
 }
 
+static void test_ctrl_b_wraps_to_prev_line(void) {
+  EditorState ed = {0}; ed_load(&ed, "ab");
+  buf_insert_line_at(&ed, 1, "cd", 2);
+  ed.cursor_line = 1; ed.cursor_col = 0;            /* start of line 1 */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_b);
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK_IEQ(ed.cursor_col, 2);                       /* end of previous line */
+  ed_teardown(&ed);
+}
+
+static void test_meta_del_kill_word_backward(void) {
+  EditorState ed = {0}; ed_load(&ed, "alpha beta");  /* caret at end */
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_BACKSPACE);
+  CHECK_SEQ(LINE(ed, 0), "alpha ");
+  ed_teardown(&ed);
+}
+
+static void test_page_up_moves_cursor(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 40; ed.cursor_col = 0;
+  kern_dispatch_key(&ed, &vs, KMOD_ALT, SDLK_v);     /* M-v page up */
+  CHECK(ed.cursor_line < 40);                        /* moved up a page */
+  ed_teardown(&ed);
+}
+
+/* C-l cycles center → top → bottom; each step keeps scroll_y in range. */
+static void test_recenter_cycles(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 30; ed.cursor_col = 0;
+  for (int i = 0; i < 3; i++) {
+    kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_l);
+    CHECK(vs.scroll_y >= 0);
+  }
+  ed_teardown(&ed);
+}
+
 void suite_commands(void) {
   kern_clipboard_set("");   /* start from a known clipboard state */
   RUN(test_dispatch_unbound_returns_zero);
@@ -327,4 +367,8 @@ void suite_commands(void) {
   RUN(test_exchange_point_and_mark);
   RUN(test_page_down_moves_cursor);
   RUN(test_font_size_changes);
+  RUN(test_ctrl_b_wraps_to_prev_line);
+  RUN(test_meta_del_kill_word_backward);
+  RUN(test_page_up_moves_cursor);
+  RUN(test_recenter_cycles);
 }

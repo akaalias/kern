@@ -75,9 +75,43 @@ static void test_search_backward(void) {
   ed_teardown(&ed);
 }
 
+static void test_search_backward_not_found(void) {
+  EditorState ed = {0}; ViewState vs = {0}; vs.content_h = 600;
+  load_lines(&ed, DOC, 3);
+  set_query(&vs, "zzz", -1);
+  nav_search_find_first(&ed, &vs);   /* dir -1 → find_prev, no match */
+  CHECK_IEQ(vs.search_match_line, -1);
+  ed_teardown(&ed);
+}
+
+/* With no current match yet, find_current_dir seeds the search from the cursor
+   (forward and backward branches). */
+static void test_search_current_dir_seeds_from_cursor(void) {
+  EditorState ed = {0}; ViewState vs = {0}; vs.content_h = 600;
+  load_lines(&ed, DOC, 3);
+
+  set_query(&vs, "foo", 1);
+  vs.search_match_line = -1;
+  ed.cursor_line = 0; ed.cursor_col = 0;
+  nav_search_find_current_dir(&ed, &vs);   /* forward from cursor */
+  CHECK_IEQ(vs.search_match_line, 0);
+  CHECK_IEQ(vs.search_match_col, 0);
+
+  set_query(&vs, "foo", -1);
+  vs.search_match_line = -1;
+  ed.cursor_line = 2; ed.cursor_col = 3;
+  nav_search_find_current_dir(&ed, &vs);   /* backward from cursor */
+  CHECK_IEQ(vs.search_match_line, 1);
+  CHECK_IEQ(vs.search_match_col, 4);
+
+  ed_teardown(&ed);
+}
+
 void suite_search(void) {
   RUN(test_search_forward_first_and_next);
   RUN(test_search_is_case_insensitive);
   RUN(test_search_not_found);
   RUN(test_search_backward);
+  RUN(test_search_backward_not_found);
+  RUN(test_search_current_dir_seeds_from_cursor);
 }
