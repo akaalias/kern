@@ -18,6 +18,7 @@
 #include "recent.h"
 #include "clipboard.h"
 #include "clock.h"
+#include "commands.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -467,30 +468,8 @@ typedef struct {
   void (*action)(void);  /* command function */
 } KeyBinding;
 
-static void cmd_beginning_of_line(void) {
-  cursor_col = 0; cursor_target_col = 0; ensure_cursor_visible();
-}
-static void cmd_end_of_line(void) {
-  cursor_col = lines[cursor_line].len; cursor_target_col = cursor_col; ensure_cursor_visible();
-}
-static void cmd_forward_char(void) {
-  if (cursor_col < lines[cursor_line].len) { cursor_col++; }
-  else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
-  cursor_target_col = cursor_col; ensure_cursor_visible();
-}
-static void cmd_backward_char(void) {
-  if (cursor_col > 0) { cursor_col--; }
-  else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
-  cursor_target_col = cursor_col; ensure_cursor_visible();
-}
-static void cmd_next_line(void) {
-  if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
-  ensure_cursor_visible();
-}
-static void cmd_previous_line(void) {
-  if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
-  ensure_cursor_visible();
-}
+/* cursor-movement commands migrated to commands.c (dispatched via
+   kern_dispatch_key): C-a C-e C-f C-b C-n C-p, M-f M-b. */
 static void clipboard_set_from_kill(void);  /* defined below */
 static void cmd_kill_line(void) {
   mark_clear(); emacs_kill_line(); clipboard_set_from_kill(); ensure_cursor_visible();
@@ -530,12 +509,6 @@ static void cmd_set_mark(void) {
 }
 static void cmd_keyboard_quit(void) {
   mark_clear(); status_set("Quit");
-}
-static void cmd_forward_word_alt(void) {
-  emacs_forward_word(); ensure_cursor_visible();
-}
-static void cmd_backward_word_alt(void) {
-  emacs_backward_word(); ensure_cursor_visible();
 }
 static void cmd_end_of_buffer_alt(void) {
   cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
@@ -637,12 +610,6 @@ static void cmd_goto_line(void) {       /* M-g */
    plus shift — handled specially via check_binding which checks extra shift for those entries */
 
 static const KeyBinding normal_bindings[] = {
-  { KMOD_CTRL, SDLK_a,      cmd_beginning_of_line },
-  { KMOD_CTRL, SDLK_e,      cmd_end_of_line },
-  { KMOD_CTRL, SDLK_f,      cmd_forward_char },
-  { KMOD_CTRL, SDLK_b,      cmd_backward_char },
-  { KMOD_CTRL, SDLK_n,      cmd_next_line },
-  { KMOD_CTRL, SDLK_p,      cmd_previous_line },
   { KMOD_CTRL, SDLK_k,      cmd_kill_line },
   { KMOD_CTRL, SDLK_y,      cmd_yank },
   { KMOD_CTRL, SDLK_w,      cmd_kill_region },
@@ -654,8 +621,6 @@ static const KeyBinding normal_bindings[] = {
   { KMOD_CTRL, SDLK_SLASH,  cmd_undo },
   { KMOD_CTRL, SDLK_SPACE,  cmd_set_mark },
   { KMOD_CTRL, SDLK_g,      cmd_keyboard_quit },
-  { KMOD_ALT,  SDLK_f,      cmd_forward_word_alt },
-  { KMOD_ALT,  SDLK_b,      cmd_backward_word_alt },
   { KMOD_ALT,  SDLK_w,      cmd_copy_region },
   { KMOD_ALT,  SDLK_v,      cmd_page_up },
   { KMOD_ALT,  SDLK_d,      cmd_kill_word_fwd },
@@ -1457,7 +1422,9 @@ int editor_main(int argc, char **argv) {
             /* any non-C-k key clears last_kill_was_k */
             if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
 
-            /* 4. Command table lookup */
+            /* 4. De-globalized command table (commands.c), then the legacy
+               table for commands not yet migrated. */
+            if (kern_dispatch_key(&g_ed, &g_vs, e.key.keysym.mod, sym)) break;
             {
               int matched = 0;
               for (int i = 0; normal_bindings[i].action; i++) {

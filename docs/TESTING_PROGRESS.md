@@ -35,12 +35,12 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 - [x] Decompose slice 1: recent-files MRU → `Editor/recent.{c,h}` + `tests/unit_recent.c` (5 tests). App builds + runs; render snapshots unchanged.
 - [x] Decompose slice 2: clipboard seam → `Editor/clipboard.h` + `Editor/clipboard_sdl.c` (app); the copy/yank commands now call `kern_clipboard_*` instead of SDL directly. Added 6 kill-ring unit tests (`ed_emacs_kill_line`/`copy_region`/`yank`, incl. multi-line + copy→yank round-trip). A test-side fake clipboard will be added when the dispatch is extracted.
 - [x] Decompose slice 3: clock seam → `Editor/clock.h` + `Editor/clock_sdl.c` (app); `navigation.c` status timing + `textview.c` autosave now call `kern_now_ms()`. Test build links `tests/clock_fake.c` (settable) and the `SDL_GetTicks` stub is retired. Added 2 `nav_status` tests (message expiry + mode-indicator priority) via the fake clock.
-- [ ] Extract `kern_handle_event` / `kern_dispatch_key` / `kern_input_text` from `editor_main`
-- [ ] Extract `kern_render_to(...)`; `editor_main` reduced to a thin bootstrap
-- [ ] De-globalize (`#define` aliases → explicit `EditorState*`/`ViewState*`) to make the dispatch fully testable
+- [~] Extract `kern_dispatch_key` + de-globalize the command table, in batches. **Batch 1 done:** the 8 cursor-movement commands (C-a/C-e/C-f/C-b/C-n/C-p, M-f/M-b) migrated to `Editor/commands.{c,h}` taking explicit `EditorState*`/`ViewState*`; `editor_main` calls `kern_dispatch_key` before the shrinking legacy table. This is the first **feature-testable** dispatch — `tests/unit_commands.c` (7 tests) feeds chords and asserts cursor state. Remaining batches: editing/kill/yank, page/recenter/font, mark/buffer-ends, then the minibuffer-entangled `cmd_goto_line` (needs minibuffer state moved into ViewState).
+- [ ] Extract `kern_input_text` (text insertion) + `kern_render_to(...)`; `editor_main` reduced to a thin bootstrap
 
-**Phase D — Feature / UX headless tests**
-- [ ] Table-driven keybinding tests mirroring `normal_bindings[]` + prefix chords + Cmd-Shift-,/.
+**Phase D — Feature / UX headless tests** (unblocked once commands are de-globalized; grows per Phase C batch)
+- [~] Keybinding feature tests via `kern_dispatch_key` — started with the 8 movement commands (`unit_commands.c`). Extend as each command batch migrates.
+- [ ] Prefix chords (`C-x …`, ESC/meta), `Cmd-Shift-,/.`
 - [ ] Scenarios: write/delete/open/save, search fwd/back, wikilink follow+autocomplete+nav, list indent, copy/cut/paste/yank, font size
 
 **Phase E — Performance harness + corpora**
@@ -72,4 +72,4 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 - **2026-06-24** — **Phase C slice 3: clock seam.** `Editor/clock.h` + `Editor/clock_sdl.c`; `navigation.c`/`textview.c` time now via `kern_now_ms()`. Test build uses a settable `clock_fake.c`; retired the `SDL_GetTicks` stub. Added 2 `nav_status` tests (expiry + priority). App builds + launches. Suite **58 tests / 155 checks, green, 0 leaks.**
 
 ## Next action on resume
-Continue Phase C — the big one: begin extracting the input dispatch from `editor_main` into a callable `kern_handle_event` / `kern_dispatch_key`, and de-globalize the `#define` aliases so the `cmd_*` functions take explicit `EditorState*`/`ViewState*`. This is the step that makes the binding table + commands feature-testable headlessly (Phase D), wiring in `clock_fake` + a test clipboard fake. Approach carefully in sub-slices (e.g. group pure cmd_* first), verifying app build + run + snapshots at each step. Confirm GitHub Actions green.
+Continue migrating command batches into `commands.c` (each: de-globalize → remove from `textview.c`'s table/defs → add to `g_commands` → feature tests in `unit_commands.c` → app build + run + snapshots + leaks). Suggested next batch: editing/kill/yank/indent (C-d, C-k, C-w, C-y, M-w, M-d, M-DEL, C-o, C-t, case ops, Backspace/Delete/Return) — these are pure + clipboard-seam, so add a test clipboard fake (`clipboard_fake.c`) when yank/copy migrate. Then page/recenter/font, then mark/buffer-ends. Leave `cmd_goto_line` until minibuffer state moves into ViewState. Confirm GitHub Actions green.

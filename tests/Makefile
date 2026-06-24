@@ -27,11 +27,12 @@ LDFLAGS := $(SAN)
 # the stub) + microui (for mu_color/mu_rect/mu_vec2 used by md_render).
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
-           $(APP)/Editor/recent.c \
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
            $(APP)/ThirdParty/microui.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
-           unit_navigation.c unit_md_render.c unit_recent.c unit_status.c snapshot.c
+           unit_navigation.c unit_md_render.c unit_recent.c unit_status.c \
+           unit_commands.c snapshot.c
 SRC     := $(CORE) $(TESTS)
 HDRS    := test.h ed_fixture.h stub_renderer.h
 
