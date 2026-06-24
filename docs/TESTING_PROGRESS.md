@@ -63,7 +63,7 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 
 ## Cross-cutting (land alongside the phases)
 - [x] Sanitizers wired into every headless build (A) — ASan+UBSan in `tests/Makefile`; LSan auto on Linux CI
-- [ ] Coverage (llvm-cov) reporting (A/F)
+- [x] Coverage (llvm-cov) — `make coverage` reports line/fn/region/branch for the Editor core; CI `coverage` job enforces a **≥85% line floor**. Currently **88% lines / 91% functions** (buffer 89, editing 86, undo 90, navigation 81, md_render 90, recent 100, commands 89). Added search tests (`unit_search.c`), buffer path-resolve/completion tests, and a multi-line-undo test to clear the bar.
 - [ ] libFuzzer targets: `buf_load_file`, `md_detect_span` (E/F)
 - [ ] Differential-test harness for hot-function rewrites (C/E)
 

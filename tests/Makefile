@@ -11,6 +11,11 @@ ROOT    := ..
 APP     := $(ROOT)/application/Kern/Kern
 VENDOR  := $(ROOT)/application/Kern/Vendor
 
+# On macOS the LLVM coverage tools live behind xcrun; on Linux they're direct.
+ifeq ($(shell uname),Darwin)
+  XCRUN := xcrun
+endif
+
 # SDL is needed for headers only (typedefs via editor_types.h), never linked.
 # Defaults to the macOS-configured vendored headers; CI overrides this with
 # `SDL_CFLAGS=` to use a Linux libsdl2-dev install on the default include path.
@@ -34,10 +39,15 @@ CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/ThirdParty/microui.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
-           unit_navigation.c unit_md_render.c unit_recent.c unit_status.c \
-           unit_commands.c snapshot.c
+           unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
+           unit_status.c unit_commands.c snapshot.c
 SRC     := $(CORE) $(TESTS)
 HDRS    := test.h ed_fixture.h stub_renderer.h
+
+# Production files we measure line coverage on (the testable Editor core).
+COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
+           $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c
 
 BIN     := kern_tests
 
@@ -47,6 +57,19 @@ $(BIN): $(SRC) $(HDRS)
 .PHONY: test clean
 test: $(BIN)
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./$(BIN)
+
+# ---- coverage ----
+# clang source-based coverage of the testable core (requires clang + llvm-cov).
+# Reports line/function/region/branch coverage for COVCORE only.
+COV_BIN := kern_cov
+.PHONY: coverage
+coverage:
+	$(CC) -std=c11 -D_GNU_SOURCE -O0 -Wno-deprecated-declarations \
+	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
+	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
+	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
+	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
 
 # ---- performance harness ----
 # Built WITHOUT sanitizers at -O2 for realistic timing. Measures the algorithm
@@ -67,4 +90,5 @@ perf: $(PERF_BIN)
 	./$(PERF_BIN) "$(CORPUS)" $(PERF_ARGS)
 
 clean:
-	rm -rf $(BIN) $(BIN).dSYM $(PERF_BIN) $(PERF_BIN).dSYM
+	rm -rf $(BIN) $(BIN).dSYM $(PERF_BIN) $(PERF_BIN).dSYM \
+	       $(COV_BIN) $(COV_BIN).dSYM *.profraw *.profdata

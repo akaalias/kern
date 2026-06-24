@@ -27,6 +27,9 @@ docs/*.pdf
 # Headless test build output
 tests/kern_tests
 tests/kern_perf
+tests/kern_cov
+tests/*.prof*
+tests/cov.txt
 
 # macOS
 .DS_Store

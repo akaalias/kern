@@ -150,6 +150,67 @@ static void test_region_orders_endpoints(void) {
   ed_teardown(&ed);
 }
 
+/* ---- documents-dir path resolution & filename completion ---- */
+
+static void touch(const char *dir, const char *name) {
+  char p[1100];
+  snprintf(p, sizeof p, "%s/%s", dir, name);
+  FILE *f = fopen(p, "w");
+  if (f) fclose(f);
+}
+
+static void rm(const char *dir, const char *name) {
+  char p[1100];
+  snprintf(p, sizeof p, "%s/%s", dir, name);
+  unlink(p);
+}
+
+static void test_resolve_path(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  buf_set_documents_dir(dir);
+
+  char out[1200], want[1200];
+
+  buf_resolve_path("note.md", out, sizeof out);          /* relative → under dir */
+  snprintf(want, sizeof want, "%s/note.md", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_path("/etc/passwd", out, sizeof out);      /* external → basename */
+  snprintf(want, sizeof want, "%s/passwd", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_path(want, out, sizeof out);               /* already resolved → as-is */
+  CHECK_SEQ(out, want);
+
+  buf_set_documents_dir("");                             /* reset global */
+  rmdir(dir);
+}
+
+static void test_complete_and_list_filenames(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  touch(dir, "alpha.md");
+  touch(dir, "alphabet.md");
+  touch(dir, "beta.md");
+  buf_set_documents_dir(dir);
+
+  char out[1024];
+  CHECK_IEQ(buf_complete_filename("alpha", out, sizeof out), 1);
+  CHECK_SEQ(out, "alpha.md");                  /* alphabetically-first longer match */
+  CHECK_IEQ(buf_complete_filename("zzz", out, sizeof out), 0);
+
+  char list[8][256];
+  int n = buf_list_matches("a", list, 8);
+  CHECK_IEQ(n, 2);
+  CHECK_SEQ(list[0], "alpha.md");
+  CHECK_SEQ(list[1], "alphabet.md");
+
+  buf_set_documents_dir("");
+  rm(dir, "alpha.md"); rm(dir, "alphabet.md"); rm(dir, "beta.md");
+  rmdir(dir);
+}
+
 void suite_buffer(void) {
   RUN(test_load_basic);
   RUN(test_load_strips_crlf);
@@ -158,4 +219,6 @@ void suite_buffer(void) {
   RUN(test_save_load_roundtrip);
   RUN(test_line_array_growth);
   RUN(test_region_orders_endpoints);
+  RUN(test_resolve_path);
+  RUN(test_complete_and_list_filenames);
 }

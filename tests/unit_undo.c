@@ -76,6 +76,25 @@ static void test_undo_coalesces_typed_run(void) {
   ed_teardown(&ed);
 }
 
+/* Undoing a multi-line kill re-inserts text containing newlines (the split
+   re-insert path in undo_apply_one). */
+static void test_undo_kill_multiline_region(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab");
+  buf_insert_line_at(&ed, 1, "cd", 2);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);                 /* mark (0,1) */
+  ed.cursor_line = 1; ed.cursor_col = 1;   /* point (1,1) — region "b\nc" */
+  ed_emacs_kill_region(&ed);
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "ad");
+  undo_perform(&ed);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "ab");
+  CHECK_SEQ(LINE(ed, 1), "cd");
+  ed_teardown(&ed);
+}
+
 static void test_undo_empty_is_noop(void) {
   EditorState ed = {0};
   buf_init_empty(&ed);
@@ -92,5 +111,6 @@ void suite_undo(void) {
   RUN(test_undo_list_enter_is_one_group);
   RUN(test_undo_indent);
   RUN(test_undo_coalesces_typed_run);
+  RUN(test_undo_kill_multiline_region);
   RUN(test_undo_empty_is_noop);
 }

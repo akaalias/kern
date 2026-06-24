@@ -23,6 +23,22 @@ jobs:
         # On Linux, ASan enables LeakSanitizer by default.
         run: make test CC=clang SDL_CFLAGS=
 
+  coverage:
+    name: Core coverage (>= 85% lines)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libsdl2-dev
+      - name: Measure & enforce core coverage
+        working-directory: tests
+        run: |
+          make coverage CC=clang SDL_CFLAGS= | tee cov.txt
+          pct=$(awk '/^TOTAL/ { gsub("%","",$10); print $10 }' cov.txt)
+          echo "Core line coverage: ${pct}%"
+          awk "BEGIN { exit !(${pct:-0} >= 85.0) }" \
+            || { echo "::error::core line coverage ${pct}% is below the 85% floor"; exit 1; }
+
   perf-smoke:
     name: Performance smoke (Linux, 25MB corpus)
     runs-on: ubuntu-latest

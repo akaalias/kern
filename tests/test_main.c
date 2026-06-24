@@ -27,6 +27,7 @@ void suite_editing(void);
 void suite_undo(void);
 void suite_buffer(void);
 void suite_navigation(void);
+void suite_search(void);
 void suite_md_render(void);
 void suite_recent(void);
 void suite_status(void);
@@ -38,6 +39,7 @@ int main(void) {
   suite_undo();
   suite_buffer();
   suite_navigation();
+  suite_search();
   suite_md_render();
   suite_recent();
   suite_status();
