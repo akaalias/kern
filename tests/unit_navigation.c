@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "test.h"
+#include "ed_fixture.h"
 #include "buffer.h"
 #include "navigation.h"
 #include "stub_renderer.h"
@@ -78,8 +79,36 @@ static void test_count_wraps_caches(void) {
   free(l.text);
 }
 
+/* nav_maybe_reflow invalidates wraps only when the page width changes. */
+static void test_reflow_only_on_width_change(void) {
+  stub_set_metrics(10, 20, 800, 600);          /* page width = 700 */
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = {0};                           /* wrap_page_w = 0 */
+
+  /* first call: width differs from the (zero) cache → reflows */
+  CHECK_IEQ(nav_maybe_reflow(&ed, &vs), 1);
+  CHECK_IEQ(vs.wrap_page_w, 700);
+
+  /* warm the wrap cache, then a same-width call must be a no-op that leaves
+     the cache intact */
+  (void)nav_total_visual_lines(&ed);
+  CHECK(ed.lines[0].wrap_count >= 0);
+  CHECK_IEQ(nav_maybe_reflow(&ed, &vs), 0);
+  CHECK(ed.lines[0].wrap_count >= 0);           /* not invalidated */
+
+  /* a width change reflows and invalidates */
+  stub_set_metrics(10, 20, 400, 600);           /* page width = 360 */
+  CHECK_IEQ(nav_maybe_reflow(&ed, &vs), 1);
+  CHECK_IEQ(vs.wrap_page_w, 360);
+  CHECK_IEQ(ed.lines[0].wrap_count, -1);        /* invalidated */
+
+  stub_set_metrics(10, 20, 800, 600);           /* restore default for other tests */
+  ed_teardown(&ed);
+}
+
 void suite_navigation(void) {
   RUN(test_wrap_empty_line);
+  RUN(test_reflow_only_on_width_change);
   RUN(test_wrap_short_line_one_row);
   RUN(test_wrap_exactly_page_width_one_row);
   RUN(test_wrap_breaks_midword_without_space);

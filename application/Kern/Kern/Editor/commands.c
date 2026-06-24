@@ -277,10 +277,14 @@ static void cmd_recenter(EditorState *ed, ViewState *vs) {     /* C-l: center→
   g_recenter_state = (g_recenter_state + 1) % 3;
 }
 
+/* A font change alters glyph widths, so all wraps are invalid even if the page
+   width is unchanged; invalidate and re-anchor the reflow cache to the new
+   page width so a later same-width resize still skips correctly. */
 static void cmd_font_increase(EditorState *ed, ViewState *vs) {
   vs->font_size += 2.0f; if (vs->font_size > 72.0f) vs->font_size = 72.0f;
   r_set_font_size(vs->font_size);
   buf_invalidate_all_wraps(ed);
+  vs->wrap_page_w = nav_page_w();
   nav_ensure_cursor_visible(ed, vs);
 }
 
@@ -288,6 +292,7 @@ static void cmd_font_decrease(EditorState *ed, ViewState *vs) {
   vs->font_size -= 2.0f; if (vs->font_size < 8.0f) vs->font_size = 8.0f;
   r_set_font_size(vs->font_size);
   buf_invalidate_all_wraps(ed);
+  vs->wrap_page_w = nav_page_w();
   nav_ensure_cursor_visible(ed, vs);
 }
 

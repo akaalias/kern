@@ -95,13 +95,24 @@ int main(int argc, char **argv) {
   TIME(search_ms, { nav_search_find_first(&ed, &vs); });
   r[n++] = (Result){ "search-forward", search_ms, 1500 };
 
-  /* 7. full re-wrap, as on a window resize */
+  /* 7. full re-wrap, as on a width-changing resize (the unavoidable cost) */
   double rewrap_ms;
   TIME(rewrap_ms, {
     buf_invalidate_all_wraps(&ed);
     (void)nav_total_visual_lines(&ed);
   });
-  r[n++] = (Result){ "re-wrap (resize)", rewrap_ms, 6000 };
+  r[n++] = (Result){ "resize (width changed)", rewrap_ms, 6000 };
+
+  /* 8. resize that does NOT change the page width — nav_maybe_reflow must skip
+        the reflow, so this is ~free instead of another full re-wrap */
+  (void)nav_total_visual_lines(&ed);          /* warm the cache */
+  vs.wrap_page_w = nav_page_w();              /* wraps already valid for this width */
+  double reflow_noop_ms;
+  TIME(reflow_noop_ms, {
+    nav_maybe_reflow(&ed, &vs);
+    (void)nav_total_visual_lines(&ed);
+  });
+  r[n++] = (Result){ "resize (same width)", reflow_noop_ms, 50 };
 
   /* report */
   printf("%-20s %10s %10s\n", "scenario", "ms", "budget");

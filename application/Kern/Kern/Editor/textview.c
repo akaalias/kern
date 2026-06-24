@@ -1145,7 +1145,9 @@ int editor_main(int argc, char **argv) {
           if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
               e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
             r_handle_resize();
-            invalidate_all_wraps();
+            /* reflow only if the page width actually changed (a height-only
+               resize or a spurious resize event is now free) */
+            nav_maybe_reflow(&g_ed, &g_vs);
           }
           break;
         case SDL_MOUSEMOTION: mu_input_mousemove(ctx, e.motion.x, e.motion.y); break;

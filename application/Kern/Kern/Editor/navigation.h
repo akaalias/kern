@@ -16,6 +16,12 @@ int nav_count_wraps(Line *l);
 int nav_get_wrap_breaks(Line *l, int *starts, int max_starts);
 int nav_total_visual_lines(EditorState *ed);
 
+/* Reflow (invalidate all cached wraps) only if the page width changed since the
+   last reflow, recording the new width in vs->wrap_page_w. Returns 1 if it
+   reflowed, 0 if the width was unchanged (a no-op). Use on resize, where the
+   font is constant so wraps depend solely on the page width. */
+int nav_maybe_reflow(EditorState *ed, ViewState *vs);
+
 /* coordinate mapping */
 int nav_visual_to_logical(EditorState *ed, int visual_line, int *visual_offset);
 int nav_logical_to_visual(EditorState *ed, int logical_line);

@@ -94,6 +94,11 @@ struct ViewState {
   int    content_y;
   int    content_h;
 
+  /* page width the cached line wraps are valid for; a reflow is only needed
+     when this changes (a resize that keeps the width, or a spurious resize
+     event, costs nothing). -1 / 0 forces the first reflow. */
+  int    wrap_page_w;
+
   /* scrollbar */
   int    scrollbar_dragging;
   float  drag_offset;

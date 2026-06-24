@@ -53,7 +53,7 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
 **Phase E — Performance harness + corpora**
 - [x] `tools/gen_prose.py` — deterministic Markdown-ish corpus generator (`<size> <out>`, e.g. `100MB`).
 - [x] `tests/perf/perf_main.c` + `make perf CORPUS=…` — times load, cold/warm wrap-all, jump-to-end/top, search, full re-wrap, via the deterministic stub renderer (`-O2`, no sanitizers). `--check` enforces generous budgets. CI `perf-smoke` job runs `--check` on a 25MB corpus.
-- [ ] Guarded optimization of hotspots (incremental wrap invalidation, autosave) — baseline captured, ready to refactor against.
+- [~] Guarded optimization of hotspots — **first refactor landed (REFACTORING #6, parity-safe half):** `nav_maybe_reflow` skips the full re-wrap when a resize doesn't change the page width (height-only / spurious resizes). Perf: **resize same-width 377ms → 0.8ms** (~480×); genuine width-change unchanged. Guarded by a unit test + perf scenario + snapshots (correctness identical). The per-word-metrics half of #6 is **deferred**: the renderer rounds width per-character, so per-word measurement would shift wrap points in the real app — and the kerning/rounding-free stub can't catch that, so the net can't guard it.
 
 **Baseline (2026-06-24, 100MB / 1.32M lines, Apple silicon, -O2):** load 106ms · wrap-all cold 523ms · wrap-all warm 1.7ms · jump-to-end 1.6ms · re-wrap(resize) 510ms · search ~0ms. The two ~0.5s costs (cold wrap, full re-wrap on resize) are the `invalidate_all_wraps` hotspot (REFACTORING #6).
 

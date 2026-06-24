@@ -81,6 +81,14 @@ int nav_total_visual_lines(EditorState *ed) {
   return total;
 }
 
+int nav_maybe_reflow(EditorState *ed, ViewState *vs) {
+  int pw = nav_page_w();
+  if (pw == vs->wrap_page_w) return 0;     /* width unchanged → wraps still valid */
+  buf_invalidate_all_wraps(ed);
+  vs->wrap_page_w = pw;
+  return 1;
+}
+
 /* ---- coordinate mapping ---- */
 
 int nav_visual_to_logical(EditorState *ed, int visual_line, int *visual_offset) {
