@@ -18,7 +18,9 @@ SDL_CFLAGS ?= -I$(VENDOR)/SDL2/include
 
 SAN     := -fsanitize=address,undefined -fno-omit-frame-pointer
 INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
-CFLAGS  := -std=c11 -g -O1 -Wall -Wextra -Wno-unused-parameter $(SAN) $(INCS)
+# _GNU_SOURCE exposes POSIX helpers (mkstemp/unlink/mkdir) that glibc hides
+# under -std=c11; harmless on macOS where they're visible by default.
+CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
