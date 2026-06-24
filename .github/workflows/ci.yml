@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  headless-tests:
+    name: Headless core tests (Linux · ASan/UBSan/LSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        # clang for sanitizer parity with local dev; libsdl2-dev provides
+        # Linux-correct SDL headers (the vendored ones are macOS-configured).
+        run: sudo apt-get update && sudo apt-get install -y clang libsdl2-dev
+
+      - name: Build & run unit tests
+        working-directory: tests
+        # SDL_CFLAGS= → resolve <SDL2/SDL.h> from the system libsdl2-dev headers.
+        # On Linux, ASan enables LeakSanitizer by default.
+        run: make test CC=clang SDL_CFLAGS=

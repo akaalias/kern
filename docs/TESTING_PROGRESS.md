@@ -15,13 +15,13 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 ## Phase checklist
 
 **Phase A — Foundation + pure-core unit tests**
-- [ ] `tests/Makefile` (+ optional CMake): headless build of buffer/editing/undo + microui.c + SDL headers only, under ASan+UBSan
-- [ ] `tests/test.h` single-header harness
-- [ ] `tests/unit_editing.c` (ed_* incl. indent/outdent)
+- [x] `tests/Makefile`: headless build of buffer/editing/undo + SDL/microui headers only, under ASan+UBSan (`SDL_CFLAGS` overridable for Linux libsdl2-dev)
+- [x] `tests/test.h` single-header harness + `tests/test_main.c` runner
+- [x] `tests/unit_editing.c` (ed_insert/backspace/enter incl. list continuation + indent/outdent) — 12 tests green, 0 leaks
 - [ ] `tests/unit_undo.c` (push/coalesce/group/perform round-trips)
 - [ ] `tests/unit_buffer.c` (load/save temp files, growth, region/mark, path resolve, completion)
 - [ ] Invariant + characterization tests
-- [ ] GitHub Actions Linux job (sanitizers) green
+- [x] GitHub Actions Linux job (`.github/workflows/ci.yml`, clang + ASan/UBSan/LSan) — pending first remote run
 
 **Phase B — Stub renderer + layout/integration + snapshots**
 - [ ] `tests/stub_renderer.c` (deterministic metrics, capture model, no GL)
@@ -49,13 +49,14 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - [ ] CI matrix: Linux headless (+coverage +short fuzz) and macOS (Xcode build + smoke)
 
 ## Cross-cutting (land alongside the phases)
-- [ ] Sanitizers wired into every headless build (A)
+- [x] Sanitizers wired into every headless build (A) — ASan+UBSan in `tests/Makefile`; LSan auto on Linux CI
 - [ ] Coverage (llvm-cov) reporting (A/F)
 - [ ] libFuzzer targets: `buf_load_file`, `md_detect_span` (E/F)
 - [ ] Differential-test harness for hot-function rewrites (C/E)
 
 ## Session log
-- **2026-06-24** — Architecture mapped; strategy decided (4 choices above); plan + this tracker written and promoted from `~/.claude/plans/` into `docs/`. Refactoring-candidates doc created (`REFACTORING.md`). Status: **awaiting go-ahead to start Phase A.** Nothing implemented yet; app code unchanged.
+- **2026-06-24** — Architecture mapped; strategy decided (4 choices above); plan + this tracker written and promoted from `~/.claude/plans/` into `docs/`. Refactoring-candidates doc created (`REFACTORING.md`).
+- **2026-06-24** — **Phase A first slice landed.** `tests/` headless build (Makefile + test.h + test_main.c) compiling buffer/editing/undo under ASan+UBSan; `unit_editing.c` with 12 tests (insert/backspace/enter/list-continuation/indent/outdent) — all green, 0 leaks (verified via macOS `leaks`). Linux CI workflow added. **No app code changed.** App source untouched; only new `tests/`, `.github/`, `.gitignore` guard.
 
 ## Next action on resume
-Start the Phase A first slice: `tests/Makefile` + `tests/test.h` + `tests/unit_editing.c` + Linux sanitizer CI job — prove the headless build + ASan/UBSan + CI loop before scaling breadth.
+Broaden Phase A: `tests/unit_undo.c` (push/coalesce/group/perform round-trips) and `tests/unit_buffer.c` (load/save via temp files, line-array growth, region/mark, `buf_resolve_path`, filename completion), wiring each new `suite_*` into `test_main.c`. Then add invariant/characterization tests (e.g. `load(save(buf)) == buf`, undo round-trips). Confirm the first GitHub Actions run is green.

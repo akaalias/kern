@@ -21,6 +21,13 @@ test_1M.txt
 test_prose_100k.txt
 new.txt
 
+# Reference material kept locally, not committed (e.g. copyrighted PDFs)
+docs/*.pdf
+
+# Headless test build output
+tests/kern_tests
+tests/kern_perf
+
 # macOS
 .DS_Store
 
