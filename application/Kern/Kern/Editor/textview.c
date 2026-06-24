@@ -24,103 +24,6 @@
 static EditorState g_ed = {0};
 static ViewState   g_vs = {0};
 
-/* shims: map old global names to struct fields */
-#define lines           g_ed.lines
-#define line_count      g_ed.line_count
-#define line_cap        g_ed.line_cap
-#define cursor_line     g_ed.cursor_line
-#define cursor_col      g_ed.cursor_col
-#define cursor_target_col g_ed.cursor_target_col
-#define mark_active     g_ed.mark_active
-#define mark_line       g_ed.mark_line
-#define mark_col        g_ed.mark_col
-#define kill_buf        g_ed.kill_buf
-#define kill_len        g_ed.kill_len
-#define kill_cap        g_ed.kill_cap
-#define last_kill_was_k g_ed.last_kill_was_k
-#define font_size       g_vs.font_size
-#define scroll_y        g_vs.scroll_y
-#define scrollbar_dragging g_vs.scrollbar_dragging
-#define drag_offset     g_vs.drag_offset
-#define g_content_y     g_vs.content_y
-#define g_content_h     g_vs.content_h
-#define g_vis_rows      g_vs.vis_rows
-#define g_vis_row_count g_vs.vis_row_count
-#define g_cursor_x      g_vs.cursor_x
-#define ctrl_x_prefix   g_vs.ctrl_x_prefix
-#define esc_prefix      g_vs.esc_prefix
-#define suppress_next_text g_vs.suppress_next_text
-#define search_active   g_vs.search_active
-#define search_direction g_vs.search_direction
-#define search_buf      g_vs.search_buf
-#define search_len      g_vs.search_len
-#define search_match_line g_vs.search_match_line
-#define search_match_col g_vs.search_match_col
-#define minibuf_active  g_vs.minibuf_active
-#define minibuf_prompt  g_vs.minibuf_prompt
-#define minibuf_text    g_vs.minibuf_text
-#define minibuf_len     g_vs.minibuf_len
-#define status_msg      g_vs.status_msg
-#define status_time     g_vs.status_time
-#define minibuf_callback g_vs.minibuf_callback
-#define g_filename      g_ed.filename
-#define g_filepath      g_ed.filepath
-
-/* function shims: old names → new buf_* API */
-#define ensure_lines_cap(n) buf_ensure_lines_cap(&g_ed, (n))
-#define insert_line_at(i,s,l) buf_insert_line_at(&g_ed, (i), (s), (l))
-#define delete_line_at(i) buf_delete_line_at(&g_ed, (i))
-#define invalidate_all_wraps() buf_invalidate_all_wraps(&g_ed)
-#define kill_set(t,l) buf_kill_set(&g_ed, (t), (l))
-#define kill_append(t,l) buf_kill_append(&g_ed, (t), (l))
-#define mark_set() buf_mark_set(&g_ed)
-#define mark_clear() buf_mark_clear(&g_ed)
-#define region_ordered(sl,sc,el,ec) buf_region_ordered(&g_ed, (sl),(sc),(el),(ec))
-
-/* function shims: old names → new nav_* API */
-#define win_w()           nav_win_w()
-#define win_h()           nav_win_h()
-#define page_w()          nav_page_w()
-#define page_margin()     nav_page_margin()
-#define line_height()     nav_line_height()
-#define count_wraps(l)    nav_count_wraps(l)
-#define get_wrap_breaks(l,s,m) nav_get_wrap_breaks((l),(s),(m))
-#define total_visual_lines() nav_total_visual_lines(&g_ed)
-#define visual_to_logical(v,o) nav_visual_to_logical(&g_ed,(v),(o))
-#define logical_to_visual(l) nav_logical_to_visual(&g_ed,(l))
-#define cursor_to_visual(cl,cc) nav_cursor_to_visual(&g_ed,(cl),(cc))
-#define cursor_clamp()    nav_cursor_clamp(&g_ed)
-#define ensure_cursor_visible() nav_ensure_cursor_visible(&g_ed, &g_vs)
-#define click_to_cursor(mx,my) nav_click_to_cursor(&g_ed, &g_vs, (mx), (my))
-#define search_find_next(fl,fc) nav_search_find_next(&g_ed, &g_vs, (fl), (fc))
-#define search_find_prev(fl,fc) nav_search_find_prev(&g_ed, &g_vs, (fl), (fc))
-#define search_find_first() nav_search_find_first(&g_ed, &g_vs)
-#define search_find_current_dir() nav_search_find_current_dir(&g_ed, &g_vs)
-#define status_set(msg)   nav_status_set(&g_vs, (msg))
-#define status_get()      nav_status_get(&g_ed, &g_vs)
-
-/* function shims: old names → new ed_* API */
-#define editor_insert_char(t) ed_insert_char(&g_ed, (t))
-#define editor_backspace() ed_backspace(&g_ed)
-#define editor_delete()   ed_delete(&g_ed)
-#define editor_enter()    ed_enter(&g_ed)
-#define emacs_kill_line() ed_emacs_kill_line(&g_ed)
-#define emacs_yank()      ed_emacs_yank(&g_ed)
-#define emacs_copy_region() ed_emacs_copy_region(&g_ed)
-#define emacs_kill_region() ed_emacs_kill_region(&g_ed)
-#define emacs_kill_word_fwd()  ed_emacs_kill_word_forward(&g_ed)
-#define emacs_kill_word_back() ed_emacs_kill_word_backward(&g_ed)
-#define emacs_case_word(m)     ed_emacs_case_word(&g_ed, (m))
-#define emacs_transpose()      ed_emacs_transpose_chars(&g_ed)
-#define emacs_forward_word() ed_emacs_forward_word(&g_ed)
-#define emacs_backward_word() ed_emacs_backward_word(&g_ed)
-
-/* function shims: old names → new md_* API */
-#define list_indent(l)    md_list_indent(l)
-#define list_marker_width(l) md_list_marker_width(l)
-#define is_heading(l)     md_is_heading(l)
-#define draw_md_text(line,start,end,x,y,col,head,track) \
-  md_draw_text((line),(start),(end),(x),(y),(col),(head),(track),&g_cursor_x,1)
 
 /* ---- minibuffer filename completion ---- */
 
@@ -130,9 +33,9 @@ static char minibuf_suggest[1024];    /* full completed name; begins with minibu
 /* Recompute the ghost suggestion from the current minibuffer text. */
 static void minibuf_refresh_completion(void) {
   minibuf_suggest[0] = '\0';
-  if (minibuf_completing && minibuf_len > 0) {
+  if (minibuf_completing && g_vs.minibuf_len > 0) {
     char full[1024];
-    if (buf_complete_filename(minibuf_text, full, sizeof(full)))
+    if (buf_complete_filename(g_vs.minibuf_text, full, sizeof(full)))
       snprintf(minibuf_suggest, sizeof(minibuf_suggest), "%s", full);
   }
 }
@@ -143,38 +46,38 @@ static void minibuf_refresh_completion(void) {
 
 static void open_or_create_file(const char *path) {
   /* resolve the typed name to a path inside the sandbox documents dir */
-  buf_resolve_path(path, g_filepath, sizeof(g_filepath));
-  const char *slash = strrchr(g_filepath, '/');
-  g_filename = slash ? slash + 1 : g_filepath;
+  buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
+  const char *slash = strrchr(g_ed.filepath, '/');
+  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
 
   buf_free_all_lines(&g_ed);
-  int existed = (buf_load_file(&g_ed, g_filepath) == 0);
+  int existed = (buf_load_file(&g_ed, g_ed.filepath) == 0);
   if (!existed) buf_init_empty(&g_ed);
 
-  cursor_line = 0;
-  cursor_col = 0;
-  cursor_target_col = 0;
-  scroll_y = 0;
-  invalidate_all_wraps();
-  r_set_title(g_filename);
+  g_ed.cursor_line = 0;
+  g_ed.cursor_col = 0;
+  g_ed.cursor_target_col = 0;
+  g_vs.scroll_y = 0;
+  buf_invalidate_all_wraps(&g_ed);
+  r_set_title(g_ed.filename);
   char msg[256];
-  snprintf(msg, sizeof(msg), existed ? "Opened %s" : "New file %s", g_filename);
-  status_set(msg);
-  recent_push(g_filepath);
+  snprintf(msg, sizeof(msg), existed ? "Opened %s" : "New file %s", g_ed.filename);
+  nav_status_set(&g_vs, msg);
+  recent_push(g_ed.filepath);
 }
 
 static void save_to_path(const char *path) {
-  buf_resolve_path(path, g_filepath, sizeof(g_filepath));
-  const char *slash = strrchr(g_filepath, '/');
-  g_filename = slash ? slash + 1 : g_filepath;
+  buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
+  const char *slash = strrchr(g_ed.filepath, '/');
+  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
   char msg[256];
-  if (buf_save(&g_ed, g_filepath) == 0) {
-    snprintf(msg, sizeof(msg), "Wrote %s", g_filename);
+  if (buf_save(&g_ed, g_ed.filepath) == 0) {
+    snprintf(msg, sizeof(msg), "Wrote %s", g_ed.filename);
   } else {
-    snprintf(msg, sizeof(msg), "FAILED to write %s", g_filename);
+    snprintf(msg, sizeof(msg), "FAILED to write %s", g_ed.filename);
   }
-  status_set(msg);
-  r_set_title(g_filename);
+  nav_status_set(&g_vs, msg);
+  r_set_title(g_ed.filename);
 }
 
 /* ---- wikilink navigation (Cmd-Enter follow, Cmd-Shift-←/→ back/forward) ---- */
@@ -199,17 +102,17 @@ static void nav_stack_push(NavEntry *stack, int *count,
 
 static void nav_goto(const NavEntry *e) {
   open_or_create_file(e->path);
-  cursor_line = e->line; cursor_col = e->col;
-  cursor_clamp();
-  cursor_target_col = cursor_col;
-  ensure_cursor_visible();
+  g_ed.cursor_line = e->line; g_ed.cursor_col = e->col;
+  nav_cursor_clamp(&g_ed);
+  g_ed.cursor_target_col = g_ed.cursor_col;
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
 }
 
 /* If the cursor is within a [[wikilink]] on the current line, copy its target
    (text between the brackets) to `out` and return 1. */
 static int wikilink_at_cursor(char *out, int outsz) {
-  Line *l = &lines[cursor_line];
-  int c = cursor_col;
+  Line *l = &g_ed.lines[g_ed.cursor_line];
+  int c = g_ed.cursor_col;
   for (int i = 0; i + 1 < l->len; i++) {
     if (l->text[i] == '[' && l->text[i+1] == '[') {
       int j = i + 2;
@@ -235,27 +138,27 @@ static int wikilink_at_cursor(char *out, int outsz) {
 static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
   char target[1024];
   if (!wikilink_at_cursor(target, sizeof(target))) {
-    status_set("No wikilink at cursor");
+    nav_status_set(&g_vs, "No wikilink at cursor");
     return;
   }
-  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
-  nav_stack_push(nav_back, &nav_back_count, g_filepath, cursor_line, cursor_col);
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  nav_stack_push(nav_back, &nav_back_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   nav_fwd_count = 0;   /* a new jump starts a fresh branch — drop forward history */
   open_or_create_file(target);
 }
 
 static void cmd_nav_back(void) {          /* Cmd-Shift-Left */
-  if (nav_back_count == 0) { status_set("No previous note"); return; }
-  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
-  nav_stack_push(nav_fwd, &nav_fwd_count, g_filepath, cursor_line, cursor_col);
+  if (nav_back_count == 0) { nav_status_set(&g_vs, "No previous note"); return; }
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  nav_stack_push(nav_fwd, &nav_fwd_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   NavEntry e = nav_back[--nav_back_count];
   nav_goto(&e);
 }
 
 static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
-  if (nav_fwd_count == 0) { status_set("No next note"); return; }
-  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);
-  nav_stack_push(nav_back, &nav_back_count, g_filepath, cursor_line, cursor_col);
+  if (nav_fwd_count == 0) { nav_status_set(&g_vs, "No next note"); return; }
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  nav_stack_push(nav_back, &nav_back_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   NavEntry e = nav_fwd[--nav_fwd_count];
   nav_goto(&e);
 }
@@ -265,18 +168,18 @@ static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
    to the documents folder, and the selection is replaced in place with a
    [[wikilink]] to the new note. */
 static void cmd_extract_region_to_note(void) {
-  if (!mark_active) { status_set("Mark a region first (C-Space)"); return; }
+  if (!g_ed.mark_active) { nav_status_set(&g_vs, "Mark a region first (C-Space)"); return; }
 
   int rlen;
   char *region = ed_region_dup(&g_ed, &rlen);
-  if (!region || rlen == 0) { free(region); status_set("Region is empty"); return; }
+  if (!region || rlen == 0) { free(region); nav_status_set(&g_vs, "Region is empty"); return; }
 
   /* title := first line of the selection (letters, digits and spaces kept) */
   char base[256];
   buf_sanitize_note_title(region, rlen, base, sizeof(base));
   if (base[0] == '\0') {
     free(region);
-    status_set("First line has no letters or digits to name the note");
+    nav_status_set(&g_vs, "First line has no letters or digits to name the note");
     return;
   }
 
@@ -291,11 +194,11 @@ static void cmd_extract_region_to_note(void) {
     if (!probe) { taken = 0; break; }
     fclose(probe);
   }
-  if (taken) { free(region); status_set("Too many notes with that title"); return; }
+  if (taken) { free(region); nav_status_set(&g_vs, "Too many notes with that title"); return; }
 
   if (buf_save_text(path, region, rlen) != 0) {
     free(region);
-    status_set("Couldn't write the new note");
+    nav_status_set(&g_vs, "Couldn't write the new note");
     return;
   }
   free(region);
@@ -304,11 +207,11 @@ static void cmd_extract_region_to_note(void) {
   char link[320];
   snprintf(link, sizeof(link), "[[%s]]", fname);
   ed_replace_region(&g_ed, link);
-  ensure_cursor_visible();
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
 
   char msg[256];
   snprintf(msg, sizeof(msg), "Created %s", fname);
-  status_set(msg);
+  nav_status_set(&g_vs, msg);
 }
 
 /* word wrapping, cursor navigation, editing, and markdown rendering
@@ -320,7 +223,7 @@ static void cmd_extract_region_to_note(void) {
    there). False in a narrow window, where they'd overlap the text and should
    render inline instead. */
 static int heading_markers_hang(Line *l) {
-  if (!is_heading(l)) return 0;
+  if (!md_is_heading(l)) return 0;
   int hcount = md_heading_prefix_len(l) - 1;
   if (hcount > 23) hcount = 23;
   char hashes[24];
@@ -330,7 +233,7 @@ static int heading_markers_hang(Line *l) {
   int hw = r_get_text_width(hashes, hcount);
   int gap = r_get_text_width(" ", 1);
   r_set_font_style(saved);
-  return (page_margin() - gap - hw) >= 2;   /* headings carry no list indent */
+  return (nav_page_margin() - gap - hw) >= 2;   /* headings carry no list indent */
 }
 
 /* ---- frame ---- */
@@ -343,86 +246,86 @@ static int g_mouse_x, g_mouse_y, g_mouse_down, g_mouse_pressed;
    clip, selection/search highlights and the scrollbar. The markdown text is
    drawn afterward in do_render. */
 static void process_frame(void) {
-  g_vis_row_count = 0;
+  g_vs.vis_row_count = 0;
 
   /* Measure with the body font — the same state the text is drawn in (see the
      r_set_font_* calls in do_render below). The previous frame ended with the
      status bar's FONT_MONO active; measuring wrap breaks and selection-highlight
      widths in mono while the text renders in the proportional body font skews
      them, most visibly on indented list lines. */
-  r_set_font_size(font_size);
+  r_set_font_size(g_vs.font_size);
   r_set_font_style(FONT_REGULAR);
 
   /* window background */
-  r_draw_rect(rect(0, 0, win_w(), win_h()), color(50, 50, 50, 255));
+  r_draw_rect(rect(0, 0, nav_win_w(), nav_win_h()), color(50, 50, 50, 255));
 
   {
-    int lh = line_height();
-    g_content_y = TOP_PADDING;
+    int lh = nav_line_height();
+    g_vs.content_y = TOP_PADDING;
     int status_bar_h = r_get_text_height() + 16;
-    g_content_h = win_h() - TOP_PADDING - status_bar_h;
+    g_vs.content_h = nav_win_h() - TOP_PADDING - status_bar_h;
 
     /* content area */
-    int total_vis = total_visual_lines();
-    float max_scroll = (total_vis * lh) - g_content_h;
+    int total_vis = nav_total_visual_lines(&g_ed);
+    float max_scroll = (total_vis * lh) - g_vs.content_h;
     if (max_scroll < 0) max_scroll = 0;
-    if (scroll_y < 0) scroll_y = 0;
-    if (scroll_y > max_scroll) scroll_y = max_scroll;
+    if (g_vs.scroll_y < 0) g_vs.scroll_y = 0;
+    if (g_vs.scroll_y > max_scroll) g_vs.scroll_y = max_scroll;
 
-    int first_vis = (int)(scroll_y / lh);
-    float y_offset = scroll_y - (first_vis * lh);
+    int first_vis = (int)(g_vs.scroll_y / lh);
+    float y_offset = g_vs.scroll_y - (first_vis * lh);
 
     /* how many visual lines fit on screen */
-    int vis_on_screen = g_content_h / lh + 4;
+    int vis_on_screen = g_vs.content_h / lh + 4;
 
     /* clip to content area */
-    r_set_clip_rect(rect(0, g_content_y, win_w(), g_content_h));
+    r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
 
     /* render visible visual lines */
     for (int vi = 0; vi < vis_on_screen; vi++) {
       int vis_idx = first_vis + vi;
       if (vis_idx >= total_vis) break;
 
-      int py = g_content_y + (vi * lh) - (int)y_offset;
-      if (py + lh < g_content_y || py > g_content_y + g_content_h) continue;
+      int py = g_vs.content_y + (vi * lh) - (int)y_offset;
+      if (py + lh < g_vs.content_y || py > g_vs.content_y + g_vs.content_h) continue;
 
       /* map visual line to logical line + wrap row */
       int wrap_off;
-      int ln = visual_to_logical(vis_idx, &wrap_off);
-      Line *l = &lines[ln];
+      int ln = nav_visual_to_logical(&g_ed, vis_idx, &wrap_off);
+      Line *l = &g_ed.lines[ln];
 
       int starts[256];
-      int nrows = get_wrap_breaks(l, starts, 256);
+      int nrows = nav_get_wrap_breaks(l, starts, 256);
       int row_start = starts[wrap_off];
       int row_end = (wrap_off + 1 < nrows) ? starts[wrap_off + 1] : l->len;
       /* a heading's "### " prefix hangs in the LEFT margin (text flush at the
          page edge), so text/highlights flow from after it — unless the caret is
          at the line start, where the markers fold back inline for editing */
       int dstart = row_start;
-      if (is_heading(l) && row_start == 0) {
+      if (md_is_heading(l) && row_start == 0) {
         int hpre = md_heading_prefix_len(l);
-        int reveal = (ln == cursor_line && cursor_col <= hpre);
+        int reveal = (ln == g_ed.cursor_line && g_ed.cursor_col <= hpre);
         if (!reveal && heading_markers_hang(l)) dstart = hpre;
       }
       /* match the text's indent so highlights align (incl. list hanging indent) */
-      int row_indent = list_indent(l) + (row_start > 0 ? list_marker_width(l) : 0);
+      int row_indent = md_list_indent(l) + (row_start > 0 ? md_list_marker_width(l) : 0);
 
       /* draw mark region highlight */
-      if (mark_active && row_end > row_start) {
+      if (g_ed.mark_active && row_end > row_start) {
         int sl, sc, el, ec;
-        region_ordered(&sl, &sc, &el, &ec);
+        buf_region_ordered(&g_ed, &sl, &sc, &el, &ec);
         if (ln >= sl && ln <= el) {
           int hl_start = (ln == sl) ? sc : 0;
-          int hl_end   = (ln == el) ? ec : lines[ln].len;
+          int hl_end   = (ln == el) ? ec : g_ed.lines[ln].len;
           /* clamp to this visual row */
           if (hl_start < row_end && hl_end > row_start) {
             int hs = hl_start < dstart ? dstart : hl_start;
             int he = hl_end > row_end ? row_end : hl_end;
             if (he > hs) {
               /* measure with the same per-span font metrics the text is drawn in */
-              int x0 = page_margin() + row_indent;
-              int hx = md_col_x(l, dstart, row_end, x0, is_heading(l), hs);
-              int hw = md_col_x(l, dstart, row_end, x0, is_heading(l), he) - hx;
+              int x0 = nav_page_margin() + row_indent;
+              int hx = md_col_x(l, dstart, row_end, x0, md_is_heading(l), hs);
+              int hw = md_col_x(l, dstart, row_end, x0, md_is_heading(l), he) - hx;
               int font_h = r_get_text_height();
               r_draw_rect(rect(hx, py, hw, font_h),
                           color(60, 100, 160, 180));
@@ -432,25 +335,25 @@ static void process_frame(void) {
       }
 
       /* store row info for post-render markdown drawing */
-      if (g_vis_row_count < MAX_VIS_ROWS) {
-        g_vis_rows[g_vis_row_count].ln = ln;
-        g_vis_rows[g_vis_row_count].row_start = row_start;
-        g_vis_rows[g_vis_row_count].row_end = row_end;
-        g_vis_rows[g_vis_row_count].py = py;
-        g_vis_rows[g_vis_row_count].heading = is_heading(l);
-        g_vis_row_count++;
+      if (g_vs.vis_row_count < MAX_VIS_ROWS) {
+        g_vs.vis_rows[g_vs.vis_row_count].ln = ln;
+        g_vs.vis_rows[g_vs.vis_row_count].row_start = row_start;
+        g_vs.vis_rows[g_vs.vis_row_count].row_end = row_end;
+        g_vs.vis_rows[g_vs.vis_row_count].py = py;
+        g_vs.vis_rows[g_vs.vis_row_count].heading = md_is_heading(l);
+        g_vs.vis_row_count++;
       }
 
       /* draw search highlights on this visual row */
-      if (search_active && search_len > 0 && row_end > row_start && (row_end - row_start) >= search_len) {
-        for (int sc = dstart; sc <= row_end - search_len; sc++) {
-          if (strncasecmp(l->text + sc, search_buf, search_len) == 0) {
-            int x0 = page_margin() + row_indent;
-            int hx = md_col_x(l, dstart, row_end, x0, is_heading(l), sc);
-            int hw = md_col_x(l, dstart, row_end, x0, is_heading(l), sc + search_len) - hx;
+      if (g_vs.search_active && g_vs.search_len > 0 && row_end > row_start && (row_end - row_start) >= g_vs.search_len) {
+        for (int sc = dstart; sc <= row_end - g_vs.search_len; sc++) {
+          if (strncasecmp(l->text + sc, g_vs.search_buf, g_vs.search_len) == 0) {
+            int x0 = nav_page_margin() + row_indent;
+            int hx = md_col_x(l, dstart, row_end, x0, md_is_heading(l), sc);
+            int hw = md_col_x(l, dstart, row_end, x0, md_is_heading(l), sc + g_vs.search_len) - hx;
             int font_h = r_get_text_height();
             /* current match gets brighter highlight */
-            if (ln == search_match_line && sc == search_match_col) {
+            if (ln == g_vs.search_match_line && sc == g_vs.search_match_col) {
               r_draw_rect(rect(hx, py, hw, font_h),
                           color(200, 150, 0, 180));
             } else {
@@ -464,45 +367,45 @@ static void process_frame(void) {
       /* cursor drawing moved to post-render pass (uses g_cursor_x) */
     }
 
-    r_set_clip_rect(rect(0, 0, win_w(), win_h()));   /* back to full window */
+    r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));   /* back to full window */
 
     /* scrollbar */
     if (max_scroll > 0) {
-      int sb_x = win_w() - 8;
+      int sb_x = nav_win_w() - 8;
       int sb_w = 6;
-      int sb_h = g_content_h;
-      float thumb_ratio = (float)g_content_h / (total_vis * lh);
+      int sb_h = g_vs.content_h;
+      float thumb_ratio = (float)g_vs.content_h / (total_vis * lh);
       int thumb_h = (int)(sb_h * thumb_ratio);
       if (thumb_h < 20) thumb_h = 20;
-      int thumb_y = g_content_y + (int)((scroll_y / max_scroll) * (sb_h - thumb_h));
+      int thumb_y = g_vs.content_y + (int)((g_vs.scroll_y / max_scroll) * (sb_h - thumb_h));
 
       int mx = g_mouse_x, my = g_mouse_y;
-      int mouse_in_track = (mx >= sb_x - 4 && mx < sb_x + sb_w + 4 && my >= g_content_y && my < g_content_y + sb_h);
+      int mouse_in_track = (mx >= sb_x - 4 && mx < sb_x + sb_w + 4 && my >= g_vs.content_y && my < g_vs.content_y + sb_h);
 
-      if (scrollbar_dragging) {
+      if (g_vs.scrollbar_dragging) {
         if (g_mouse_down & MOUSE_LEFT) {
-          float ratio = (my - drag_offset - g_content_y) / (float)(sb_h - thumb_h);
+          float ratio = (my - g_vs.drag_offset - g_vs.content_y) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
-          scroll_y = ratio * max_scroll;
+          g_vs.scroll_y = ratio * max_scroll;
         } else {
-          scrollbar_dragging = 0;
+          g_vs.scrollbar_dragging = 0;
         }
       } else if (mouse_in_track && (g_mouse_pressed & MOUSE_LEFT)) {
         if (my >= thumb_y && my < thumb_y + thumb_h) {
-          scrollbar_dragging = 1;
-          drag_offset = my - thumb_y;
+          g_vs.scrollbar_dragging = 1;
+          g_vs.drag_offset = my - thumb_y;
         } else {
-          float ratio = (my - g_content_y - thumb_h / 2.0f) / (float)(sb_h - thumb_h);
+          float ratio = (my - g_vs.content_y - thumb_h / 2.0f) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
-          scroll_y = ratio * max_scroll;
-          scrollbar_dragging = 1;
-          drag_offset = thumb_h / 2.0f;
+          g_vs.scroll_y = ratio * max_scroll;
+          g_vs.scrollbar_dragging = 1;
+          g_vs.drag_offset = thumb_h / 2.0f;
         }
       }
 
-      Color thumb_color = scrollbar_dragging ? color(140, 140, 140, 255) :
+      Color thumb_color = g_vs.scrollbar_dragging ? color(140, 140, 140, 255) :
                              mouse_in_track     ? color(120, 120, 120, 255) :
                                                   color(80, 80, 80, 255);
       r_draw_rect(rect(sb_x, thumb_y, sb_w, thumb_h), thumb_color);
@@ -513,53 +416,26 @@ static void process_frame(void) {
 }
 
 
-/* ---- key binding table and command functions ---- */
+/* ---- command functions ---- */
 
-typedef struct {
-  int mod;     /* required modifier: KMOD_CTRL, KMOD_ALT, KMOD_GUI, 0 for none */
-  int sym;     /* SDL key symbol */
-  void (*action)(void);  /* command function */
-} KeyBinding;
+/* Most key bindings live in the de-globalized table in commands.c, dispatched
+   via kern_dispatch_key: cursor movement (C-a C-e C-f C-b C-n C-p, M-f M-b),
+   kill/yank/copy/case, scrolling/font, buffer-ends and mark. The few commands
+   below need textview-local state (minibuffer, prefixes) so they're defined
+   here and dispatched inline in the keydown handler. */
 
-/* cursor-movement commands migrated to commands.c (dispatched via
-   kern_dispatch_key): C-a C-e C-f C-b C-n C-p, M-f M-b. */
-/* kill/yank/copy + case commands migrated to commands.c (dispatched via
-   kern_dispatch_key; the meta-prefix handler calls the exposed ones). */
-/* scrolling/font, buffer-ends and mark commands migrated to commands.c
-   (dispatched via kern_dispatch_key; section-5 and the prefix handlers call
-   the exposed ones). */
 static void goto_line_cb(const char *text) {
   int n = atoi(text);
   if (n < 1) n = 1;
-  if (n > line_count) n = line_count;
-  cursor_line = n - 1; cursor_col = 0; cursor_target_col = 0;
-  ensure_cursor_visible();
-  char msg[64]; snprintf(msg, sizeof(msg), "Line %d", n); status_set(msg);
+  if (n > g_ed.line_count) n = g_ed.line_count;
+  g_ed.cursor_line = n - 1; g_ed.cursor_col = 0; g_ed.cursor_target_col = 0;
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
+  char msg[64]; snprintf(msg, sizeof(msg), "Line %d", n); nav_status_set(&g_vs, msg);
 }
 static void cmd_goto_line(void) {       /* M-g */
-  minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
-  snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Goto line: ");
-  minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = goto_line_cb;
-}
-
-/* Alt+Shift+. and Alt+Shift+, need KMOD_ALT but the sym check uses SDLK_PERIOD/SDLK_COMMA
-   plus shift — handled specially via check_binding which checks extra shift for those entries */
-
-static const KeyBinding normal_bindings[] = {
-  { KMOD_ALT,  SDLK_g,      cmd_goto_line },
-  { 0, 0, NULL }  /* sentinel */
-};
-
-static int check_binding(const KeyBinding *b, int kmod, int sym) {
-  if (b->sym != sym) return 0;
-  if (b->mod == 0) {
-    /* no modifier required — but reject if ctrl/alt/gui are held */
-    if (kmod & (KMOD_CTRL | KMOD_ALT | KMOD_GUI)) return 0;
-    return 1;
-  }
-  /* check that the required modifier is active */
-  if (!(kmod & b->mod)) return 0;
-  return 1;
+  g_vs.minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+  snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Goto line: ");
+  g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0; g_vs.minibuf_callback = goto_line_cb;
 }
 
 /* ---- modal key handlers ---- */
@@ -576,32 +452,32 @@ static char bufsw_cands[RECENT_MAX][1024];
    typed text (case-insensitive on the filename) */
 static void bufsw_filter(void) {
   bufsw_count = 0;
-  size_t tl = strlen(minibuf_text);
+  size_t tl = strlen(g_vs.minibuf_text);
   for (int i = 1; i < recent_count() && bufsw_count < RECENT_MAX; i++) {
     const char *base = path_base(recent_get(i));
-    if (tl == 0 || strncasecmp(base, minibuf_text, tl) == 0)
+    if (tl == 0 || strncasecmp(base, g_vs.minibuf_text, tl) == 0)
       snprintf(bufsw_cands[bufsw_count++], sizeof(bufsw_cands[0]), "%s", recent_get(i));
   }
   if (bufsw_sel >= bufsw_count) bufsw_sel = bufsw_count > 0 ? bufsw_count - 1 : 0;
 }
 
 static void bufsw_switch(const char *path) {
-  if (!path || !path[0]) { status_set("No other buffer"); return; }
-  if (g_ed.dirty && g_filepath[0]) buf_save(&g_ed, g_filepath);   /* save current */
+  if (!path || !path[0]) { nav_status_set(&g_vs, "No other buffer"); return; }
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);   /* save current */
   open_or_create_file(path);
 }
 
 static int handle_bufsw_key(int sym, int ctrl) {
   if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {
-    bufsw_active = 0; minibuf_active = 0; minibuf_callback = NULL;
-    status_set("Quit");
+    bufsw_active = 0; g_vs.minibuf_active = 0; g_vs.minibuf_callback = NULL;
+    nav_status_set(&g_vs, "Quit");
     return 1;
   }
   if (sym == SDLK_RETURN) {
-    bufsw_active = 0; minibuf_active = 0; minibuf_callback = NULL;
+    bufsw_active = 0; g_vs.minibuf_active = 0; g_vs.minibuf_callback = NULL;
     if (bufsw_listing && bufsw_count > 0) bufsw_switch(bufsw_cands[bufsw_sel]);
-    else if (minibuf_len == 0)            bufsw_switch(bufsw_default);
-    else                                  bufsw_switch(minibuf_text);
+    else if (g_vs.minibuf_len == 0)            bufsw_switch(bufsw_default);
+    else                                  bufsw_switch(g_vs.minibuf_text);
     return 1;
   }
   if (sym == SDLK_TAB) {              /* first Tab shows the list; then cycles */
@@ -612,7 +488,7 @@ static int handle_bufsw_key(int sym, int ctrl) {
     return 1;
   }
   if (sym == SDLK_BACKSPACE) {
-    if (minibuf_len > 0) { minibuf_len--; minibuf_text[minibuf_len] = '\0'; }
+    if (g_vs.minibuf_len > 0) { g_vs.minibuf_len--; g_vs.minibuf_text[g_vs.minibuf_len] = '\0'; }
     bufsw_filter();
     return 1;
   }
@@ -622,43 +498,43 @@ static int handle_bufsw_key(int sym, int ctrl) {
 static void cmd_switch_buffer(void) {   /* C-x b */
   bufsw_default[0] = '\0';
   if (recent_count() >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_get(1));
-  suppress_next_text = 1;   /* swallow the "b" text event that triggered this */
-  minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
-  minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = NULL;
+  g_vs.suppress_next_text = 1;   /* swallow the "b" text event that triggered this */
+  g_vs.minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
+  g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0; g_vs.minibuf_callback = NULL;
   bufsw_active = 1; bufsw_listing = 0; bufsw_sel = 0; bufsw_count = 0;
   if (bufsw_default[0])
-    snprintf(minibuf_prompt, sizeof(minibuf_prompt),
+    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt),
              "Switch to buffer (default %s): ", path_base(bufsw_default));
   else
-    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Switch to buffer: ");
+    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Switch to buffer: ");
 }
 
 static int handle_minibuf_key(int sym, int ctrl) {
   if (bufsw_active) return handle_bufsw_key(sym, ctrl);
   if (sym == SDLK_RETURN) {
-    minibuf_active = 0;
+    g_vs.minibuf_active = 0;
     minibuf_completing = 0;
     minibuf_suggest[0] = '\0';
-    suppress_next_text = 0;   /* never let a stale suppression leak into the buffer */
-    if (minibuf_callback) minibuf_callback(minibuf_text);
-    minibuf_callback = NULL;
+    g_vs.suppress_next_text = 0;   /* never let a stale suppression leak into the buffer */
+    if (g_vs.minibuf_callback) g_vs.minibuf_callback(g_vs.minibuf_text);
+    g_vs.minibuf_callback = NULL;
     return 1;
   }
   if (sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) {
-    minibuf_active = 0;
+    g_vs.minibuf_active = 0;
     minibuf_completing = 0;
     minibuf_suggest[0] = '\0';
-    suppress_next_text = 0;
-    minibuf_callback = NULL;
-    status_set("Quit");
+    g_vs.suppress_next_text = 0;
+    g_vs.minibuf_callback = NULL;
+    nav_status_set(&g_vs, "Quit");
     return 1;
   }
   if (sym == SDLK_TAB) {
     /* accept the ghost completion */
     if (minibuf_completing && minibuf_suggest[0] &&
-        (int)strlen(minibuf_suggest) > minibuf_len) {
-      snprintf(minibuf_text, sizeof(minibuf_text), "%s", minibuf_suggest);
-      minibuf_len = (int)strlen(minibuf_text);
+        (int)strlen(minibuf_suggest) > g_vs.minibuf_len) {
+      snprintf(g_vs.minibuf_text, sizeof(g_vs.minibuf_text), "%s", minibuf_suggest);
+      g_vs.minibuf_len = (int)strlen(g_vs.minibuf_text);
       minibuf_refresh_completion();
     }
     /* Tab emits no text-input character, so nothing needs suppressing here.
@@ -666,9 +542,9 @@ static int handle_minibuf_key(int sym, int ctrl) {
     return 1;
   }
   if (sym == SDLK_BACKSPACE) {
-    if (minibuf_len > 0) {
-      minibuf_len--;
-      minibuf_text[minibuf_len] = '\0';
+    if (g_vs.minibuf_len > 0) {
+      g_vs.minibuf_len--;
+      g_vs.minibuf_text[g_vs.minibuf_len] = '\0';
     }
     minibuf_refresh_completion();
     return 1;
@@ -678,38 +554,38 @@ static int handle_minibuf_key(int sym, int ctrl) {
 
 static int handle_search_key(int sym, int ctrl) {
   if (sym == SDLK_ESCAPE || sym == SDLK_RETURN) {
-    search_active = 0;
+    g_vs.search_active = 0;
     return 1;
   }
   if (ctrl && sym == SDLK_s) {
-    search_direction = 1;
-    if (search_match_line >= 0) search_find_next(search_match_line, search_match_col);
-    else search_find_first();
+    g_vs.search_direction = 1;
+    if (g_vs.search_match_line >= 0) nav_search_find_next(&g_ed, &g_vs, g_vs.search_match_line, g_vs.search_match_col);
+    else nav_search_find_first(&g_ed, &g_vs);
     return 1;
   }
   if (ctrl && (sym == SDLK_r || sym == SDLK_b)) {
-    search_direction = -1;
-    if (search_match_line >= 0) search_find_prev(search_match_line, search_match_col);
-    else search_find_first();
+    g_vs.search_direction = -1;
+    if (g_vs.search_match_line >= 0) nav_search_find_prev(&g_ed, &g_vs, g_vs.search_match_line, g_vs.search_match_col);
+    else nav_search_find_first(&g_ed, &g_vs);
     return 1;
   }
   if (ctrl && sym == SDLK_f) {
-    search_direction = 1;
-    if (search_match_line >= 0) search_find_next(search_match_line, search_match_col);
-    else search_find_first();
+    g_vs.search_direction = 1;
+    if (g_vs.search_match_line >= 0) nav_search_find_next(&g_ed, &g_vs, g_vs.search_match_line, g_vs.search_match_col);
+    else nav_search_find_first(&g_ed, &g_vs);
     return 1;
   }
   if (ctrl && sym == SDLK_g) {
-    search_active = 0;
-    search_match_line = -1;
+    g_vs.search_active = 0;
+    g_vs.search_match_line = -1;
     return 1;
   }
   if (sym == SDLK_BACKSPACE) {
-    if (search_len > 0) {
-      search_len--;
-      search_buf[search_len] = '\0';
-      if (search_len > 0) search_find_current_dir();
-      else search_match_line = -1;
+    if (g_vs.search_len > 0) {
+      g_vs.search_len--;
+      g_vs.search_buf[g_vs.search_len] = '\0';
+      if (g_vs.search_len > 0) nav_search_find_current_dir(&g_ed, &g_vs);
+      else g_vs.search_match_line = -1;
     }
     return 1;
   }
@@ -717,33 +593,33 @@ static int handle_search_key(int sym, int ctrl) {
 }
 
 static int handle_esc_prefix_key(int sym, int shift) {
-  esc_prefix = 0;
+  g_vs.esc_prefix = 0;
   SDL_StartTextInput();
   if (shift && sym == SDLK_PERIOD) {
     /* M-> : end of buffer, set mark first */
-    mark_set();
-    cursor_line = line_count - 1;
-    cursor_col = lines[cursor_line].len;
-    cursor_target_col = cursor_col;
-    ensure_cursor_visible();
-    status_set("Mark set");
-    suppress_next_text = 1;
+    buf_mark_set(&g_ed);
+    g_ed.cursor_line = g_ed.line_count - 1;
+    g_ed.cursor_col = g_ed.lines[g_ed.cursor_line].len;
+    g_ed.cursor_target_col = g_ed.cursor_col;
+    nav_ensure_cursor_visible(&g_ed, &g_vs);
+    nav_status_set(&g_vs, "Mark set");
+    g_vs.suppress_next_text = 1;
     return 1;
   }
   if (shift && sym == SDLK_COMMA) {
     /* M-< : beginning of buffer, set mark first */
-    mark_set();
-    cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
-    ensure_cursor_visible();
-    status_set("Mark set");
-    suppress_next_text = 1;
+    buf_mark_set(&g_ed);
+    g_ed.cursor_line = 0; g_ed.cursor_col = 0; g_ed.cursor_target_col = 0;
+    nav_ensure_cursor_visible(&g_ed, &g_vs);
+    nav_status_set(&g_vs, "Mark set");
+    g_vs.suppress_next_text = 1;
     return 1;
   }
   if (sym == SDLK_f) {
-    emacs_forward_word(); ensure_cursor_visible(); return 1;
+    ed_emacs_forward_word(&g_ed); nav_ensure_cursor_visible(&g_ed, &g_vs); return 1;
   }
   if (sym == SDLK_b) {
-    emacs_backward_word(); ensure_cursor_visible(); return 1;
+    ed_emacs_backward_word(&g_ed); nav_ensure_cursor_visible(&g_ed, &g_vs); return 1;
   }
   if (sym == SDLK_w) { cmd_copy_region(&g_ed, &g_vs); return 1; }      /* M-w copy */
   if (sym == SDLK_v) { cmd_page_up(&g_ed, &g_vs); return 1; }  /* M-v page up */
@@ -756,19 +632,19 @@ static int handle_esc_prefix_key(int sym, int shift) {
 }
 
 static int handle_cx_prefix_key(int sym, int ctrl) {
-  ctrl_x_prefix = 0;
+  g_vs.ctrl_x_prefix = 0;
   if (ctrl && sym == SDLK_s) {
     /* C-x C-s: save (honest status, sandbox-resolved path) */
-    if (g_filepath[0]) {
-      save_to_path(g_filepath);
+    if (g_ed.filepath[0]) {
+      save_to_path(g_ed.filepath);
     } else {
-      minibuf_active = 1;
+      g_vs.minibuf_active = 1;
       minibuf_completing = 1;       /* hint existing filenames (Tab to accept) */
       minibuf_suggest[0] = '\0';
-      snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
-      minibuf_text[0] = '\0';
-      minibuf_len = 0;
-      minibuf_callback = save_to_path;
+      snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Write file (Documents): ");
+      g_vs.minibuf_text[0] = '\0';
+      g_vs.minibuf_len = 0;
+      g_vs.minibuf_callback = save_to_path;
     }
     return 1;
   }
@@ -777,20 +653,20 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     return 1;
   }
   if (ctrl && sym == SDLK_f) {
-    minibuf_active = 1;
+    g_vs.minibuf_active = 1;
     minibuf_completing = 1;       /* enable ghost filename completion */
     minibuf_suggest[0] = '\0';
-    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Find file (Documents): ");
-    minibuf_text[0] = '\0';
-    minibuf_len = 0;
-    minibuf_callback = open_or_create_file;
+    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Find file (Documents): ");
+    g_vs.minibuf_text[0] = '\0';
+    g_vs.minibuf_len = 0;
+    g_vs.minibuf_callback = open_or_create_file;
     return 1;
   }
   if (ctrl && sym == SDLK_w) {   /* C-x C-w: write-file (save as) */
-    minibuf_active = 1; minibuf_completing = 1; minibuf_suggest[0] = '\0';
-    snprintf(minibuf_prompt, sizeof(minibuf_prompt), "Write file (Documents): ");
-    minibuf_text[0] = '\0'; minibuf_len = 0;
-    minibuf_callback = save_to_path;
+    g_vs.minibuf_active = 1; minibuf_completing = 1; minibuf_suggest[0] = '\0';
+    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Write file (Documents): ");
+    g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0;
+    g_vs.minibuf_callback = save_to_path;
     return 1;
   }
   if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(&g_ed, &g_vs); return 1; }   /* C-x h */
@@ -826,9 +702,9 @@ static int  wl_has_suppress;
 /* Recompute the active "[[" query before the caret and its match list. */
 static void wikilink_refresh(void) {
   wl_active = 0;
-  if (minibuf_active || search_active) return;
-  Line *l = &lines[cursor_line];
-  int c = cursor_col;
+  if (g_vs.minibuf_active || g_vs.search_active) return;
+  Line *l = &g_ed.lines[g_ed.cursor_line];
+  int c = g_ed.cursor_col;
   if (c < 2) return;
   int open = -1;
   for (int i = c - 2; i >= 0; i--) {
@@ -863,7 +739,7 @@ static void wikilink_refresh(void) {
   if (wl_sel >= wl_count) wl_sel = wl_count - 1;
   if (wl_sel < 0) wl_sel = 0;
   wl_query_col = qstart;
-  wl_query_line = cursor_line;
+  wl_query_line = g_ed.cursor_line;
   wl_active = 1;
 }
 
@@ -871,14 +747,14 @@ static void wikilink_refresh(void) {
 static int wikilink_accept(void) {
   if (!wl_active || wl_count == 0) return 0;
   int qlen = (int)strlen(wl_query);
-  if (cursor_line != wl_query_line || cursor_col != wl_query_col + qlen) return 0;
+  if (g_ed.cursor_line != wl_query_line || g_ed.cursor_col != wl_query_col + qlen) return 0;
   undo_begin_group(&g_ed);
-  for (int i = 0; i < qlen; i++) editor_backspace();   /* delete the typed query */
-  editor_insert_char(wl_matches[wl_sel]);              /* insert the note name */
-  editor_insert_char("]]");                            /* close the link */
+  for (int i = 0; i < qlen; i++) ed_backspace(&g_ed);   /* delete the typed query */
+  ed_insert_char(&g_ed, wl_matches[wl_sel]);              /* insert the note name */
+  ed_insert_char(&g_ed, "]]");                            /* close the link */
   undo_end_group(&g_ed);
   wl_active = 0;
-  ensure_cursor_visible();
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
   return 1;
 }
 
@@ -901,22 +777,22 @@ static void do_render(void) {
   wikilink_refresh();
 
   /* draw markdown-formatted text */
-  r_set_font_size(font_size);
+  r_set_font_size(g_vs.font_size);
   r_set_font_style(FONT_REGULAR);
-  r_set_clip_rect(rect(0, g_content_y, win_w(), g_content_h));
+  r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
   Color text_color = color(204, 200, 195, 255);
-  g_cursor_x = -1;
-  for (int i = 0; i < g_vis_row_count; i++) {
-    VisRow *vr = &g_vis_rows[i];
-    Line *L = &lines[vr->ln];
-    int indent = list_indent(L);
+  g_vs.cursor_x = -1;
+  for (int i = 0; i < g_vs.vis_row_count; i++) {
+    VisRow *vr = &g_vs.vis_rows[i];
+    Line *L = &g_ed.lines[vr->ln];
+    int indent = md_list_indent(L);
     /* hang wrapped list text under the item text, not the marker */
-    if (vr->row_start > 0) indent += list_marker_width(L);
+    if (vr->row_start > 0) indent += md_list_marker_width(L);
     /* track cursor if it's on this row */
     int track = -1;
-    if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
-        (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
-      track = cursor_col;
+    if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
+        (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
+      track = g_ed.cursor_col;
     }
 
     int draw_start = vr->row_start;
@@ -924,7 +800,7 @@ static void do_render(void) {
       int prefix = md_heading_prefix_len(L);
       /* reveal the markers inline when the caret is at the line start so they
          can be edited/removed; otherwise hang them in the left margin */
-      int reveal = (vr->ln == cursor_line && cursor_col <= prefix);
+      int reveal = (vr->ln == g_ed.cursor_line && g_ed.cursor_col <= prefix);
       /* hang markers in the margin only when there's room; otherwise let the
          "## " render inline (draw_start stays at row_start) so it never
          overlaps the text in a narrow window */
@@ -936,28 +812,29 @@ static void do_render(void) {
         r_set_font_style(FONT_BOLD);
         int hw = r_get_text_width(hashes, hcount);
         int gap = r_get_text_width(" ", 1);
-        int hx = page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
+        int hx = nav_page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
         r_draw_text(hashes, vec2(hx, vr->py), color(110, 110, 115, 255));
         r_set_font_style(FONT_REGULAR);
         if (prefix <= vr->row_end) draw_start = prefix;
       }
     }
 
-    draw_md_text(L, draw_start, vr->row_end,
-                 page_margin() + indent, vr->py, text_color, vr->heading, track);
+    md_draw_text(L, draw_start, vr->row_end,
+                 nav_page_margin() + indent, vr->py, text_color, vr->heading, track,
+                 &g_vs.cursor_x, 1);
     r_set_font_style(FONT_REGULAR);
   }
 
   /* draw cursor (post-render, uses markdown-aware x position) */
   int cursor_py = -1;
-  if (g_cursor_x >= 0) {
+  if (g_vs.cursor_x >= 0) {
     int font_h = r_get_text_height();
     /* find the py for the cursor row */
-    for (int i = 0; i < g_vis_row_count; i++) {
-      VisRow *vr = &g_vis_rows[i];
-      if (vr->ln == cursor_line && cursor_col >= vr->row_start &&
-          (cursor_col < vr->row_end || (i + 1 >= g_vis_row_count || g_vis_rows[i+1].ln != vr->ln))) {
-        r_draw_rect(rect(g_cursor_x, vr->py, 3, font_h),
+    for (int i = 0; i < g_vs.vis_row_count; i++) {
+      VisRow *vr = &g_vs.vis_rows[i];
+      if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
+          (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
+        r_draw_rect(rect(g_vs.cursor_x, vr->py, 3, font_h),
                     color(90, 200, 250, 255));
         cursor_py = vr->py;
         break;
@@ -966,11 +843,11 @@ static void do_render(void) {
   }
 
   /* wikilink autocomplete dropdown, anchored under the "[[" query */
-  if (wl_active && wl_count > 0 && g_cursor_x >= 0 && cursor_py >= 0) {
+  if (wl_active && wl_count > 0 && g_vs.cursor_x >= 0 && cursor_py >= 0) {
     r_set_font_style(FONT_REGULAR);
-    r_set_clip_rect(rect(0, 0, win_w(), win_h()));
+    r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));
     int fh = r_get_text_height();
-    int lh = line_height();
+    int lh = nav_line_height();
     int item_h = fh + 6;
     int box_w = 0;
     for (int i = 0; i < wl_count; i++) {
@@ -980,9 +857,9 @@ static void do_render(void) {
     box_w += 18;
     if (box_w < 140) box_w = 140;
     int box_h = wl_count * item_h;   /* exact fit — items tile edge to edge */
-    int bx = g_cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
+    int bx = g_vs.cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
                         - r_get_text_width("[[", 2);
-    if (bx < page_margin()) bx = page_margin();
+    if (bx < nav_page_margin()) bx = nav_page_margin();
     int by = cursor_py + lh;
     /* border + background */
     r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
@@ -997,16 +874,16 @@ static void do_render(void) {
   }
 
   /* emacs-style status bar (monospace) */
-  r_set_font_size(font_size);
+  r_set_font_size(g_vs.font_size);
   r_set_font_style(FONT_MONO);
   int bar_h = r_get_text_height() + 16;
-  int bar_y = win_h() - bar_h;
-  r_set_clip_rect(rect(0, 0, win_w(), win_h()));
+  int bar_y = nav_win_h() - bar_h;
+  r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));
 
   /* background */
-  r_draw_rect(rect(0, bar_y, win_w(), bar_h), color(40, 40, 42, 255));
+  r_draw_rect(rect(0, bar_y, nav_win_w(), bar_h), color(40, 40, 42, 255));
   /* top border */
-  r_draw_rect(rect(0, bar_y, win_w(), 1), color(55, 55, 57, 255));
+  r_draw_rect(rect(0, bar_y, nav_win_w(), 1), color(55, 55, 57, 255));
 
   /* C-x b candidate list, stacked above the status bar (Tab cycles selection) */
   if (bufsw_active && bufsw_listing && bufsw_count > 0) {
@@ -1021,8 +898,8 @@ static void do_render(void) {
     box_w += 20; if (box_w < 220) box_w = 220;
     int box_h = bufsw_count * item_h;
     /* align the list under where the input starts (after the prompt) */
-    int bx = 10 + r_get_text_width(minibuf_prompt, strlen(minibuf_prompt));
-    if (bx + box_w > win_w() - 10) bx = win_w() - box_w - 10;
+    int bx = 10 + r_get_text_width(g_vs.minibuf_prompt, strlen(g_vs.minibuf_prompt));
+    if (bx + box_w > nav_win_w() - 10) bx = nav_win_w() - box_w - 10;
     if (bx < 10) bx = 10;
     int by = bar_y - box_h;
     r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
@@ -1037,28 +914,28 @@ static void do_render(void) {
   }
 
   /* left: minibuffer input, isearch, or status message */
-  if (minibuf_active) {
-    r_draw_text(minibuf_prompt, vec2(10, bar_y + 5), color(170, 170, 170, 255));
-    int lw = r_get_text_width(minibuf_prompt, strlen(minibuf_prompt));
-    r_draw_text(minibuf_text, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
-    int cx = 10 + lw + r_get_text_width(minibuf_text, minibuf_len);
+  if (g_vs.minibuf_active) {
+    r_draw_text(g_vs.minibuf_prompt, vec2(10, bar_y + 5), color(170, 170, 170, 255));
+    int lw = r_get_text_width(g_vs.minibuf_prompt, strlen(g_vs.minibuf_prompt));
+    r_draw_text(g_vs.minibuf_text, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
+    int cx = 10 + lw + r_get_text_width(g_vs.minibuf_text, g_vs.minibuf_len);
     int fh = r_get_text_height();
     /* ghost completion of an existing filename (Tab to accept) */
-    if (minibuf_suggest[0] && (int)strlen(minibuf_suggest) > minibuf_len) {
-      const char *ghost = minibuf_suggest + minibuf_len;
+    if (minibuf_suggest[0] && (int)strlen(minibuf_suggest) > g_vs.minibuf_len) {
+      const char *ghost = minibuf_suggest + g_vs.minibuf_len;
       r_draw_text(ghost, vec2(cx, bar_y + 5), color(110, 110, 112, 255));
     }
     r_draw_rect(rect(cx, bar_y + 4, 2, fh), color(90, 200, 250, 255));
-  } else if (search_active) {
-    const char *label = (search_direction == 1) ? "I-search: " : "I-search backward: ";
+  } else if (g_vs.search_active) {
+    const char *label = (g_vs.search_direction == 1) ? "I-search: " : "I-search backward: ";
     r_draw_text(label, vec2(10, bar_y + 5), color(170, 170, 170, 255));
     int lw = r_get_text_width(label, strlen(label));
-    r_draw_text(search_buf, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
-    int cx = 10 + lw + r_get_text_width(search_buf, search_len);
+    r_draw_text(g_vs.search_buf, vec2(10 + lw, bar_y + 5), color(204, 200, 195, 255));
+    int cx = 10 + lw + r_get_text_width(g_vs.search_buf, g_vs.search_len);
     int fh = r_get_text_height();
     r_draw_rect(rect(cx, bar_y + 4, 2, fh), color(90, 200, 250, 255));
   } else {
-    const char *status = status_get();
+    const char *status = nav_status_get(&g_ed, &g_vs);
     if (status[0]) {
       r_draw_text(status, vec2(10, bar_y + 5), color(170, 170, 170, 255));
     }
@@ -1066,10 +943,10 @@ static void do_render(void) {
 
   /* right: line, col, font size */
   char info[64];
-  snprintf(info, sizeof(info), "(%d,%d)  %.0fpt", cursor_line + 1, cursor_col + 1, font_size);
+  snprintf(info, sizeof(info), "(%d,%d)  %.0fpt", g_ed.cursor_line + 1, g_ed.cursor_col + 1, g_vs.font_size);
   int info_w = r_get_text_width(info, strlen(info));
-  r_draw_text(info, vec2(win_w() - info_w - 10, bar_y + 5), color(120, 120, 120, 255));
-  r_set_font_size(font_size);
+  r_draw_text(info, vec2(nav_win_w() - info_w - 10, bar_y + 5), color(120, 120, 120, 255));
+  r_set_font_size(g_vs.font_size);
 
   r_present();
 }
@@ -1102,44 +979,44 @@ static void load_daily_note(void) {
 
   char fname[32];
   strftime(fname, sizeof(fname), "%Y-%m-%d.md", &lt);
-  buf_resolve_path(fname, g_filepath, sizeof(g_filepath));
-  const char *slash = strrchr(g_filepath, '/');
-  g_filename = slash ? slash + 1 : g_filepath;
+  buf_resolve_path(fname, g_ed.filepath, sizeof(g_ed.filepath));
+  const char *slash = strrchr(g_ed.filepath, '/');
+  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
 
-  if (buf_load_file(&g_ed, g_filepath) != 0) {
+  if (buf_load_file(&g_ed, g_ed.filepath) != 0) {
     /* new note: seed a date heading + blank line, then create it on disk */
     buf_init_empty(&g_ed);
     char heading[64];
     strftime(heading, sizeof(heading), "# %A, %B %d, %Y", &lt);
     buf_insert_line_at(&g_ed, 0, heading, (int)strlen(heading));
-    cursor_line = 1; cursor_col = 0; cursor_target_col = 0;
-    buf_save(&g_ed, g_filepath);
+    g_ed.cursor_line = 1; g_ed.cursor_col = 0; g_ed.cursor_target_col = 0;
+    buf_save(&g_ed, g_ed.filepath);
   }
 }
 
 int editor_main(int argc, char **argv) {
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
-    snprintf(g_filepath, sizeof(g_filepath), "%s", argv[1]);
-    g_filename = argv[1];
+    snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
+    g_ed.filename = argv[1];
     const char *slash = strrchr(argv[1], '/');
-    if (slash) g_filename = slash + 1;
-    printf("loaded %d lines\n", line_count);
+    if (slash) g_ed.filename = slash + 1;
+    printf("loaded %d lines\n", g_ed.line_count);
   } else {
     /* no file given: open today's daily note instead of an empty scratch buffer */
     load_daily_note();
   }
-  recent_push(g_filepath);   /* seed the MRU with the initially-opened file */
+  recent_push(g_ed.filepath);   /* seed the MRU with the initially-opened file */
 
   SDL_Init(SDL_INIT_EVERYTHING);
-  font_size = 26.0f;
-  search_direction = 1;
-  search_match_line = -1;
-  search_match_col = -1;
-  g_cursor_x = -1;
-  if (!g_filename) g_filename = "*scratch*";
+  g_vs.font_size = 26.0f;
+  g_vs.search_direction = 1;
+  g_vs.search_match_line = -1;
+  g_vs.search_match_col = -1;
+  g_vs.cursor_x = -1;
+  if (!g_ed.filename) g_ed.filename = "*scratch*";
   r_init();
-  r_set_font_size(font_size);
-  r_set_title(g_filename);
+  r_set_font_size(g_vs.font_size);
+  r_set_title(g_ed.filename);
   macos_style_window(r_get_window());
 
   SDL_AddEventWatch(resize_event_watcher, NULL);
@@ -1163,33 +1040,33 @@ int editor_main(int argc, char **argv) {
           }
           break;
         case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
-        case SDL_MOUSEWHEEL: scroll_y -= e.wheel.y * line_height() * 3; break;
+        case SDL_MOUSEWHEEL: g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3; break;
 
         case SDL_TEXTINPUT:
-          if (suppress_next_text) { suppress_next_text = 0; break; }
+          if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
           if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
-          if (minibuf_active) {
+          if (g_vs.minibuf_active) {
             int tlen = strlen(e.text.text);
-            if (minibuf_len + tlen < (int)sizeof(minibuf_text) - 1) {
-              memcpy(minibuf_text + minibuf_len, e.text.text, tlen);
-              minibuf_len += tlen;
-              minibuf_text[minibuf_len] = '\0';
+            if (g_vs.minibuf_len + tlen < (int)sizeof(g_vs.minibuf_text) - 1) {
+              memcpy(g_vs.minibuf_text + g_vs.minibuf_len, e.text.text, tlen);
+              g_vs.minibuf_len += tlen;
+              g_vs.minibuf_text[g_vs.minibuf_len] = '\0';
             }
             minibuf_refresh_completion();
             if (bufsw_active) bufsw_filter();
-          } else if (search_active) {
+          } else if (g_vs.search_active) {
             int tlen = strlen(e.text.text);
-            if (search_len + tlen < (int)sizeof(search_buf) - 1) {
-              memcpy(search_buf + search_len, e.text.text, tlen);
-              search_len += tlen;
-              search_buf[search_len] = '\0';
-              search_find_current_dir();
+            if (g_vs.search_len + tlen < (int)sizeof(g_vs.search_buf) - 1) {
+              memcpy(g_vs.search_buf + g_vs.search_len, e.text.text, tlen);
+              g_vs.search_len += tlen;
+              g_vs.search_buf[g_vs.search_len] = '\0';
+              nav_search_find_current_dir(&g_ed, &g_vs);
             }
           } else {
             /* a literal Tab is indentation (handled on keydown), never inserted */
             if (e.text.text[0] == '\t' && e.text.text[1] == '\0') break;
-            editor_insert_char(e.text.text);
-            ensure_cursor_visible();
+            ed_insert_char(&g_ed, e.text.text);
+            nav_ensure_cursor_visible(&g_ed, &g_vs);
           }
           break;
 
@@ -1199,8 +1076,8 @@ int editor_main(int argc, char **argv) {
           if (b && e.type == SDL_MOUSEBUTTONDOWN) {
             g_mouse_x = e.button.x; g_mouse_y = e.button.y;
             g_mouse_down |= b; g_mouse_pressed |= b;
-            if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < win_w() - 12) {
-              click_to_cursor(e.button.x, e.button.y);
+            if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < nav_win_w() - 12) {
+              nav_click_to_cursor(&g_ed, &g_vs, e.button.x, e.button.y);
             }
           }
           if (b && e.type == SDL_MOUSEBUTTONUP) { g_mouse_down &= ~b; }
@@ -1222,10 +1099,10 @@ int editor_main(int argc, char **argv) {
             int sym = e.key.keysym.sym;
 
             /* 1. Modal handlers (consume and break) */
-            if (minibuf_active && handle_minibuf_key(sym, ctrl)) break;
-            if (search_active && handle_search_key(sym, ctrl)) break;
-            if (ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
-            if (esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
+            if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
+            if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
+            if (g_vs.ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
+            if (g_vs.esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
 
             /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
                Esc dismiss) — only intercepts when the dropdown is showing */
@@ -1252,65 +1129,59 @@ int editor_main(int argc, char **argv) {
 
             /* 1d. Tab / Shift-Tab indent or outdent the current list item.
                The matching '\t' text event is dropped in SDL_TEXTINPUT. */
-            if (sym == SDLK_TAB && md_is_list_item(&lines[cursor_line])) {
+            if (sym == SDLK_TAB && md_is_list_item(&g_ed.lines[g_ed.cursor_line])) {
               if (e.key.keysym.mod & KMOD_SHIFT) ed_dedent_line(&g_ed);
               else                               ed_indent_line(&g_ed);
-              ensure_cursor_visible();
+              nav_ensure_cursor_visible(&g_ed, &g_vs);
               break;
             }
 
             /* 2. Prefix starters */
-            if (ctrl && sym == SDLK_x) { ctrl_x_prefix = 1; break; }
-            if (sym == SDLK_ESCAPE && !search_active) {
-              if (mark_active) { mark_clear(); status_set("Quit"); }
-              else { esc_prefix = 1; SDL_StopTextInput(); }
+            if (ctrl && sym == SDLK_x) { g_vs.ctrl_x_prefix = 1; break; }
+            if (sym == SDLK_ESCAPE && !g_vs.search_active) {
+              if (g_ed.mark_active) { buf_mark_clear(&g_ed); nav_status_set(&g_vs, "Quit"); }
+              else { g_vs.esc_prefix = 1; SDL_StopTextInput(); }
               break;
             }
 
             /* 3. C-s / C-r isearch start/continue */
             if (ctrl && sym == SDLK_s) {
-              search_direction = 1;
-              if (!search_active) {
-                search_active = 1;
-                search_buf[0] = '\0';
-                search_len = 0;
-                search_match_line = -1;
+              g_vs.search_direction = 1;
+              if (!g_vs.search_active) {
+                g_vs.search_active = 1;
+                g_vs.search_buf[0] = '\0';
+                g_vs.search_len = 0;
+                g_vs.search_match_line = -1;
               } else {
-                search_find_next(search_match_line >= 0 ? search_match_line : cursor_line,
-                                 search_match_col >= 0 ? search_match_col : cursor_col - 1);
+                nav_search_find_next(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
+                                 g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col - 1);
               }
               break;
             }
             if (ctrl && sym == SDLK_r) {
-              search_direction = -1;
-              if (!search_active) {
-                search_active = 1;
-                search_buf[0] = '\0';
-                search_len = 0;
-                search_match_line = -1;
+              g_vs.search_direction = -1;
+              if (!g_vs.search_active) {
+                g_vs.search_active = 1;
+                g_vs.search_buf[0] = '\0';
+                g_vs.search_len = 0;
+                g_vs.search_match_line = -1;
               } else {
-                search_find_prev(search_match_line >= 0 ? search_match_line : cursor_line,
-                                 search_match_col >= 0 ? search_match_col : cursor_col + 1);
+                nav_search_find_prev(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
+                                 g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col + 1);
               }
               break;
             }
 
             /* any non-C-k key clears last_kill_was_k */
-            if (!(ctrl && sym == SDLK_k)) last_kill_was_k = 0;
+            if (!(ctrl && sym == SDLK_k)) g_ed.last_kill_was_k = 0;
 
-            /* 4. De-globalized command table (commands.c), then the legacy
-               table for commands not yet migrated. */
+            /* 4. De-globalized command table (commands.c). */
             if (kern_dispatch_key(&g_ed, &g_vs, e.key.keysym.mod, sym)) break;
-            {
-              int matched = 0;
-              for (int i = 0; normal_bindings[i].action; i++) {
-                if (check_binding(&normal_bindings[i], e.key.keysym.mod, sym)) {
-                  normal_bindings[i].action();
-                  matched = 1;
-                  break;
-                }
-              }
-              if (matched) break;
+
+            /* 4b. M-g goto-line — lives here (not the commands.c table) because
+               it drives the textview-local minibuffer. */
+            if ((e.key.keysym.mod & KMOD_ALT) && sym == SDLK_g) {
+              cmd_goto_line(); break;
             }
 
             /* 5. {Alt,Cmd}+Shift+. / +, → end/beginning of buffer
@@ -1324,57 +1195,36 @@ int editor_main(int argc, char **argv) {
                 /* Option+key can emit a stray text glyph that races past the
                    modifier guard, so swallow it; Cmd+key emits no text, and
                    suppressing would eat the user's next real keystroke. */
-                if (alt) suppress_next_text = 1;
+                if (alt) g_vs.suppress_next_text = 1;
                 break;
               }
               if ((alt || cmd) && shift && sym == SDLK_COMMA) {
                 cmd_beginning_of_buffer_alt(&g_ed, &g_vs);
-                if (alt) suppress_next_text = 1;
+                if (alt) g_vs.suppress_next_text = 1;
                 break;
               }
             }
 
-            /* 6. Arrow keys (need shift detection for selection) */
-            if (sym == SDLK_LEFT) {
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+            /* 6. Arrow keys — delegate the actual movement to the commands.c
+               functions; here we only add shift-to-select and ctrl/alt
+               word-jump on top. */
+            if (sym == SDLK_LEFT || sym == SDLK_RIGHT ||
+                sym == SDLK_UP || sym == SDLK_DOWN) {
               int alt = !!(e.key.keysym.mod & KMOD_ALT);
-              if (shift && !mark_active) mark_set();
-              if (ctrl || alt) {
-                emacs_backward_word();
-              } else {
-                if (cursor_col > 0) cursor_col--;
-                else if (cursor_line > 0) { cursor_line--; cursor_col = lines[cursor_line].len; }
-                cursor_target_col = cursor_col;
+              if ((e.key.keysym.mod & KMOD_SHIFT) && !g_ed.mark_active)
+                buf_mark_set(&g_ed);
+              switch (sym) {
+                case SDLK_LEFT:
+                  if (ctrl || alt) cmd_backward_word(&g_ed, &g_vs);
+                  else             cmd_backward_char(&g_ed, &g_vs);
+                  break;
+                case SDLK_RIGHT:
+                  if (ctrl || alt) cmd_forward_word(&g_ed, &g_vs);
+                  else             cmd_forward_char(&g_ed, &g_vs);
+                  break;
+                case SDLK_UP:   cmd_previous_line(&g_ed, &g_vs); break;
+                case SDLK_DOWN: cmd_next_line(&g_ed, &g_vs);     break;
               }
-              ensure_cursor_visible();
-              break;
-            }
-            if (sym == SDLK_RIGHT) {
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              int alt = !!(e.key.keysym.mod & KMOD_ALT);
-              if (shift && !mark_active) mark_set();
-              if (ctrl || alt) {
-                emacs_forward_word();
-              } else {
-                if (cursor_col < lines[cursor_line].len) cursor_col++;
-                else if (cursor_line < line_count - 1) { cursor_line++; cursor_col = 0; }
-                cursor_target_col = cursor_col;
-              }
-              ensure_cursor_visible();
-              break;
-            }
-            if (sym == SDLK_UP) {
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if (shift && !mark_active) mark_set();
-              if (cursor_line > 0) { cursor_line--; cursor_col = cursor_target_col; cursor_clamp(); }
-              ensure_cursor_visible();
-              break;
-            }
-            if (sym == SDLK_DOWN) {
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if (shift && !mark_active) mark_set();
-              if (cursor_line < line_count - 1) { cursor_line++; cursor_col = cursor_target_col; cursor_clamp(); }
-              ensure_cursor_visible();
               break;
             }
           }
@@ -1393,8 +1243,8 @@ int editor_main(int argc, char **argv) {
       if (last_autosave == 0) last_autosave = now;
       if (now - last_autosave >= AUTOSAVE_INTERVAL_MS) {
         last_autosave = now;
-        if (g_ed.dirty && g_filepath[0] && buf_save(&g_ed, g_filepath) == 0) {
-          status_set("Auto-saved");
+        if (g_ed.dirty && g_ed.filepath[0] && buf_save(&g_ed, g_ed.filepath) == 0) {
+          nav_status_set(&g_vs, "Auto-saved");
         }
       }
     }

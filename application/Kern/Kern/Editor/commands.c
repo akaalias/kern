@@ -24,7 +24,7 @@ static void cmd_end_of_line(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_forward_char(EditorState *ed, ViewState *vs) {
+void cmd_forward_char(EditorState *ed, ViewState *vs) {
   if (ed->cursor_col < ed->lines[ed->cursor_line].len) {
     ed->cursor_col++;
   } else if (ed->cursor_line < ed->line_count - 1) {
@@ -35,7 +35,7 @@ static void cmd_forward_char(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_backward_char(EditorState *ed, ViewState *vs) {
+void cmd_backward_char(EditorState *ed, ViewState *vs) {
   if (ed->cursor_col > 0) {
     ed->cursor_col--;
   } else if (ed->cursor_line > 0) {
@@ -46,7 +46,7 @@ static void cmd_backward_char(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_next_line(EditorState *ed, ViewState *vs) {
+void cmd_next_line(EditorState *ed, ViewState *vs) {
   if (ed->cursor_line < ed->line_count - 1) {
     ed->cursor_line++;
     ed->cursor_col = ed->cursor_target_col;
@@ -55,7 +55,7 @@ static void cmd_next_line(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_previous_line(EditorState *ed, ViewState *vs) {
+void cmd_previous_line(EditorState *ed, ViewState *vs) {
   if (ed->cursor_line > 0) {
     ed->cursor_line--;
     ed->cursor_col = ed->cursor_target_col;
@@ -64,12 +64,12 @@ static void cmd_previous_line(EditorState *ed, ViewState *vs) {
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_forward_word(EditorState *ed, ViewState *vs) {
+void cmd_forward_word(EditorState *ed, ViewState *vs) {
   ed_emacs_forward_word(ed);
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_backward_word(EditorState *ed, ViewState *vs) {
+void cmd_backward_word(EditorState *ed, ViewState *vs) {
   ed_emacs_backward_word(ed);
   nav_ensure_cursor_visible(ed, vs);
 }

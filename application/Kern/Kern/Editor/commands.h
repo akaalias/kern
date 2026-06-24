@@ -18,6 +18,15 @@ typedef struct {
 /* Run the command bound to (kmod,sym); returns 1 if one matched, else 0. */
 int kern_dispatch_key(EditorState *ed, ViewState *vs, int kmod, int sym);
 
+/* Cursor movement, also invoked directly by textview.c's arrow-key handler
+   (which layers shift-to-select and ctrl/alt word-jump on top). */
+void cmd_forward_char(EditorState *ed, ViewState *vs);
+void cmd_backward_char(EditorState *ed, ViewState *vs);
+void cmd_next_line(EditorState *ed, ViewState *vs);
+void cmd_previous_line(EditorState *ed, ViewState *vs);
+void cmd_forward_word(EditorState *ed, ViewState *vs);
+void cmd_backward_word(EditorState *ed, ViewState *vs);
+
 /* Commands also invoked directly by textview.c's prefix / special handlers. */
 void cmd_copy_region(EditorState *ed, ViewState *vs);          /* ESC w */
 void cmd_kill_word_fwd(EditorState *ed, ViewState *vs);        /* ESC d */
