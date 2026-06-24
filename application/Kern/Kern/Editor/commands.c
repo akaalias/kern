@@ -8,6 +8,7 @@
 #include "buffer.h"
 #include "undo.h"
 #include "clipboard.h"
+#include "renderer.h"
 
 /* ---- cursor movement ---- */
 
@@ -200,6 +201,96 @@ void cmd_capitalize_word(EditorState *ed, ViewState *vs) {      /* M-c */
   nav_ensure_cursor_visible(ed, vs);
 }
 
+/* ---- buffer ends / mark (also invoked by textview's prefix handlers) ---- */
+
+void cmd_end_of_buffer_alt(EditorState *ed, ViewState *vs) {
+  ed->cursor_line = ed->line_count - 1;
+  ed->cursor_col = ed->lines[ed->cursor_line].len;
+  ed->cursor_target_col = ed->cursor_col;
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_beginning_of_buffer_alt(EditorState *ed, ViewState *vs) {
+  ed->cursor_line = 0;
+  ed->cursor_col = 0;
+  ed->cursor_target_col = 0;
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_mark_whole_buffer(EditorState *ed, ViewState *vs) {    /* C-x h */
+  ed->cursor_line = ed->line_count - 1;
+  ed->cursor_col = ed->lines[ed->cursor_line].len;
+  buf_mark_set(ed);
+  ed->cursor_line = 0;
+  ed->cursor_col = 0;
+  ed->cursor_target_col = 0;
+  nav_ensure_cursor_visible(ed, vs);
+  nav_status_set(vs, "Mark set");
+}
+
+void cmd_exchange_point_mark(EditorState *ed, ViewState *vs) {  /* C-x C-x */
+  if (!ed->mark_active) return;
+  int tl = ed->cursor_line, tc = ed->cursor_col;
+  ed->cursor_line = ed->mark_line;
+  ed->cursor_col = ed->mark_col;
+  ed->mark_line = tl;
+  ed->mark_col = tc;
+  ed->cursor_target_col = ed->cursor_col;
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+/* ---- scrolling / font ---- */
+
+static void cmd_page_down(EditorState *ed, ViewState *vs) {     /* C-v */
+  int lh = nav_line_height();
+  int rows = vs->content_h / lh - 1; if (rows < 1) rows = 1;
+  int vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
+  int total = nav_total_visual_lines(ed);
+  int target = vis + rows;
+  if (target > total - 1) target = total - 1;
+  if (target < 0) target = 0;
+  int off; ed->cursor_line = nav_visual_to_logical(ed, target, &off);
+  ed->cursor_col = ed->cursor_target_col;
+  nav_cursor_clamp(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+void cmd_page_up(EditorState *ed, ViewState *vs) {             /* M-v */
+  int lh = nav_line_height();
+  int rows = vs->content_h / lh - 1; if (rows < 1) rows = 1;
+  int vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
+  int target = vis - rows; if (target < 0) target = 0;
+  int off; ed->cursor_line = nav_visual_to_logical(ed, target, &off);
+  ed->cursor_col = ed->cursor_target_col;
+  nav_cursor_clamp(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static int g_recenter_state = 0;
+static void cmd_recenter(EditorState *ed, ViewState *vs) {     /* C-l: center→top→bottom */
+  int lh = nav_line_height();
+  int top = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col) * lh;
+  if (g_recenter_state == 0)      vs->scroll_y = top - (vs->content_h - lh) / 2;
+  else if (g_recenter_state == 1) vs->scroll_y = top;
+  else                            vs->scroll_y = top - (vs->content_h - lh);
+  if (vs->scroll_y < 0) vs->scroll_y = 0;
+  g_recenter_state = (g_recenter_state + 1) % 3;
+}
+
+static void cmd_font_increase(EditorState *ed, ViewState *vs) {
+  vs->font_size += 2.0f; if (vs->font_size > 72.0f) vs->font_size = 72.0f;
+  r_set_font_size(vs->font_size);
+  buf_invalidate_all_wraps(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
+static void cmd_font_decrease(EditorState *ed, ViewState *vs) {
+  vs->font_size -= 2.0f; if (vs->font_size < 8.0f) vs->font_size = 8.0f;
+  r_set_font_size(vs->font_size);
+  buf_invalidate_all_wraps(ed);
+  nav_ensure_cursor_visible(ed, vs);
+}
+
 /* ---- dispatch ---- */
 
 static const Command g_commands[] = {
@@ -229,6 +320,11 @@ static const Command g_commands[] = {
   { KMOD_ALT,  SDLK_u,         cmd_upcase_word },
   { KMOD_ALT,  SDLK_l,         cmd_downcase_word },
   { KMOD_ALT,  SDLK_c,         cmd_capitalize_word },
+  { KMOD_CTRL, SDLK_v,         cmd_page_down },
+  { KMOD_CTRL, SDLK_l,         cmd_recenter },
+  { KMOD_ALT,  SDLK_v,         cmd_page_up },
+  { KMOD_GUI,  SDLK_EQUALS,    cmd_font_increase },
+  { KMOD_GUI,  SDLK_MINUS,     cmd_font_decrease },
   { 0, 0, NULL },  /* sentinel */
 };
 

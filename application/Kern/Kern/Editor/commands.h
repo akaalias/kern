@@ -18,11 +18,16 @@ typedef struct {
 /* Run the command bound to (kmod,sym); returns 1 if one matched, else 0. */
 int kern_dispatch_key(EditorState *ed, ViewState *vs, int kmod, int sym);
 
-/* Commands also invoked directly by textview.c's ESC/meta prefix handler. */
-void cmd_copy_region(EditorState *ed, ViewState *vs);
-void cmd_kill_word_fwd(EditorState *ed, ViewState *vs);
-void cmd_upcase_word(EditorState *ed, ViewState *vs);
-void cmd_downcase_word(EditorState *ed, ViewState *vs);
-void cmd_capitalize_word(EditorState *ed, ViewState *vs);
+/* Commands also invoked directly by textview.c's prefix / special handlers. */
+void cmd_copy_region(EditorState *ed, ViewState *vs);          /* ESC w */
+void cmd_kill_word_fwd(EditorState *ed, ViewState *vs);        /* ESC d */
+void cmd_upcase_word(EditorState *ed, ViewState *vs);          /* ESC u */
+void cmd_downcase_word(EditorState *ed, ViewState *vs);        /* ESC l */
+void cmd_capitalize_word(EditorState *ed, ViewState *vs);      /* ESC c */
+void cmd_page_up(EditorState *ed, ViewState *vs);              /* ESC v */
+void cmd_end_of_buffer_alt(EditorState *ed, ViewState *vs);    /* M-S-. / Cmd-S-. */
+void cmd_beginning_of_buffer_alt(EditorState *ed, ViewState *vs); /* M-S-, / Cmd-S-, */
+void cmd_mark_whole_buffer(EditorState *ed, ViewState *vs);    /* C-x h */
+void cmd_exchange_point_mark(EditorState *ed, ViewState *vs);  /* C-x C-x */
 
 #endif /* COMMANDS_H */

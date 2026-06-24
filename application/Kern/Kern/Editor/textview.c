@@ -472,62 +472,9 @@ typedef struct {
    kern_dispatch_key): C-a C-e C-f C-b C-n C-p, M-f M-b. */
 /* kill/yank/copy + case commands migrated to commands.c (dispatched via
    kern_dispatch_key; the meta-prefix handler calls the exposed ones). */
-static void cmd_end_of_buffer_alt(void) {
-  cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
-  cursor_target_col = cursor_col; ensure_cursor_visible();
-}
-static void cmd_beginning_of_buffer_alt(void) {
-  cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
-  ensure_cursor_visible();
-}
-static void cmd_font_increase(void) {
-  font_size += 2.0f; if (font_size > 72.0f) font_size = 72.0f;
-  r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
-}
-static void cmd_font_decrease(void) {
-  font_size -= 2.0f; if (font_size < 8.0f) font_size = 8.0f;
-  r_set_font_size(font_size); invalidate_all_wraps(); ensure_cursor_visible();
-}
-static void cmd_page_down(void) {       /* C-v */
-  int lh = line_height();
-  int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
-  int vis = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col);
-  int total = nav_total_visual_lines(&g_ed);
-  int target = vis + rows; if (target > total - 1) target = total - 1; if (target < 0) target = 0;
-  int off; cursor_line = nav_visual_to_logical(&g_ed, target, &off);
-  cursor_col = cursor_target_col; cursor_clamp(); ensure_cursor_visible();
-}
-static void cmd_page_up(void) {         /* M-v */
-  int lh = line_height();
-  int rows = g_content_h / lh - 1; if (rows < 1) rows = 1;
-  int vis = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col);
-  int target = vis - rows; if (target < 0) target = 0;
-  int off; cursor_line = nav_visual_to_logical(&g_ed, target, &off);
-  cursor_col = cursor_target_col; cursor_clamp(); ensure_cursor_visible();
-}
-static int g_recenter_state = 0;
-static void cmd_recenter(void) {        /* C-l: center -> top -> bottom */
-  int lh = line_height();
-  int top = nav_cursor_to_visual(&g_ed, cursor_line, cursor_col) * lh;
-  if (g_recenter_state == 0)      scroll_y = top - (g_content_h - lh) / 2;
-  else if (g_recenter_state == 1) scroll_y = top;
-  else                            scroll_y = top - (g_content_h - lh);
-  if (scroll_y < 0) scroll_y = 0;
-  g_recenter_state = (g_recenter_state + 1) % 3;
-}
-static void cmd_mark_whole_buffer(void) {  /* C-x h */
-  cursor_line = line_count - 1; cursor_col = lines[cursor_line].len;
-  mark_set();
-  cursor_line = 0; cursor_col = 0; cursor_target_col = 0;
-  ensure_cursor_visible(); status_set("Mark set");
-}
-static void cmd_exchange_point_mark(void) {  /* C-x C-x */
-  if (!mark_active) return;
-  int tl = cursor_line, tc = cursor_col;
-  cursor_line = mark_line; cursor_col = mark_col;
-  mark_line = tl; mark_col = tc;
-  cursor_target_col = cursor_col; ensure_cursor_visible();
-}
+/* scrolling/font, buffer-ends and mark commands migrated to commands.c
+   (dispatched via kern_dispatch_key; section-5 and the prefix handlers call
+   the exposed ones). */
 static void goto_line_cb(const char *text) {
   int n = atoi(text);
   if (n < 1) n = 1;
@@ -546,12 +493,7 @@ static void cmd_goto_line(void) {       /* M-g */
    plus shift — handled specially via check_binding which checks extra shift for those entries */
 
 static const KeyBinding normal_bindings[] = {
-  { KMOD_CTRL, SDLK_v,      cmd_page_down },
-  { KMOD_CTRL, SDLK_l,      cmd_recenter },
-  { KMOD_ALT,  SDLK_v,      cmd_page_up },
   { KMOD_ALT,  SDLK_g,      cmd_goto_line },
-  { KMOD_GUI,  SDLK_EQUALS, cmd_font_increase },
-  { KMOD_GUI,  SDLK_MINUS,  cmd_font_decrease },
   { 0, 0, NULL }  /* sentinel */
 };
 
@@ -751,7 +693,7 @@ static int handle_esc_prefix_key(int sym, int shift) {
     emacs_backward_word(); ensure_cursor_visible(); return 1;
   }
   if (sym == SDLK_w) { cmd_copy_region(&g_ed, &g_vs); return 1; }      /* M-w copy */
-  if (sym == SDLK_v) { cmd_page_up(); return 1; }          /* M-v page up */
+  if (sym == SDLK_v) { cmd_page_up(&g_ed, &g_vs); return 1; }  /* M-v page up */
   if (sym == SDLK_d) { cmd_kill_word_fwd(&g_ed, &g_vs); return 1; }    /* M-d kill word */
   if (sym == SDLK_u) { cmd_upcase_word(&g_ed, &g_vs); return 1; }      /* M-u upcase */
   if (sym == SDLK_l) { cmd_downcase_word(&g_ed, &g_vs); return 1; }    /* M-l downcase */
@@ -798,8 +740,8 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     minibuf_callback = save_to_path;
     return 1;
   }
-  if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(); return 1; }   /* C-x h */
-  if (ctrl && sym == SDLK_x)  { cmd_exchange_point_mark(); return 1; } /* C-x C-x */
+  if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(&g_ed, &g_vs); return 1; }   /* C-x h */
+  if (ctrl && sym == SDLK_x)  { cmd_exchange_point_mark(&g_ed, &g_vs); return 1; } /* C-x C-x */
   if (!ctrl && sym == SDLK_b) { cmd_switch_buffer(); return 1; }       /* C-x b */
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
@@ -1362,7 +1304,7 @@ int editor_main(int argc, char **argv) {
               int cmd = !!(e.key.keysym.mod & KMOD_GUI);
               int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
               if ((alt || cmd) && shift && sym == SDLK_PERIOD) {
-                cmd_end_of_buffer_alt();
+                cmd_end_of_buffer_alt(&g_ed, &g_vs);
                 /* Option+key can emit a stray text glyph that races past the
                    modifier guard, so swallow it; Cmd+key emits no text, and
                    suppressing would eat the user's next real keystroke. */
@@ -1370,7 +1312,7 @@ int editor_main(int argc, char **argv) {
                 break;
               }
               if ((alt || cmd) && shift && sym == SDLK_COMMA) {
-                cmd_beginning_of_buffer_alt();
+                cmd_beginning_of_buffer_alt(&g_ed, &g_vs);
                 if (alt) suppress_next_text = 1;
                 break;
               }

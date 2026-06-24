@@ -39,9 +39,11 @@ Approach: extract-then-test in small slices — pull self-contained pieces out o
   - [x] Batch 1: cursor movement (C-a/C-e/C-f/C-b/C-n/C-p, M-f/M-b) — 7 tests.
   - [x] Batch 2a: table-only editing (C-d, Backspace, Return, C-t, C-o, C-/, C-Space, C-g) — 7 tests.
   - [x] Batch 2b: kill/yank/copy/case (C-k, C-w, C-y, M-w, M-d, M-DEL, M-u/M-l/M-c) — added `tests/clipboard_fake.c`; exposed the 5 ESC/meta-shared commands in `commands.h` and updated those call sites. 7 tests (incl. copy→yank via clipboard). The `clipboard_set_from_kill` helper moved into `commands.c`.
-  - [ ] Batch 3: page/recenter/font (C-v, M-v, C-l, Cmd-=/Cmd--); buffer-ends + mark (C-x h, C-x C-x).
-  - [ ] `cmd_goto_line` — after minibuffer state moves into ViewState.
-- [ ] Extract `kern_input_text` (text insertion) + `kern_render_to(...)`; `editor_main` reduced to a thin bootstrap
+  - [x] Batch 3: page/recenter/font (C-v, M-v, C-l, Cmd-=/Cmd--) + buffer-ends (M-S-,/. and Cmd-S-,/.) + mark (C-x h, C-x C-x). 5 tests. **The legacy table is now just `M-g`.**
+  - [-] `cmd_goto_line` (M-g) — deliberately left in `textview.c`'s legacy table; it's entangled with the minibuffer callback statics. Deferred until the minibuffer is de-globalized (its own slice).
+- [ ] (Optional, readability) Extract `kern_handle_event` / `kern_input_text` from `editor_main`'s switch + slim it to a bootstrap. **Lower priority** — the testability goal is met; this is a netless code-move best done with event-loop characterization in place, so deferring.
+
+**Command de-globalization is effectively complete:** all dispatch-table commands now run on explicit `EditorState*`/`ViewState*` via `kern_dispatch_key` and are feature-tested in `unit_commands.c`. Only `M-g` (minibuffer-bound) remains global.
 
 **Phase D — Feature / UX headless tests** (unblocked once commands are de-globalized; grows per Phase C batch)
 - [~] Keybinding feature tests via `kern_dispatch_key` — started with the 8 movement commands (`unit_commands.c`). Extend as each command batch migrates.

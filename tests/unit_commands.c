@@ -236,6 +236,69 @@ static void test_meta_case_words(void) {
   ed_teardown(&ed3);
 }
 
+/* ---- scrolling / font / buffer-ends / mark (batch 3) ---- */
+
+static void mkbuf(EditorState *ed, int nlines) {
+  buf_init_empty(ed);
+  for (int i = 1; i < nlines; i++) buf_insert_line_at(ed, i, "line", 4);
+}
+
+static void test_buffer_ends(void) {
+  EditorState ed = {0}; mkbuf(&ed, 5);
+  ViewState vs = vs_make();
+  ed.cursor_line = 2; ed.cursor_col = 1;
+  /* buffer-ends are invoked from textview's section-5 shift handler, not the
+     dispatch table, so call the exposed commands directly. */
+  cmd_end_of_buffer_alt(&ed, &vs);
+  CHECK_IEQ(ed.cursor_line, 4);
+  cmd_beginning_of_buffer_alt(&ed, &vs);
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK_IEQ(ed.cursor_col, 0);
+  ed_teardown(&ed);
+}
+
+static void test_mark_whole_buffer(void) {
+  EditorState ed = {0}; mkbuf(&ed, 3);
+  ViewState vs = vs_make();
+  cmd_mark_whole_buffer(&ed, &vs);          /* C-x h */
+  CHECK_IEQ(ed.mark_active, 1);
+  CHECK_IEQ(ed.mark_line, 2);               /* mark at end */
+  CHECK_IEQ(ed.cursor_line, 0);             /* point at start */
+  ed_teardown(&ed);
+}
+
+static void test_exchange_point_and_mark(void) {
+  EditorState ed = {0}; mkbuf(&ed, 3);
+  ViewState vs = vs_make();
+  ed.cursor_line = 0; ed.cursor_col = 0;
+  buf_mark_set(&ed);                        /* mark (0,0) */
+  ed.cursor_line = 2; ed.cursor_col = 1;
+  cmd_exchange_point_mark(&ed, &vs);        /* C-x C-x */
+  CHECK_IEQ(ed.cursor_line, 0);             /* point ↔ mark */
+  CHECK_IEQ(ed.mark_line, 2);
+  ed_teardown(&ed);
+}
+
+static void test_page_down_moves_cursor(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 0; ed.cursor_col = 0;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_v);   /* C-v page down */
+  CHECK(ed.cursor_line > 0);                        /* advanced down a page */
+  ed_teardown(&ed);
+}
+
+static void test_font_size_changes(void) {
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = vs_make(); vs.font_size = 20.0f;
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_EQUALS);   /* Cmd-= */
+  CHECK(vs.font_size > 20.0f);
+  float bigger = vs.font_size;
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_MINUS);    /* Cmd-- */
+  CHECK(vs.font_size < bigger);
+  ed_teardown(&ed);
+}
+
 void suite_commands(void) {
   kern_clipboard_set("");   /* start from a known clipboard state */
   RUN(test_dispatch_unbound_returns_zero);
@@ -259,4 +322,9 @@ void suite_commands(void) {
   RUN(test_copy_then_yank_via_dispatch);
   RUN(test_meta_d_kill_word_forward);
   RUN(test_meta_case_words);
+  RUN(test_buffer_ends);
+  RUN(test_mark_whole_buffer);
+  RUN(test_exchange_point_and_mark);
+  RUN(test_page_down_moves_cursor);
+  RUN(test_font_size_changes);
 }
