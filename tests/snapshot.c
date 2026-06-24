@@ -177,9 +177,29 @@ static void snap_headings(void) {
   const char *doc[] = {
     "# Heading one",
     "## Heading two",
+    "### Heading three",
     "Body text under the headings.",
   };
-  check_snapshot("headings", doc, 3);
+  check_snapshot("headings", doc, 4);
+}
+
+static void snap_links(void) {
+  const char *doc[] = {
+    "See the [docs](https://example.com/page) for details.",
+    "Mixed: **bold**, a [link](u), and `code` together.",
+  };
+  check_snapshot("links", doc, 2);
+}
+
+/* Characterizes current behavior for unterminated/empty/“nested” delimiters —
+ * the parser does not nest spans, so these must stay stable across refactors. */
+static void snap_edges(void) {
+  const char *doc[] = {
+    "An unterminated **bold start, a lone _, and a stray ` here.",
+    "Empty spans ****, __, ==, and an asterisk * by itself.",
+    "No nesting: **bold with _underscore_ kept bold** then normal.",
+  };
+  check_snapshot("edges", doc, 3);
 }
 
 void suite_snapshot(void) {
@@ -188,4 +208,6 @@ void suite_snapshot(void) {
   RUN(snap_inline_wrap);
   RUN(snap_lists);
   RUN(snap_headings);
+  RUN(snap_links);
+  RUN(snap_edges);
 }
