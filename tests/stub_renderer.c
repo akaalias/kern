@@ -9,6 +9,8 @@ StubText stub_texts[STUB_MAX];
 int      stub_text_count;
 StubRect stub_rects[STUB_MAX];
 int      stub_rect_count;
+StubOp   stub_ops[STUB_MAX];
+int      stub_op_count;
 
 static int s_cell_w = 10, s_cell_h = 20, s_win_w = 800, s_win_h = 600;
 static int s_style = FONT_REGULAR;
@@ -16,6 +18,7 @@ static int s_style = FONT_REGULAR;
 void stub_reset(void) {
   stub_text_count = 0;
   stub_rect_count = 0;
+  stub_op_count = 0;
   s_style = FONT_REGULAR;
 }
 
@@ -35,16 +38,32 @@ void r_set_font_size(float size) { (void)size; }
 
 /* ---- draw capture ---- */
 void r_draw_text(const char *text, mu_Vec2 pos, mu_Color color) {
-  if (stub_text_count >= STUB_MAX) return;
-  StubText *t = &stub_texts[stub_text_count++];
-  snprintf(t->ch, sizeof t->ch, "%s", text ? text : "");
-  t->x = pos.x; t->y = pos.y; t->style = s_style; t->color = color;
+  const char *s = text ? text : "";
+  if (stub_text_count < STUB_MAX) {
+    StubText *t = &stub_texts[stub_text_count++];
+    snprintf(t->ch, sizeof t->ch, "%s", s);
+    t->x = pos.x; t->y = pos.y; t->style = s_style; t->color = color;
+  }
+  if (stub_op_count < STUB_MAX) {
+    StubOp *o = &stub_ops[stub_op_count++];
+    o->kind = STUB_OP_TEXT;
+    snprintf(o->ch, sizeof o->ch, "%s", s);
+    o->rect = mu_rect(pos.x, pos.y, 0, 0);
+    o->style = s_style; o->color = color;
+  }
 }
 
 void r_draw_rect(mu_Rect rect, mu_Color color) {
-  if (stub_rect_count >= STUB_MAX) return;
-  StubRect *r = &stub_rects[stub_rect_count++];
-  r->rect = rect; r->color = color;
+  if (stub_rect_count < STUB_MAX) {
+    StubRect *r = &stub_rects[stub_rect_count++];
+    r->rect = rect; r->color = color;
+  }
+  if (stub_op_count < STUB_MAX) {
+    StubOp *o = &stub_ops[stub_op_count++];
+    o->kind = STUB_OP_RECT;
+    o->ch[0] = '\0';
+    o->rect = rect; o->style = 0; o->color = color;
+  }
 }
 
 /* ---- unused by the headless layout paths: no-ops ---- */
