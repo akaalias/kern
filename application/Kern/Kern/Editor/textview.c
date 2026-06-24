@@ -16,6 +16,7 @@
 #include "md_render.h"
 #include "undo.h"
 #include "recent.h"
+#include "clipboard.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -493,23 +494,23 @@ static void clipboard_set_from_kill(void);  /* defined below */
 static void cmd_kill_line(void) {
   mark_clear(); emacs_kill_line(); clipboard_set_from_kill(); ensure_cursor_visible();
 }
-/* mirror the kill buffer to the macOS system clipboard */
+/* mirror the kill buffer to the system clipboard */
 static void clipboard_set_from_kill(void) {
   if (kill_buf && kill_len > 0) {
     char *tmp = malloc(kill_len + 1);
     if (tmp) {
       memcpy(tmp, kill_buf, kill_len);
       tmp[kill_len] = '\0';
-      SDL_SetClipboardText(tmp);
+      kern_clipboard_set(tmp);
       free(tmp);
     }
   }
 }
 static void cmd_yank(void) {
   /* prefer the system clipboard so you can paste in text from other apps */
-  char *cb = SDL_GetClipboardText();
+  char *cb = kern_clipboard_get();
   if (cb && cb[0]) buf_kill_set(&g_ed, cb, (int)strlen(cb));
-  if (cb) SDL_free(cb);
+  if (cb) kern_clipboard_free(cb);
   mark_clear(); emacs_yank(); status_set("Yanked"); ensure_cursor_visible();
 }
 static void cmd_copy_region(void) {  /* M-w: kill-ring-save */

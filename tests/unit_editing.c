@@ -136,6 +136,80 @@ static void test_indent_then_dedent_roundtrip(void) {
   ed_teardown(&ed);
 }
 
+/* ---- kill ring: copy / yank / kill-line ---- */
+
+static void test_kill_line_to_eol(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello world");
+  ed.cursor_col = 5;                 /* before the space */
+  ed_emacs_kill_line(&ed);
+  CHECK_SEQ(LINE(ed, 0), "hello");
+  CHECK_SEQ(ed.kill_buf, " world");
+  CHECK_IEQ(ed.kill_len, 6);
+  ed_teardown(&ed);
+}
+
+static void test_copy_region_single_line(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello world");
+  ed.cursor_col = 0;
+  buf_mark_set(&ed);                 /* mark at (0,0) */
+  ed.cursor_col = 5;
+  ed_emacs_copy_region(&ed);
+  CHECK_SEQ(ed.kill_buf, "hello");   /* region copied... */
+  CHECK_SEQ(LINE(ed, 0), "hello world");  /* ...buffer unchanged */
+  ed_teardown(&ed);
+}
+
+static void test_copy_region_multiline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  buf_insert_line_at(&ed, 1, "def", 3);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);                 /* mark at (0,1) */
+  ed.cursor_line = 1; ed.cursor_col = 2;
+  ed_emacs_copy_region(&ed);
+  CHECK_SEQ(ed.kill_buf, "bc\nde");  /* newline joins the rows */
+  CHECK_IEQ(ed.kill_len, 5);
+  ed_teardown(&ed);
+}
+
+static void test_yank_inserts_kill_buffer(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  buf_kill_set(&ed, "XY", 2);
+  ed_emacs_yank(&ed);
+  CHECK_SEQ(LINE(ed, 0), "XY");
+  CHECK_IEQ(ed.cursor_col, 2);
+  ed_teardown(&ed);
+}
+
+static void test_yank_multiline_splits(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  buf_kill_set(&ed, "a\nb", 3);
+  ed_emacs_yank(&ed);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "a");
+  CHECK_SEQ(LINE(ed, 1), "b");
+  CHECK_IEQ(ed.cursor_line, 1);
+  CHECK_IEQ(ed.cursor_col, 1);
+  ed_teardown(&ed);
+}
+
+static void test_copy_then_yank_roundtrip(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello world");
+  ed.cursor_col = 0;
+  buf_mark_set(&ed);
+  ed.cursor_col = 5;
+  ed_emacs_copy_region(&ed);         /* kill = "hello" */
+  ed.cursor_col = ed.lines[0].len;   /* to end of line */
+  ed_emacs_yank(&ed);
+  CHECK_SEQ(LINE(ed, 0), "hello worldhello");
+  ed_teardown(&ed);
+}
+
 void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
@@ -149,4 +223,10 @@ void suite_editing(void) {
   RUN(test_dedent_removes_indent);
   RUN(test_dedent_noop_at_margin);
   RUN(test_indent_then_dedent_roundtrip);
+  RUN(test_kill_line_to_eol);
+  RUN(test_copy_region_single_line);
+  RUN(test_copy_region_multiline);
+  RUN(test_yank_inserts_kill_buffer);
+  RUN(test_yank_multiline_splits);
+  RUN(test_copy_then_yank_roundtrip);
 }
