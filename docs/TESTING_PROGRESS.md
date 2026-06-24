@@ -31,10 +31,13 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - [ ] More integration breadth: cursor visibility, word motion, headings/list-indent layout
 
 **Phase C — Controller seam extraction (behavior-preserving)**
+Approach: extract-then-test in small slices — pull self-contained pieces out of `textview.c` into modules compiled into BOTH the app and the headless test binary, growing automated coverage over `textview.c` before the riskier dispatch/de-globalization surgery. (The snapshot/unit nets cover the render+core path, NOT `textview.c`, so each slice is verified by app-build + run + new unit tests.)
+- [x] Decompose slice 1: recent-files MRU → `Editor/recent.{c,h}` + `tests/unit_recent.c` (5 tests). App builds + runs; render snapshots unchanged.
+- [ ] Decompose further self-contained pieces (minibuffer completion glue, etc.)
+- [ ] Inject clipboard seam (`SDL_*ClipboardText`) + clock seam (autosave/status/`SDL_GetTicks`) so command dispatch can run headlessly
 - [ ] Extract `kern_handle_event` / `kern_dispatch_key` / `kern_input_text` from `editor_main`
-- [ ] Extract `kern_render_to(renderer, EditorState*, ViewState*)`
-- [ ] Inject clock seam (autosave/status/SDL_GetTicks) + clipboard seam
-- [ ] `editor_main` reduced to thin bootstrap; characterization snapshots identical
+- [ ] Extract `kern_render_to(...)`; `editor_main` reduced to a thin bootstrap
+- [ ] De-globalize (`#define` aliases → explicit `EditorState*`/`ViewState*`) to make the dispatch fully testable
 
 **Phase D — Feature / UX headless tests**
 - [ ] Table-driven keybinding tests mirroring `normal_bindings[]` + prefix chords + Cmd-Shift-,/.
@@ -64,5 +67,7 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - **2026-06-24** — Fixed Linux CI build (`-D_GNU_SOURCE` exposes POSIX `mkstemp` that glibc hides under `-std=c11`; macOS built fine without it).
 - **2026-06-24** — **Snapshot harness landed** (`tests/snapshot.c` + goldens in `tests/snapshots/`): rendered through the real wrap+md_draw_text path → deterministic serialized model diffed against committed goldens. Broadened to 7 scenarios covering every inline feature — plain, inline (bold/italic/code/wikilink/highlight), inline-wrap, lists, headings (#/##/###), **links (`[text](url)`)**, and **edges** (unterminated/empty/non-nesting delimiters). Suite now **45 tests / 116 checks, green, 0 leaks.** App code still untouched.
 
+- **2026-06-24** — **Phase C started (first app-code change).** Extracted the recent-files MRU out of `textview.c` into `Editor/recent.{c,h}` (with `recent_count()`/`recent_get()`/`recent_reset()` accessors), wired into both the app (auto via folder-sync) and the headless build. `tests/unit_recent.c` (5 tests). App **builds + launches cleanly**; render snapshots unchanged. Suite now **50 tests / 132 checks, green, 0 leaks.**
+
 ## Next action on resume
-Broaden integration: cursor visibility / `nav_ensure_cursor_visible`, word motion, and a couple more snapshot scenarios as desired. Optionally finish `unit_buffer.c` (`buf_resolve_path` + completion via a temp documents dir). Then **Phase C — controller seam** (first app-code change: extract `kern_handle_event` / `kern_render_to` from `textview.c`, behavior-preserving, guarded by these snapshots). Confirm GitHub Actions is green.
+Continue Phase C slices: next extract the clipboard seam (`SDL_SetClipboardText`/`GetClipboardText` in the copy/yank commands) behind a small interface so those commands become headlessly testable, then the clock seam. Manually confirm `C-x b` buffer-switching still works in the app (the user-facing feature using recent-files). Confirm GitHub Actions green.

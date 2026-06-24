@@ -15,6 +15,7 @@
 #include "editing.h"
 #include "md_render.h"
 #include "undo.h"
+#include "recent.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -136,27 +137,7 @@ static void minibuf_refresh_completion(void) {
 
 /* ---- file operations (glue — uses status_set and r_set_title) ---- */
 
-/* ---- recent files (MRU) for C-x b buffer switching ---- */
-#define RECENT_MAX 32
-static char recent_files[RECENT_MAX][1024];
-static int  recent_count;
-
-static const char *path_base(const char *p) {
-  const char *s = strrchr(p, '/');
-  return s ? s + 1 : p;
-}
-
-/* move `path` to the front of the recent list (dedup, capped) */
-static void recent_push(const char *path) {
-  if (!path || !path[0]) return;
-  int top = -1;
-  for (int i = 0; i < recent_count; i++)
-    if (strcmp(recent_files[i], path) == 0) { top = i; break; }
-  if (top < 0) top = (recent_count < RECENT_MAX) ? recent_count++ : RECENT_MAX - 1;
-  for (int i = top; i > 0; i--)
-    memcpy(recent_files[i], recent_files[i-1], sizeof(recent_files[0]));
-  snprintf(recent_files[0], sizeof(recent_files[0]), "%s", path);
-}
+/* recent-files MRU (for C-x b buffer switching) lives in recent.c */
 
 static void open_or_create_file(const char *path) {
   /* resolve the typed name to a path inside the sandbox documents dir */
@@ -716,10 +697,10 @@ static char bufsw_cands[RECENT_MAX][1024];
 static void bufsw_filter(void) {
   bufsw_count = 0;
   size_t tl = strlen(minibuf_text);
-  for (int i = 1; i < recent_count && bufsw_count < RECENT_MAX; i++) {
-    const char *base = path_base(recent_files[i]);
+  for (int i = 1; i < recent_count() && bufsw_count < RECENT_MAX; i++) {
+    const char *base = path_base(recent_get(i));
     if (tl == 0 || strncasecmp(base, minibuf_text, tl) == 0)
-      snprintf(bufsw_cands[bufsw_count++], sizeof(bufsw_cands[0]), "%s", recent_files[i]);
+      snprintf(bufsw_cands[bufsw_count++], sizeof(bufsw_cands[0]), "%s", recent_get(i));
   }
   if (bufsw_sel >= bufsw_count) bufsw_sel = bufsw_count > 0 ? bufsw_count - 1 : 0;
 }
@@ -760,7 +741,7 @@ static int handle_bufsw_key(int sym, int ctrl) {
 
 static void cmd_switch_buffer(void) {   /* C-x b */
   bufsw_default[0] = '\0';
-  if (recent_count >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_files[1]);
+  if (recent_count() >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_get(1));
   suppress_next_text = 1;   /* swallow the "b" text event that triggered this */
   minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
   minibuf_text[0] = '\0'; minibuf_len = 0; minibuf_callback = NULL;

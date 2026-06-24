@@ -28,6 +28,7 @@ void suite_undo(void);
 void suite_buffer(void);
 void suite_navigation(void);
 void suite_md_render(void);
+void suite_recent(void);
 void suite_snapshot(void);
 
 int main(void) {
@@ -36,6 +37,7 @@ int main(void) {
   suite_buffer();
   suite_navigation();
   suite_md_render();
+  suite_recent();
   suite_snapshot();
 
   fprintf(stdout, "\n%d tests (%d failed), %d checks (%d failed)\n",
