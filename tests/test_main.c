@@ -26,11 +26,15 @@ void kt_run(const char *name, kt_test_fn fn) {
 void suite_editing(void);
 void suite_undo(void);
 void suite_buffer(void);
+void suite_navigation(void);
+void suite_md_render(void);
 
 int main(void) {
   suite_editing();
   suite_undo();
   suite_buffer();
+  suite_navigation();
+  suite_md_render();
 
   fprintf(stdout, "\n%d tests (%d failed), %d checks (%d failed)\n",
           kt_tests, kt_tests_failed, kt_checks, kt_failed_checks);

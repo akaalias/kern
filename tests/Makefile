@@ -17,17 +17,24 @@ VENDOR  := $(ROOT)/application/Kern/Vendor
 SDL_CFLAGS ?= -I$(VENDOR)/SDL2/include
 
 SAN     := -fsanitize=address,undefined -fno-omit-frame-pointer
-INCS    := -I$(APP)/Editor -I$(APP)/ThirdParty $(SDL_CFLAGS)
+INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
 CFLAGS  := -std=c11 -g -O1 -Wall -Wextra -Wno-unused-parameter $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
-CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c
-TESTS   := test_main.c unit_editing.c unit_undo.c unit_buffer.c
+# Pure core (no renderer) + layout code (renderer-dependent, exercised through
+# the stub) + microui (for mu_color/mu_rect/mu_vec2 used by md_render).
+CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
+           $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
+           $(APP)/ThirdParty/microui.c
+TESTS   := test_main.c stub_renderer.c \
+           unit_editing.c unit_undo.c unit_buffer.c \
+           unit_navigation.c unit_md_render.c
 SRC     := $(CORE) $(TESTS)
+HDRS    := test.h ed_fixture.h stub_renderer.h
 
 BIN     := kern_tests
 
-$(BIN): $(SRC) test.h
+$(BIN): $(SRC) $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(CORE) $(TESTS) $(LDFLAGS)
 
 .PHONY: test clean

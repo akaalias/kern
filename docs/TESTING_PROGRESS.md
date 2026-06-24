@@ -24,10 +24,11 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - [x] GitHub Actions Linux job (`.github/workflows/ci.yml`, clang + ASan/UBSan/LSan) — pending first remote run
 
 **Phase B — Stub renderer + layout/integration + snapshots**
-- [ ] `tests/stub_renderer.c` (deterministic metrics, capture model, no GL)
-- [ ] `tests/integration_navigation.c` (wrap breaks, cursor visibility, word motion)
-- [ ] `tests/integration_md_render.c` (list/heading/inline incl. multi-row spans + `==highlight==`)
+- [x] `tests/stub_renderer.{c,h}` — capture impl of `renderer.h` (deterministic 10×20 glyphs, 800×600 window → 700px page; records draw ops; stubs `SDL_GetTicks`). Build now links `navigation.c` + `md_render.c` + `microui.c`.
+- [x] `tests/unit_navigation.c` (6 tests) — wrap breaks: empty, short, exact-page-width, mid-word break, last-space break, `nav_count_wraps` caching
+- [x] `tests/unit_md_render.c` (6 tests) — **multi-row bold carry-over** (guards the wrapped-span fix), markers use base style, full bold line, `==highlight==` bg-per-glyph, wikilink bg, linear `md_col_x`
 - [ ] Snapshot harness + `tests/snapshots/` goldens
+- [ ] More integration breadth: cursor visibility, word motion, headings/list-indent layout
 
 **Phase C — Controller seam extraction (behavior-preserving)**
 - [ ] Extract `kern_handle_event` / `kern_dispatch_key` / `kern_input_text` from `editor_main`
@@ -59,6 +60,7 @@ Living status tracker so the initiative can be stopped and resumed at any point.
 - **2026-06-24** — **Phase A first slice landed.** `tests/` headless build (Makefile + test.h + test_main.c) compiling buffer/editing/undo under ASan+UBSan; `unit_editing.c` with 12 tests (insert/backspace/enter/list-continuation/indent/outdent) — all green, 0 leaks (verified via macOS `leaks`). Linux CI workflow added. **No app code changed.** App source untouched; only new `tests/`, `.github/`, `.gitignore` guard.
 - **2026-06-24** — Added `tests/unit_undo.c` (7 tests) and factored shared fixtures into `tests/ed_fixture.h`. Suite now **19 tests / 47 checks**, all green, 0 leaks. App code still untouched.
 - **2026-06-24** — Added `tests/unit_buffer.c` (7 tests: load, CRLF strip, missing-file, overlong split, save/load byte round-trip, line-array growth, region ordering). **Pure-core unit layer (buffer/editing/undo) now covered: 26 tests / 81 checks, green, 0 leaks.** App code still untouched.
+- **2026-06-24** — **Phase B started.** Added `tests/stub_renderer.{c,h}` (capture renderer, no GL) and wired `navigation.c` + `md_render.c` + `microui.c` into the headless build. New `unit_navigation.c` (6) + `unit_md_render.c` (6). Suite now **38 tests / 109 checks, green, 0 leaks.** The multi-row bold test guards the earlier wrapped-span fix. App code still untouched.
 
 ## Next action on resume
-Finish `unit_buffer.c`: `buf_resolve_path` + filename completion (point `buf_set_documents_dir` at a `mkdtemp` dir, drop a few files, assert). Add a couple of invariant tests (`load(save(buf)) == buf` over generated content). Then **Phase B**: `tests/stub_renderer.c` implementing `renderer.h` (deterministic metrics) to unit-test `navigation.c` wrapping and `md_render.c` layout — including the multi-row inline spans and `==highlight==`. Confirm the GitHub Actions runs are green.
+Phase B breadth + snapshots: add a snapshot harness that serializes the stub's captured draw model for representative documents into `tests/snapshots/` goldens (the parity proof for refactors). Broaden integration: cursor visibility / `nav_ensure_cursor_visible`, word motion, heading + list-indent layout. Optionally finish `unit_buffer.c` (`buf_resolve_path` + completion via a temp documents dir). Then Phase C (controller seam). Confirm GitHub Actions is green.
