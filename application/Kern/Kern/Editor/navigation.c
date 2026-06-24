@@ -8,6 +8,7 @@
 #include "navigation.h"
 #include "renderer.h"
 #include "buffer.h"
+#include "clock.h"
 
 /* ---- window / page metrics ---- */
 
@@ -249,7 +250,7 @@ void nav_search_find_current_dir(EditorState *ed, ViewState *vs) {
 
 void nav_status_set(ViewState *vs, const char *msg) {
   snprintf(vs->status_msg, sizeof(vs->status_msg), "%s", msg);
-  vs->status_time = SDL_GetTicks();
+  vs->status_time = kern_now_ms();
 }
 
 const char *nav_status_get(EditorState *ed, ViewState *vs) {
@@ -258,6 +259,6 @@ const char *nav_status_get(EditorState *ed, ViewState *vs) {
   if (vs->ctrl_x_prefix) return "C-x -";
   if (ed->mark_active) return "Mark active";
   if (vs->search_active) return (vs->search_direction == 1) ? "I-search:" : "I-search backward:";
-  if (vs->status_msg[0] && (SDL_GetTicks() - vs->status_time) < STATUS_DURATION) return vs->status_msg;
+  if (vs->status_msg[0] && (kern_now_ms() - vs->status_time) < STATUS_DURATION) return vs->status_msg;
   return "";
 }

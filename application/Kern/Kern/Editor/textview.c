@@ -17,6 +17,7 @@
 #include "undo.h"
 #include "recent.h"
 #include "clipboard.h"
+#include "clock.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -1545,7 +1546,7 @@ int editor_main(int argc, char **argv) {
     {
       const Uint32 AUTOSAVE_INTERVAL_MS = 3000;   /* "every X seconds" */
       static Uint32 last_autosave = 0;
-      Uint32 now = SDL_GetTicks();
+      Uint32 now = kern_now_ms();
       if (last_autosave == 0) last_autosave = now;
       if (now - last_autosave >= AUTOSAVE_INTERVAL_MS) {
         last_autosave = now;

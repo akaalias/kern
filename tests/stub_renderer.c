@@ -75,7 +75,3 @@ void r_present(void)                           {}
 void r_set_title(const char *title)            { (void)title; }
 SDL_Window *r_get_window(void)                 { return NULL; }
 void r_handle_resize(void)                     {}
-
-/* navigation.c references SDL_GetTicks for status timing; stub it so the
- * headless build links without the SDL runtime. */
-Uint32 SDL_GetTicks(void) { return 0; }
