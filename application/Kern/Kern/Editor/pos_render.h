@@ -33,6 +33,11 @@ int pos_line_spans(Line *l, const PosSpan **out);
    class; returns 0 for POS_OTHER (no color). */
 int pos_class_color(PosClass cls, Color *out);
 
+/* The muted "ground" color. With syntax highlighting active, md_render paints any
+   text that isn't a currently-shown class with this, so the shown classes stand
+   out against a uniform dim background (one step below the function-word value). */
+Color pos_mute_color(void);
+
 /* Whether class `cls` is currently shown by `syntax_mask`. */
 int pos_class_enabled(unsigned int syntax_mask, PosClass cls);
 

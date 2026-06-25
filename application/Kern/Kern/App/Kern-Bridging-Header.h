@@ -22,4 +22,15 @@ int  kern_syntax_enabled(void);
 void kern_toggle_style(void);
 int  kern_style_enabled(void);
 
+/* Per-type toggles: one syntax class / style category each (the masters above
+   flip everything). The menu's per-item checkmarks read the *_enabled() state. */
+void kern_toggle_verbs(void);          int kern_verbs_enabled(void);
+void kern_toggle_nouns(void);          int kern_nouns_enabled(void);
+void kern_toggle_adjectives(void);     int kern_adjectives_enabled(void);
+void kern_toggle_adverbs(void);        int kern_adverbs_enabled(void);
+void kern_toggle_function_words(void); int kern_function_words_enabled(void);
+void kern_toggle_fillers(void);        int kern_fillers_enabled(void);
+void kern_toggle_cliches(void);        int kern_cliches_enabled(void);
+void kern_toggle_redundancies(void);   int kern_redundancies_enabled(void);
+
 #endif /* Kern_Bridging_Header_h */

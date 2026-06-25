@@ -12,6 +12,14 @@ extern int kern_x_is_connected(void);
 /* from textview.c — current on/off state of the View-menu toggles */
 extern int kern_syntax_enabled(void);
 extern int kern_style_enabled(void);
+extern int kern_verbs_enabled(void);
+extern int kern_nouns_enabled(void);
+extern int kern_adjectives_enabled(void);
+extern int kern_adverbs_enabled(void);
+extern int kern_function_words_enabled(void);
+extern int kern_fillers_enabled(void);
+extern int kern_cliches_enabled(void);
+extern int kern_redundancies_enabled(void);
 
 #pragma mark - Keyboard-shortcut sheet
 
@@ -537,10 +545,20 @@ static NSButton *kern_titlebar_button(NSString *symbol, NSString *accDesc,
 - (void)menuNeedsUpdate:(NSMenu *)menu {
   if ([self.next respondsToSelector:@selector(menuNeedsUpdate:)])
     [self.next menuNeedsUpdate:menu];
-  [menu itemWithTitle:@"Syntax Highlighting"].state =
-      kern_syntax_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
-  [menu itemWithTitle:@"Style Check"].state =
-      kern_style_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+  /* Titles must match the SwiftUI .commands buttons (App/KernApp.swift) exactly. */
+#define KERN_SETCHK(t, fn) [menu itemWithTitle:(t)].state = \
+    (fn)() ? NSControlStateValueOn : NSControlStateValueOff
+  KERN_SETCHK(@"Syntax Highlighting", kern_syntax_enabled);
+  KERN_SETCHK(@"Verbs",               kern_verbs_enabled);
+  KERN_SETCHK(@"Nouns",               kern_nouns_enabled);
+  KERN_SETCHK(@"Adjectives",          kern_adjectives_enabled);
+  KERN_SETCHK(@"Adverbs",             kern_adverbs_enabled);
+  KERN_SETCHK(@"Function Words",      kern_function_words_enabled);
+  KERN_SETCHK(@"Style Check",         kern_style_enabled);
+  KERN_SETCHK(@"Fillers",             kern_fillers_enabled);
+  KERN_SETCHK(@"Cliches",             kern_cliches_enabled);
+  KERN_SETCHK(@"Redundancies",        kern_redundancies_enabled);
+#undef KERN_SETCHK
 }
 @end
 

@@ -64,6 +64,47 @@ void kern_toggle_subs(void) {
 }
 int  kern_subs_enabled(void) { return g_vs.sub_mask != 0; }
 
+/* ---- per-type View toggles (one syntax class / style category each) ----
+   Each flips its own bit of the relevant mask; the menu's per-item checkmark
+   reads the matching *_enabled() query. The masters above flip everything. */
+
+/* The five dim "function words" share one value in the palette, so the menu
+   treats them as a single toggle. */
+#define KERN_FUNCTION_WORDS (POS_BIT(POS_CONJUNCTION) | POS_BIT(POS_DETERMINER) | \
+                             POS_BIT(POS_PREPOSITION) | POS_BIT(POS_PRONOUN)    | \
+                             POS_BIT(POS_PARTICLE))
+
+static void toggle_syntax_bits(unsigned int bits, const char *label) {
+  if (g_vs.syntax_mask & bits) g_vs.syntax_mask &= ~bits;   /* any on → off */
+  else                         g_vs.syntax_mask |=  bits;   /* else     → on */
+  char msg[64];
+  snprintf(msg, sizeof msg, "%s %s", label, (g_vs.syntax_mask & bits) ? "on" : "off");
+  nav_status_set(&g_vs, msg);
+}
+void kern_toggle_verbs(void)          { toggle_syntax_bits(POS_BIT(POS_VERB), "Verbs"); }
+int  kern_verbs_enabled(void)         { return (g_vs.syntax_mask & POS_BIT(POS_VERB)) != 0; }
+void kern_toggle_nouns(void)          { toggle_syntax_bits(POS_BIT(POS_NOUN), "Nouns"); }
+int  kern_nouns_enabled(void)         { return (g_vs.syntax_mask & POS_BIT(POS_NOUN)) != 0; }
+void kern_toggle_adjectives(void)     { toggle_syntax_bits(POS_BIT(POS_ADJECTIVE), "Adjectives"); }
+int  kern_adjectives_enabled(void)    { return (g_vs.syntax_mask & POS_BIT(POS_ADJECTIVE)) != 0; }
+void kern_toggle_adverbs(void)        { toggle_syntax_bits(POS_BIT(POS_ADVERB), "Adverbs"); }
+int  kern_adverbs_enabled(void)       { return (g_vs.syntax_mask & POS_BIT(POS_ADVERB)) != 0; }
+void kern_toggle_function_words(void) { toggle_syntax_bits(KERN_FUNCTION_WORDS, "Function words"); }
+int  kern_function_words_enabled(void){ return (g_vs.syntax_mask & KERN_FUNCTION_WORDS) != 0; }
+
+static void toggle_style_bit(unsigned int bit, const char *label) {
+  g_vs.style_mask ^= bit;
+  char msg[64];
+  snprintf(msg, sizeof msg, "%s %s", label, (g_vs.style_mask & bit) ? "on" : "off");
+  nav_status_set(&g_vs, msg);
+}
+void kern_toggle_fillers(void)        { toggle_style_bit(STYLE_BIT(STYLE_FILLER), "Fillers"); }
+int  kern_fillers_enabled(void)       { return (g_vs.style_mask & STYLE_BIT(STYLE_FILLER)) != 0; }
+void kern_toggle_cliches(void)        { toggle_style_bit(STYLE_BIT(STYLE_CLICHE), "Cliches"); }
+int  kern_cliches_enabled(void)       { return (g_vs.style_mask & STYLE_BIT(STYLE_CLICHE)) != 0; }
+void kern_toggle_redundancies(void)   { toggle_style_bit(STYLE_BIT(STYLE_REDUNDANCY), "Redundancies"); }
+int  kern_redundancies_enabled(void)  { return (g_vs.style_mask & STYLE_BIT(STYLE_REDUNDANCY)) != 0; }
+
 
 /* ---- minibuffer filename completion ---- */
 

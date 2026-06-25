@@ -66,12 +66,26 @@ struct KernApp: App {
         // through SwiftUI's `.commands` (rather than poking NSApp.mainMenu, which
         // SwiftUI rebuilds) is what makes them stick. The actions call straight
         // into the C editor — menu selection runs synchronously on the main
-        // thread during tracking, so it works despite the parked run loop. They
-        // mirror the C-x y / C-x s chords.
+        // thread during tracking, so it works despite the parked run loop.
+        //
+        // Each master (Syntax Highlighting / Style Check) flips everything in its
+        // group; the per-type items flip a single class/category. Live checkmarks
+        // can't come from SwiftUI (the parked main actor blocks updates) — an
+        // AppKit NSMenuDelegate sets them from the C state (Platform/macos_style.m),
+        // matching items by these exact titles, so keep the two in sync.
         .commands {
             CommandGroup(after: .toolbar) {
                 Button("Syntax Highlighting") { kern_toggle_syntax() }
+                Button("Verbs") { kern_toggle_verbs() }
+                Button("Nouns") { kern_toggle_nouns() }
+                Button("Adjectives") { kern_toggle_adjectives() }
+                Button("Adverbs") { kern_toggle_adverbs() }
+                Button("Function Words") { kern_toggle_function_words() }
+                Divider()
                 Button("Style Check") { kern_toggle_style() }
+                Button("Fillers") { kern_toggle_fillers() }
+                Button("Cliches") { kern_toggle_cliches() }
+                Button("Redundancies") { kern_toggle_redundancies() }
             }
         }
     }

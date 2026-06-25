@@ -272,12 +272,15 @@ float md_draw_text(Line *l, int start, int end,
 
     /* Part-of-speech coloring layers on top of markdown: it recolors only runs
        markdown left at the base color, so links/code/delimiters keep their hue,
-       while bold/italic words keep their weight and take the POS color. */
+       while bold/italic words keep their weight and take the POS color. Highlight
+       is an *isolate*, not a hide: a shown class takes its ramp value; everything
+       else (toggled-off classes, untagged words) drops to the muted ground so the
+       shown classes pop. */
     if (g_syntax_mask &&
         fg.r == base_color.r && fg.g == base_color.g &&
         fg.b == base_color.b && fg.a == base_color.a) {
       Color pc;
-      if (pos_color_at(l, g_syntax_mask, i, &pc)) fg = pc;
+      fg = pos_color_at(l, g_syntax_mask, i, &pc) ? pc : pos_mute_color();
     }
 
     /* Style check: cuttable text (fillers, the redundant word) is greyed and

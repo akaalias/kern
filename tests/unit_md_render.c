@@ -7,6 +7,7 @@
 #include "test.h"
 #include "buffer.h"
 #include "md_render.h"
+#include "pos_render.h"
 #include "stub_renderer.h"
 
 static Color GREY;
@@ -182,8 +183,37 @@ static void test_focus_opacity_crosses_midway(void) {
   CHECK(approx(a, b));                          /* symmetric crossfade */
 }
 
+/* Syntax highlighting isolates: a shown class keeps its bright ramp value while
+   everything else (here the noun "cat", off) drops to the muted ground, so the
+   shown class (verb "runs") pops. */
+static Color glyph_color(const char *ch) {
+  for (int i = 0; i < stub_text_count; i++)
+    if (strcmp(stub_texts[i].ch, ch) == 0) return stub_texts[i].color;
+  Color none = { 0, 0, 0, 0 };
+  return none;
+}
+static void test_syntax_isolate_mutes_ground(void) {
+  stub_reset();
+  Line l = mkline("the cat runs");           /* det / noun / verb (fake tagger) */
+  md_set_syntax_mask(POS_BIT(POS_VERB));      /* isolate verbs */
+  int out = -1;
+  md_draw_text(&l, 0, l.len, 0, 0, color(204, 200, 195, 255), 0, -1, &out, 1);
+  md_set_syntax_mask(0);
+
+  Color verb = glyph_color("u");              /* 'u' only in "runs"  */
+  Color noun = glyph_color("c");              /* 'c' only in "cat"   */
+  Color mute = pos_mute_color();
+  CHECK_IEQ(verb.r, 254);                     /* shown class keeps its ramp value */
+  CHECK_IEQ(noun.r, mute.r);                  /* off class drops to the ground    */
+  CHECK(verb.r > noun.r);                     /* so the verb pops                 */
+  CHECK(mute.r < 112);                        /* ground sits below function words */
+  free(l.pos_spans);
+  freeline(&l);
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
+  RUN(test_syntax_isolate_mutes_ground);
   RUN(test_focus_opacity_settled);
   RUN(test_focus_opacity_start_of_transition);
   RUN(test_focus_opacity_crosses_midway);

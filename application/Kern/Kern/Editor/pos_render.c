@@ -28,6 +28,14 @@ static const Color k_class_color[POS_CLASS_COUNT] = {
   [POS_PARTICLE]    = { 112, 108, 103, 255 },
 };
 
+/* The muted "ground": when syntax highlighting is active, everything that isn't a
+   shown class collapses to this so the shown classes pop (isolate, not hide). One
+   step *below* the function-word value (112) — same warm-grey tint (g=r-4, b=r-9)
+   — so even toggling the function-word group on/off has a visible effect. */
+static const Color k_mute_color = { 92, 88, 83, 255 };
+
+Color pos_mute_color(void) { return k_mute_color; }
+
 int pos_class_color(PosClass cls, Color *out) {
   if (cls <= POS_OTHER || cls >= POS_CLASS_COUNT) return 0;
   *out = k_class_color[cls];
