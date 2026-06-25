@@ -19,6 +19,7 @@
 #include "clipboard.h"
 #include "clock.h"
 #include "commands.h"
+#include "editor_loop.h"
 
 /* ---- two struct instances hold all mutable state ---- */
 static EditorState g_ed = {0};
@@ -1075,6 +1076,7 @@ static void do_render(void) {
   r_present();
 }
 
+#ifndef KERN_HEADLESS_TEST
 static int resize_event_watcher(void *data, SDL_Event *event) {
   (void)data;
   if (event->type == SDL_WINDOWEVENT &&
@@ -1087,6 +1089,7 @@ static int resize_event_watcher(void *data, SDL_Event *event) {
   }
   return 0;
 }
+#endif /* KERN_HEADLESS_TEST */
 
 /* Called from Swift (via the bridging header) before editor_main to point
    file I/O at the app's sandbox-container Documents directory. */
@@ -1132,6 +1135,256 @@ static void cmd_open_daily_note(void) {
   nav_status_set(&g_vs, msg);
 }
 
+/* autosave + X-titlebar-sync timers, file-scoped so tv_test_reset() can clear
+   them between headless tests (behaviour-neutral for the app). */
+static Uint32 g_last_autosave = 0;
+static int    g_last_x_conn = -1;
+
+/* ---- pumpable main-loop pieces (see editor_loop.h) ---- */
+
+void editor_handle_event(const SDL_Event *ev) {
+  SDL_Event e = *ev;
+  switch (e.type) {
+    case SDL_QUIT: exit(EXIT_SUCCESS); break;
+    case SDL_WINDOWEVENT:
+      if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
+          e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+        r_handle_resize();
+        /* reflow only if the page width actually changed (a height-only
+           resize or a spurious resize event is now free) */
+        nav_maybe_reflow(&g_ed, &g_vs);
+      }
+      break;
+    case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
+    case SDL_MOUSEWHEEL:
+      g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3;
+      g_vs.scroll_target_y = g_vs.scroll_y;   /* don't let the ease fight the wheel */
+      break;
+
+    case SDL_TEXTINPUT:
+      if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
+      if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
+      if (g_vs.minibuf_active) {
+        int tlen = strlen(e.text.text);
+        if (g_vs.minibuf_len + tlen < (int)sizeof(g_vs.minibuf_text) - 1) {
+          memcpy(g_vs.minibuf_text + g_vs.minibuf_len, e.text.text, tlen);
+          g_vs.minibuf_len += tlen;
+          g_vs.minibuf_text[g_vs.minibuf_len] = '\0';
+        }
+        minibuf_refresh_completion();
+        if (bufsw_active) bufsw_filter();
+      } else if (g_vs.search_active) {
+        int tlen = strlen(e.text.text);
+        if (g_vs.search_len + tlen < (int)sizeof(g_vs.search_buf) - 1) {
+          memcpy(g_vs.search_buf + g_vs.search_len, e.text.text, tlen);
+          g_vs.search_len += tlen;
+          g_vs.search_buf[g_vs.search_len] = '\0';
+          nav_search_find_current_dir(&g_ed, &g_vs);
+        }
+      } else {
+        /* a literal Tab is indentation (handled on keydown), never inserted */
+        if (e.text.text[0] == '\t' && e.text.text[1] == '\0') break;
+        ed_insert_char(&g_ed, e.text.text);
+        nav_ensure_cursor_visible(&g_ed, &g_vs);
+      }
+      break;
+
+    case SDL_MOUSEBUTTONDOWN:
+    case SDL_MOUSEBUTTONUP: {
+      int b = button_map[e.button.button & 0xff];
+      if (b && e.type == SDL_MOUSEBUTTONDOWN) {
+        g_mouse_x = e.button.x; g_mouse_y = e.button.y;
+        g_mouse_down |= b; g_mouse_pressed |= b;
+        if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < nav_win_w() - 12) {
+          nav_click_to_cursor(&g_ed, &g_vs, e.button.x, e.button.y);
+        }
+      }
+      if (b && e.type == SDL_MOUSEBUTTONUP) { g_mouse_down &= ~b; }
+      break;
+    }
+
+    case SDL_KEYDOWN:
+    case SDL_KEYUP: {
+      /* suppress macOS system beep for ctrl combos */
+      if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL)) {
+        SDL_StopTextInput();
+      }
+      if (e.type == SDL_KEYUP && !(SDL_GetModState() & KMOD_CTRL)) {
+        SDL_StartTextInput();
+      }
+
+      if (e.type == SDL_KEYDOWN) {
+        int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
+        int sym = e.key.keysym.sym;
+
+        /* 1. Modal handlers (consume and break) */
+        if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
+        if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
+        if (g_vs.ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
+        if (g_vs.esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
+
+        /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
+           Esc dismiss) — only intercepts when the dropdown is showing */
+        if (wl_active && handle_wikilink_key(sym, ctrl)) break;
+
+        /* 1c. Wikilink navigation: Cmd-Enter follows the link under the
+           cursor; Cmd-Shift-Left/Right go back/forward through history */
+        if ((e.key.keysym.mod & KMOD_GUI) && sym == SDLK_RETURN) {
+          cmd_follow_wikilink(); break;
+        }
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_LEFT) {
+          cmd_nav_back(); break;
+        }
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_RIGHT) {
+          cmd_nav_forward(); break;
+        }
+        /* Cmd-Shift-N: extract the marked region into a new linked note */
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_n) {
+          cmd_extract_region_to_note(); break;
+        }
+        /* Cmd-Shift-T: open (or create) today's daily note */
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_t) {
+          cmd_open_daily_note(); break;
+        }
+
+        /* 1d. Tab / Shift-Tab indent or outdent the current list item.
+           The matching '\t' text event is dropped in SDL_TEXTINPUT. */
+        if (sym == SDLK_TAB && md_is_list_item(&g_ed.lines[g_ed.cursor_line])) {
+          if (e.key.keysym.mod & KMOD_SHIFT) ed_dedent_line(&g_ed);
+          else                               ed_indent_line(&g_ed);
+          nav_ensure_cursor_visible(&g_ed, &g_vs);
+          break;
+        }
+
+        /* 2. Prefix starters */
+        if (ctrl && sym == SDLK_x) { g_vs.ctrl_x_prefix = 1; break; }
+        if (sym == SDLK_ESCAPE && !g_vs.search_active) {
+          if (g_ed.mark_active) { buf_mark_clear(&g_ed); nav_status_set(&g_vs, "Quit"); }
+          else { g_vs.esc_prefix = 1; SDL_StopTextInput(); }
+          break;
+        }
+
+        /* 3. C-s / C-r isearch start/continue */
+        if (ctrl && sym == SDLK_s) {
+          g_vs.search_direction = 1;
+          if (!g_vs.search_active) {
+            g_vs.search_active = 1;
+            g_vs.search_buf[0] = '\0';
+            g_vs.search_len = 0;
+            g_vs.search_match_line = -1;
+          } else {
+            nav_search_find_next(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
+                             g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col - 1);
+          }
+          break;
+        }
+        if (ctrl && sym == SDLK_r) {
+          g_vs.search_direction = -1;
+          if (!g_vs.search_active) {
+            g_vs.search_active = 1;
+            g_vs.search_buf[0] = '\0';
+            g_vs.search_len = 0;
+            g_vs.search_match_line = -1;
+          } else {
+            nav_search_find_prev(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
+                             g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col + 1);
+          }
+          break;
+        }
+
+        /* any non-C-k key clears last_kill_was_k */
+        if (!(ctrl && sym == SDLK_k)) g_ed.last_kill_was_k = 0;
+
+        /* 4. De-globalized command table (commands.c). */
+        if (kern_dispatch_key(&g_ed, &g_vs, e.key.keysym.mod, sym)) break;
+
+        /* 4b. M-g goto-line — lives here (not the commands.c table) because
+           it drives the textview-local minibuffer. */
+        if ((e.key.keysym.mod & KMOD_ALT) && sym == SDLK_g) {
+          cmd_goto_line(); break;
+        }
+
+        /* 5. {Alt,Cmd}+Shift+. / +, → end/beginning of buffer
+           (need shift check, not in table) */
+        {
+          int alt = !!(e.key.keysym.mod & KMOD_ALT);
+          int cmd = !!(e.key.keysym.mod & KMOD_GUI);
+          int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+          if ((alt || cmd) && shift && sym == SDLK_PERIOD) {
+            cmd_end_of_buffer_alt(&g_ed, &g_vs);
+            /* Option+key can emit a stray text glyph that races past the
+               modifier guard, so swallow it; Cmd+key emits no text, and
+               suppressing would eat the user's next real keystroke. */
+            if (alt) g_vs.suppress_next_text = 1;
+            break;
+          }
+          if ((alt || cmd) && shift && sym == SDLK_COMMA) {
+            cmd_beginning_of_buffer_alt(&g_ed, &g_vs);
+            if (alt) g_vs.suppress_next_text = 1;
+            break;
+          }
+        }
+
+        /* 6. Arrow keys — delegate the actual movement to the commands.c
+           functions; here we only add shift-to-select and ctrl/alt
+           word-jump on top. */
+        if (sym == SDLK_LEFT || sym == SDLK_RIGHT ||
+            sym == SDLK_UP || sym == SDLK_DOWN) {
+          int alt = !!(e.key.keysym.mod & KMOD_ALT);
+          if ((e.key.keysym.mod & KMOD_SHIFT) && !g_ed.mark_active)
+            buf_mark_set(&g_ed);
+          switch (sym) {
+            case SDLK_LEFT:
+              if (ctrl || alt) cmd_backward_word(&g_ed, &g_vs);
+              else             cmd_backward_char(&g_ed, &g_vs);
+              break;
+            case SDLK_RIGHT:
+              if (ctrl || alt) cmd_forward_word(&g_ed, &g_vs);
+              else             cmd_forward_char(&g_ed, &g_vs);
+              break;
+            case SDLK_UP:   cmd_previous_line(&g_ed, &g_vs); break;
+            case SDLK_DOWN: cmd_next_line(&g_ed, &g_vs);     break;
+          }
+          break;
+        }
+      }
+      break;
+    }
+  }
+}
+
+void editor_tick(void) {
+  /* periodic auto-save: write the current file if it changed since the last
+     save. Cheap (just a dirty flag); skipped for the unsaved *scratch*
+     buffer (no path). */
+  {
+    const Uint32 AUTOSAVE_INTERVAL_MS = 3000;   /* "every X seconds" */
+    Uint32 now = kern_now_ms();
+    if (g_last_autosave == 0) g_last_autosave = now;
+    if (now - g_last_autosave >= AUTOSAVE_INTERVAL_MS) {
+      g_last_autosave = now;
+      if (g_ed.dirty && g_ed.filepath[0] && buf_save(&g_ed, g_ed.filepath) == 0) {
+        nav_status_set(&g_vs, "Auto-saved");
+      }
+    }
+  }
+
+  /* keep the title-bar "Publish to X" button in sync with the connection
+     state (the user may link/unlink X via Settings while running). Cheap
+     in-memory check; only touches AppKit when the state actually flips. */
+  {
+    int c = kern_x_is_connected();
+    if (c != g_last_x_conn) { g_last_x_conn = c; kern_titlebar_set_x_connected(c); }
+  }
+
+  do_render();
+}
+
+#ifndef KERN_HEADLESS_TEST
 int editor_main(int argc, char **argv) {
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
@@ -1158,254 +1411,49 @@ int editor_main(int argc, char **argv) {
   macos_style_window(r_get_window());
 
   SDL_AddEventWatch(resize_event_watcher, NULL);
-
   for (;;) {
     SDL_Event e;
     /* Block until input arrives (NULL leaves events queued for the drain loop
        below) instead of busy-spinning. The timeout wakes us periodically so
        transient status-bar messages can still clear without input. */
     SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating) ? 16 : 250);
-    while (SDL_PollEvent(&e)) {
-      switch (e.type) {
-        case SDL_QUIT: exit(EXIT_SUCCESS); break;
-        case SDL_WINDOWEVENT:
-          if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
-              e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            r_handle_resize();
-            /* reflow only if the page width actually changed (a height-only
-               resize or a spurious resize event is now free) */
-            nav_maybe_reflow(&g_ed, &g_vs);
-          }
-          break;
-        case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
-        case SDL_MOUSEWHEEL:
-          g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3;
-          g_vs.scroll_target_y = g_vs.scroll_y;   /* don't let the ease fight the wheel */
-          break;
-
-        case SDL_TEXTINPUT:
-          if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
-          if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
-          if (g_vs.minibuf_active) {
-            int tlen = strlen(e.text.text);
-            if (g_vs.minibuf_len + tlen < (int)sizeof(g_vs.minibuf_text) - 1) {
-              memcpy(g_vs.minibuf_text + g_vs.minibuf_len, e.text.text, tlen);
-              g_vs.minibuf_len += tlen;
-              g_vs.minibuf_text[g_vs.minibuf_len] = '\0';
-            }
-            minibuf_refresh_completion();
-            if (bufsw_active) bufsw_filter();
-          } else if (g_vs.search_active) {
-            int tlen = strlen(e.text.text);
-            if (g_vs.search_len + tlen < (int)sizeof(g_vs.search_buf) - 1) {
-              memcpy(g_vs.search_buf + g_vs.search_len, e.text.text, tlen);
-              g_vs.search_len += tlen;
-              g_vs.search_buf[g_vs.search_len] = '\0';
-              nav_search_find_current_dir(&g_ed, &g_vs);
-            }
-          } else {
-            /* a literal Tab is indentation (handled on keydown), never inserted */
-            if (e.text.text[0] == '\t' && e.text.text[1] == '\0') break;
-            ed_insert_char(&g_ed, e.text.text);
-            nav_ensure_cursor_visible(&g_ed, &g_vs);
-          }
-          break;
-
-        case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP: {
-          int b = button_map[e.button.button & 0xff];
-          if (b && e.type == SDL_MOUSEBUTTONDOWN) {
-            g_mouse_x = e.button.x; g_mouse_y = e.button.y;
-            g_mouse_down |= b; g_mouse_pressed |= b;
-            if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < nav_win_w() - 12) {
-              nav_click_to_cursor(&g_ed, &g_vs, e.button.x, e.button.y);
-            }
-          }
-          if (b && e.type == SDL_MOUSEBUTTONUP) { g_mouse_down &= ~b; }
-          break;
-        }
-
-        case SDL_KEYDOWN:
-        case SDL_KEYUP: {
-          /* suppress macOS system beep for ctrl combos */
-          if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & KMOD_CTRL)) {
-            SDL_StopTextInput();
-          }
-          if (e.type == SDL_KEYUP && !(SDL_GetModState() & KMOD_CTRL)) {
-            SDL_StartTextInput();
-          }
-
-          if (e.type == SDL_KEYDOWN) {
-            int ctrl = !!(e.key.keysym.mod & KMOD_CTRL);
-            int sym = e.key.keysym.sym;
-
-            /* 1. Modal handlers (consume and break) */
-            if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
-            if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
-            if (g_vs.ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
-            if (g_vs.esc_prefix && handle_esc_prefix_key(sym, !!(e.key.keysym.mod & KMOD_SHIFT))) break;
-
-            /* 1b. Wikilink autocomplete dropdown (Enter/Tab accept, Up/Down,
-               Esc dismiss) — only intercepts when the dropdown is showing */
-            if (wl_active && handle_wikilink_key(sym, ctrl)) break;
-
-            /* 1c. Wikilink navigation: Cmd-Enter follows the link under the
-               cursor; Cmd-Shift-Left/Right go back/forward through history */
-            if ((e.key.keysym.mod & KMOD_GUI) && sym == SDLK_RETURN) {
-              cmd_follow_wikilink(); break;
-            }
-            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
-                sym == SDLK_LEFT) {
-              cmd_nav_back(); break;
-            }
-            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
-                sym == SDLK_RIGHT) {
-              cmd_nav_forward(); break;
-            }
-            /* Cmd-Shift-N: extract the marked region into a new linked note */
-            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
-                sym == SDLK_n) {
-              cmd_extract_region_to_note(); break;
-            }
-            /* Cmd-Shift-T: open (or create) today's daily note */
-            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
-                sym == SDLK_t) {
-              cmd_open_daily_note(); break;
-            }
-
-            /* 1d. Tab / Shift-Tab indent or outdent the current list item.
-               The matching '\t' text event is dropped in SDL_TEXTINPUT. */
-            if (sym == SDLK_TAB && md_is_list_item(&g_ed.lines[g_ed.cursor_line])) {
-              if (e.key.keysym.mod & KMOD_SHIFT) ed_dedent_line(&g_ed);
-              else                               ed_indent_line(&g_ed);
-              nav_ensure_cursor_visible(&g_ed, &g_vs);
-              break;
-            }
-
-            /* 2. Prefix starters */
-            if (ctrl && sym == SDLK_x) { g_vs.ctrl_x_prefix = 1; break; }
-            if (sym == SDLK_ESCAPE && !g_vs.search_active) {
-              if (g_ed.mark_active) { buf_mark_clear(&g_ed); nav_status_set(&g_vs, "Quit"); }
-              else { g_vs.esc_prefix = 1; SDL_StopTextInput(); }
-              break;
-            }
-
-            /* 3. C-s / C-r isearch start/continue */
-            if (ctrl && sym == SDLK_s) {
-              g_vs.search_direction = 1;
-              if (!g_vs.search_active) {
-                g_vs.search_active = 1;
-                g_vs.search_buf[0] = '\0';
-                g_vs.search_len = 0;
-                g_vs.search_match_line = -1;
-              } else {
-                nav_search_find_next(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
-                                 g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col - 1);
-              }
-              break;
-            }
-            if (ctrl && sym == SDLK_r) {
-              g_vs.search_direction = -1;
-              if (!g_vs.search_active) {
-                g_vs.search_active = 1;
-                g_vs.search_buf[0] = '\0';
-                g_vs.search_len = 0;
-                g_vs.search_match_line = -1;
-              } else {
-                nav_search_find_prev(&g_ed, &g_vs, g_vs.search_match_line >= 0 ? g_vs.search_match_line : g_ed.cursor_line,
-                                 g_vs.search_match_col >= 0 ? g_vs.search_match_col : g_ed.cursor_col + 1);
-              }
-              break;
-            }
-
-            /* any non-C-k key clears last_kill_was_k */
-            if (!(ctrl && sym == SDLK_k)) g_ed.last_kill_was_k = 0;
-
-            /* 4. De-globalized command table (commands.c). */
-            if (kern_dispatch_key(&g_ed, &g_vs, e.key.keysym.mod, sym)) break;
-
-            /* 4b. M-g goto-line — lives here (not the commands.c table) because
-               it drives the textview-local minibuffer. */
-            if ((e.key.keysym.mod & KMOD_ALT) && sym == SDLK_g) {
-              cmd_goto_line(); break;
-            }
-
-            /* 5. {Alt,Cmd}+Shift+. / +, → end/beginning of buffer
-               (need shift check, not in table) */
-            {
-              int alt = !!(e.key.keysym.mod & KMOD_ALT);
-              int cmd = !!(e.key.keysym.mod & KMOD_GUI);
-              int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
-              if ((alt || cmd) && shift && sym == SDLK_PERIOD) {
-                cmd_end_of_buffer_alt(&g_ed, &g_vs);
-                /* Option+key can emit a stray text glyph that races past the
-                   modifier guard, so swallow it; Cmd+key emits no text, and
-                   suppressing would eat the user's next real keystroke. */
-                if (alt) g_vs.suppress_next_text = 1;
-                break;
-              }
-              if ((alt || cmd) && shift && sym == SDLK_COMMA) {
-                cmd_beginning_of_buffer_alt(&g_ed, &g_vs);
-                if (alt) g_vs.suppress_next_text = 1;
-                break;
-              }
-            }
-
-            /* 6. Arrow keys — delegate the actual movement to the commands.c
-               functions; here we only add shift-to-select and ctrl/alt
-               word-jump on top. */
-            if (sym == SDLK_LEFT || sym == SDLK_RIGHT ||
-                sym == SDLK_UP || sym == SDLK_DOWN) {
-              int alt = !!(e.key.keysym.mod & KMOD_ALT);
-              if ((e.key.keysym.mod & KMOD_SHIFT) && !g_ed.mark_active)
-                buf_mark_set(&g_ed);
-              switch (sym) {
-                case SDLK_LEFT:
-                  if (ctrl || alt) cmd_backward_word(&g_ed, &g_vs);
-                  else             cmd_backward_char(&g_ed, &g_vs);
-                  break;
-                case SDLK_RIGHT:
-                  if (ctrl || alt) cmd_forward_word(&g_ed, &g_vs);
-                  else             cmd_forward_char(&g_ed, &g_vs);
-                  break;
-                case SDLK_UP:   cmd_previous_line(&g_ed, &g_vs); break;
-                case SDLK_DOWN: cmd_next_line(&g_ed, &g_vs);     break;
-              }
-              break;
-            }
-          }
-          break;
-        }
-      }
-    }
-
-    /* periodic auto-save: write the current file if it changed since the last
-       save. Cheap (just a dirty flag); skipped for the unsaved *scratch*
-       buffer (no path). */
-    {
-      const Uint32 AUTOSAVE_INTERVAL_MS = 3000;   /* "every X seconds" */
-      static Uint32 last_autosave = 0;
-      Uint32 now = kern_now_ms();
-      if (last_autosave == 0) last_autosave = now;
-      if (now - last_autosave >= AUTOSAVE_INTERVAL_MS) {
-        last_autosave = now;
-        if (g_ed.dirty && g_ed.filepath[0] && buf_save(&g_ed, g_ed.filepath) == 0) {
-          nav_status_set(&g_vs, "Auto-saved");
-        }
-      }
-    }
-
-    /* keep the title-bar "Publish to X" button in sync with the connection
-       state (the user may link/unlink X via Settings while running). Cheap
-       in-memory check; only touches AppKit when the state actually flips. */
-    {
-      static int last_x_conn = -1;
-      int c = kern_x_is_connected();
-      if (c != last_x_conn) { last_x_conn = c; kern_titlebar_set_x_connected(c); }
-    }
-
-    do_render();
+    while (SDL_PollEvent(&e)) editor_handle_event(&e);
+    editor_tick();
   }
-
   return 0;
 }
+#endif /* KERN_HEADLESS_TEST */
+
+#ifdef KERN_HEADLESS_TEST
+/* ---- test-only seam: reach the singletons + reset all mutable state ---- */
+EditorState *tv_test_ed(void) { return &g_ed; }
+ViewState   *tv_test_vs(void) { return &g_vs; }
+
+void tv_test_reset(void) {
+  /* free everything g_ed owns first so LeakSanitizer stays quiet across the
+     many resets a test run performs (mirrors tests/ed_fixture.h ed_teardown) */
+  buf_free_all_lines(&g_ed);
+  free(g_ed.lines);
+  free(g_ed.kill_buf);
+  for (int i = 0; i < MAX_UNDO; i++) free(g_ed.undo_stack[i].text);
+  memset(&g_ed, 0, sizeof(g_ed));
+  memset(&g_vs, 0, sizeof(g_vs));
+  g_vs.font_size = 26.0f;
+  g_vs.search_direction = 1;
+  g_vs.search_match_line = -1;
+  g_vs.search_match_col = -1;
+  g_vs.cursor_x = -1;
+  /* modal file-statics that persist across events */
+  minibuf_completing = 0; minibuf_suggest[0] = '\0';
+  bufsw_active = bufsw_listing = bufsw_sel = bufsw_count = 0;
+  nav_back_count = 0; nav_fwd_count = 0;
+  wl_active = wl_count = wl_sel = 0;
+  wl_query[0] = wl_last_query[0] = wl_suppressed[0] = '\0';
+  wl_has_suppress = 0;
+  g_mouse_x = g_mouse_y = g_mouse_down = g_mouse_pressed = 0;
+  g_scroll_animating = g_dim_animating = 0;
+  g_last_autosave = 0;
+  g_last_x_conn = -1;
+}
+#endif /* KERN_HEADLESS_TEST */
+

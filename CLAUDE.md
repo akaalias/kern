@@ -26,7 +26,7 @@ Kern is a macOS text editor — Emacs keybindings/editing model with an iA Write
 All test/perf/coverage commands run from `tests/` (that's where the Makefile lives).
 
 ```sh
-# Headless test suite (ASan + UBSan; LSan on Linux). ~155 tests.
+# Headless test suite (ASan + UBSan; LSan on Linux). ~200 tests.
 cd tests && make test
 
 # Coverage report for the testable core (clang llvm-cov)
@@ -47,9 +47,10 @@ xcodebuild -project application/Kern/Kern.xcodeproj -scheme Kern -configuration 
 
 ## How to verify a change (important)
 
-The test build compiles the **core only** — it does **not** compile `Editor/textview.c`. So:
+The test build compiles the core **plus** `Editor/textview.c` — built with `-DKERN_HEADLESS_TEST`, which `#ifdef`s out only `editor_main`/`resize_event_watcher` (the real-SDL init + blocking loop) and exposes the `tv_test_*` seam. So:
 - Changes to `buffer/editing/undo/navigation/md_render/recent/commands.c` → verify with `make test` (and `make coverage`).
-- Changes to `textview.c` (the SDL event loop, rendering chrome, prefix/wikilink/minibuffer handling) are **not covered by any test** → verify by building the app with `xcodebuild` and launching it. Confirm the app actually has a live pid before claiming it works.
+- Changes to `textview.c`'s **event/dispatch + modal layer** (the `editor_handle_event` switch, prefix chords, wikilink nav, minibuffer, isearch, autosave in `editor_tick`) → covered by `tests/unit_textview.c`, which pumps synthetic `SDL_Event`s through `editor_handle_event` against the stub renderer + `tests/platform_stub.c`. Verify with `make test`.
+- Changes to the parts still **not** compiled in tests — `editor_main` itself, the real-SDL render/init path, AppKit chrome, anything Swift — verify by building the app with `xcodebuild` and launching it. Confirm the app actually has a live pid before claiming it works.
 
 ## Architecture
 
@@ -60,7 +61,7 @@ The test build compiles the **core only** — it does **not** compile `Editor/te
 **Two tiers of `Editor/` code:**
 - *Pure core* — `buffer.c` (lines, file I/O, kill buffer, mark/region, sandbox paths), `editing.c` (all `ed_*` ops), `undo.c` (operation-based, grouped). No renderer dependency.
 - *Renderer-dependent but still headless-testable* — `navigation.c` (wrap, cursor/visual mapping, click-to-cursor, search), `md_render.c` (inline markdown spans + drawing), `commands.c` (the command table + `kern_dispatch_key`), `recent.c` (MRU). These depend only on `renderer.h`, so they compile into *both* the app and the test binary.
-- *Untestable shell* — `textview.c` (~1,300 lines): `editor_main` event loop, frame layout/render, minibuffer, wikilinks, buffer-switch, prefix-chord handlers.
+- *Partly headless-testable shell* — `textview.c` (~1,400 lines): its per-event work (`editor_handle_event`) and per-frame work (`editor_tick`) are extracted from `editor_main` so the modal/dispatch layer (minibuffer, wikilinks, buffer-switch, prefix chords, isearch, autosave) is driven in `tests/unit_textview.c` via the `tv_test_*` seam (`Editor/editor_loop.h`). The remainder — `editor_main`'s real-SDL init + blocking loop and the GL render path — stays app-only.
 
 **Command dispatch.** `commands.c` owns the single binding table `g_commands[]` + `kern_dispatch_key(ed, vs, kmod, sym)`. `textview.c`'s keydown handler calls `kern_dispatch_key` first; only things needing local UI state are handled outside it: `M-g` (minibuffer), the `C-x …` and `ESC`/meta prefix chords (`handle_*_prefix_key`), and the arrow keys (which delegate to the `commands.c` movement functions, layering shift-select + word-jump). Feature tests drive `kern_dispatch_key` directly in `tests/unit_commands.c`.
 
@@ -74,7 +75,8 @@ The test build compiles the **core only** — it does **not** compile `Editor/te
 - **Columns are byte-indexed**, not codepoint-indexed (UTF-8 inserts advance the cursor by byte length).
 - **File paths are sandboxed** via `buf_set_documents_dir()` (set from Swift at launch); when unset (CLI/test builds) paths are used verbatim. User paths resolve under the documents dir via `buf_resolve_path`.
 - **Test layout:** `tests/ed_fixture.h` provides `ed_load`/`ed_teardown`/`LINE()`; `tests/test.h` provides `CHECK`/`CHECK_IEQ`/`CHECK_SEQ` and `RUN`. Each `unit_*.c` exposes one `suite_*()` listed in `test_main.c`. Snapshots prove render parity; they re-implement the text pass, so a `do_render` text-loop refactor won't be caught by goldens.
-- **Coverage reality:** core is ~99% lines / 100% functions; the residual uncovered lines/branches are malloc/IO-failure paths and defensive guards (need fault injection, not more tests). `textview.c` is 0% by design.
+- **Coverage reality:** core is ~99% lines / 100% functions; the residual uncovered lines/branches are malloc/IO-failure paths and defensive guards (need fault injection, not more tests). `textview.c` is ~53% lines (in `COVCORE` now): its event/dispatch + modal handlers are tested; the uncovered remainder is the `do_render`/`process_frame` GL-render chrome and the `#ifdef`'d-out `editor_main`.
+- **Pumping events in tests:** drive `editor_handle_event` with synthetic `SDL_Event`s (`tests/unit_textview.c` has `key()`/`textinput()`/`type()` builders). The modal-routing precedence is real — don't bypass it by calling `handle_*` directly. The wikilink dropdown (`wl_active`) is recomputed inside `do_render`, so activate it by typing then calling `editor_tick()` before sending the accept/dismiss key. `tv_test_reset()` clears `g_ed`/`g_vs` + all modal file-statics between tests; `platform_stub.c` fakes the SDL input-state calls and the `kern_x_*` bridge. **Keep `editor_main` loop-shape-preserving** (wait → drain via `editor_handle_event` → `editor_tick`) — that's what keeps it both snappy and testable.
 - **The main thread is parked by `editor_main`.** It runs SDL's blocking event loop and never returns, so the main thread / main actor is stuck for the app's life. Any Swift feature added to the app **must run off the main actor and report UI through the C status bar** (`kern_x_set_status`). `DispatchQueue.main.async`, main-actor `Task {}`, SwiftUI live updates, and `ASWebAuthenticationSession` all silently deadlock. Background threads (`Task.detached`, GCD, `NWListener`, `URLSession`, `NSWorkspace.open`) work fine. The X publishing layer (`App/KernApp.swift`) is the reference pattern.
 
 ## Docs

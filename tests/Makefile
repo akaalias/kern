@@ -25,26 +25,35 @@ SAN     := -fsanitize=address,undefined -fno-omit-frame-pointer
 INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
 # _GNU_SOURCE exposes POSIX helpers (mkstemp/unlink/mkdir) that glibc hides
 # under -std=c11; harmless on macOS where they're visible by default.
+# KERN_HEADLESS_TEST compiles textview.c's event/dispatch + modal handlers into
+# the test binary (editor_main + the real-SDL render loop stay #ifdef'd out) and
+# enables the tv_test_* seam.
 CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter \
-           $(SAN) $(INCS)
+           -DKERN_HEADLESS_TEST $(SAN) $(INCS)
 LDFLAGS := $(SAN)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
-# the stub). Geometry types (color/rect/vec2) come from gfx.h.
+# the stub). Geometry types (color/rect/vec2) come from gfx.h. textview.c joins
+# this list: its handlers/render compile headlessly via the stub + platform_stub.
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
-           $(APP)/Editor/recent.c $(APP)/Editor/commands.c
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
+           $(APP)/Editor/textview.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
+           platform_stub.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
-           unit_status.c unit_commands.c unit_utf8.c snapshot.c
+           unit_status.c unit_commands.c unit_utf8.c unit_textview.c snapshot.c
 SRC     := $(CORE) $(TESTS)
-HDRS    := test.h ed_fixture.h stub_renderer.h $(APP)/Editor/utf8.h
+HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
+           $(APP)/Editor/utf8.h $(APP)/Editor/editor_loop.h
 
-# Production files we measure line coverage on (the testable Editor core).
+# Production files we measure line coverage on (the testable Editor core +
+# textview.c's now-tested event/dispatch layer).
 COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
-           $(APP)/Editor/recent.c $(APP)/Editor/commands.c
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
+           $(APP)/Editor/textview.c
 
 BIN     := kern_tests
 
@@ -61,7 +70,7 @@ test: $(BIN)
 COV_BIN := kern_cov
 .PHONY: coverage
 coverage:
-	$(CC) -std=c11 -D_GNU_SOURCE -O0 \
+	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
 	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
