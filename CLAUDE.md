@@ -25,6 +25,7 @@ cd tests && make perf CORPUS=../test_100mb.txt    # add PERF_ARGS=--check for CI
 xcodebuild -project application/Kern/Kern.xcodeproj -scheme Kern -configuration Debug build CODE_SIGNING_ALLOWED=NO
 ```
 
+- **Pre-push gate:** `.githooks/pre-push` runs all three CI checks locally before a push and aborts on failure. Activate once per clone with `git config core.hooksPath .githooks`; bypass a single push with `git push --no-verify`. It caches a 25MB perf corpus at `tests/perf_corpus.txt` (gitignored; override with `KERN_PERF_CORPUS`).
 - **Running a single test:** the harness has no name filter. To narrow, comment out `RUN(...)` lines or `suite_*()` calls in `tests/test_main.c`.
 - **Snapshot goldens:** after an *intentional* render change, regenerate with `KERN_UPDATE_SNAPSHOTS=1 make test` (goldens live in `tests/snapshots/`).
 - **Run the built app:** `open` the product under `~/Library/Developer/Xcode/DerivedData/Kern-*/Build/Products/Debug/Kern.app`, or ⌘R in Xcode.

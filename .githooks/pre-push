@@ -1,0 +1,42 @@
+#!/bin/sh
+# pre-push — gate every push on the same three checks CI runs, locally, before
+# anything reaches the remote. Any failure aborts the push.
+#
+#   1. Headless core tests   (ASan/UBSan)
+#   2. Core line coverage    (>= 85% floor, same as CI)
+#   3. Performance smoke      (--check budgets)
+#
+# Bypass for a single push (e.g. docs-only WIP):  git push --no-verify
+# Override the perf corpus path:                  KERN_PERF_CORPUS=/path git push
+#
+# Activated via:  git config core.hooksPath .githooks   (run once per clone)
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "==> pre-push 1/3: headless core tests"
+make -C tests --no-print-directory test
+
+echo "==> pre-push 2/3: core coverage (>= 85% lines)"
+if ! cov=$(make -C tests --no-print-directory coverage 2>&1); then
+  printf '%s\n' "$cov" >&2
+  echo "pre-push: coverage build failed — push aborted" >&2
+  exit 1
+fi
+printf '%s\n' "$cov" | grep -E 'Filename|%' || true
+pct=$(printf '%s\n' "$cov" | awk '/^TOTAL/ { gsub("%","",$10); print $10 }')
+echo "   core line coverage: ${pct:-0}%"
+awk "BEGIN { exit !(${pct:-0} >= 85.0) }" || {
+  echo "pre-push: core line coverage ${pct:-0}% is below the 85% floor — push aborted" >&2
+  exit 1
+}
+
+echo "==> pre-push 3/3: performance smoke"
+corpus="${KERN_PERF_CORPUS:-$(pwd)/tests/perf_corpus.txt}"
+if [ ! -f "$corpus" ]; then
+  echo "   generating 25MB perf corpus (one-time): $corpus"
+  python3 tools/gen_prose.py 25MB "$corpus"
+fi
+make -C tests --no-print-directory perf CORPUS="$corpus" PERF_ARGS=--check
+
+echo "==> pre-push: all checks passed"
