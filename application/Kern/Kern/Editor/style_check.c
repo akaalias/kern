@@ -7,8 +7,17 @@
 /* A pattern is one or more lowercase words separated by single spaces, matched
    against whole word tokens (so "just" never matches inside "adjust"). Multi-word
    entries match a consecutive token run. Curated for precision over recall: each
-   entry is cuttable in (almost) any context, so we don't need sentence parsing. */
-struct Pattern { const char *words; unsigned char category; };
+   entry is cuttable in (almost) any context, so we don't need sentence parsing.
+
+   cut_from/cut_len select which tokens of the match to *strike* — for a
+   redundancy the cuttable word(s) only, so the word you keep stays unmarked
+   ("added bonus" strikes just "added"). cut_len == 0 means the whole match
+   (fillers cut entirely; clichés underline the whole phrase). */
+struct Pattern {
+  const char *words;
+  unsigned char category;
+  unsigned char cut_from, cut_len;
+};
 
 static const struct Pattern k_patterns[] = {
   /* fillers — hedges and intensifiers that can usually go */
@@ -20,16 +29,25 @@ static const struct Pattern k_patterns[] = {
   { "definitely", STYLE_FILLER }, { "certainly", STYLE_FILLER }, { "probably", STYLE_FILLER },
   { "of course", STYLE_FILLER }, { "in order to", STYLE_FILLER },
   { "kind of", STYLE_FILLER }, { "sort of", STYLE_FILLER },
-  /* redundancies — phrases that say a thing twice */
-  { "added bonus", STYLE_REDUNDANCY }, { "totally complete", STYLE_REDUNDANCY },
-  { "end result", STYLE_REDUNDANCY }, { "free gift", STYLE_REDUNDANCY },
-  { "past history", STYLE_REDUNDANCY }, { "past experience", STYLE_REDUNDANCY },
-  { "basic fundamentals", STYLE_REDUNDANCY }, { "final outcome", STYLE_REDUNDANCY },
-  { "unexpected surprise", STYLE_REDUNDANCY }, { "advance warning", STYLE_REDUNDANCY },
-  { "close proximity", STYLE_REDUNDANCY }, { "future plans", STYLE_REDUNDANCY },
-  { "personal opinion", STYLE_REDUNDANCY }, { "exact same", STYLE_REDUNDANCY },
-  { "each and every", STYLE_REDUNDANCY }, { "first and foremost", STYLE_REDUNDANCY },
-  { "null and void", STYLE_REDUNDANCY },
+  /* redundancies — phrases that say a thing twice; strike only the cuttable
+     word(s) (cut_from, cut_len), leaving the word you keep unmarked */
+  { "added bonus", STYLE_REDUNDANCY, 0, 1 },     /* keep "bonus"        */
+  { "totally complete", STYLE_REDUNDANCY, 0, 1 },/* keep "complete"     */
+  { "end result", STYLE_REDUNDANCY, 0, 1 },      /* keep "result"       */
+  { "free gift", STYLE_REDUNDANCY, 0, 1 },
+  { "past history", STYLE_REDUNDANCY, 0, 1 },
+  { "past experience", STYLE_REDUNDANCY, 0, 1 },
+  { "basic fundamentals", STYLE_REDUNDANCY, 0, 1 },
+  { "final outcome", STYLE_REDUNDANCY, 0, 1 },
+  { "unexpected surprise", STYLE_REDUNDANCY, 0, 1 },
+  { "advance warning", STYLE_REDUNDANCY, 0, 1 },
+  { "close proximity", STYLE_REDUNDANCY, 0, 1 },
+  { "future plans", STYLE_REDUNDANCY, 0, 1 },
+  { "personal opinion", STYLE_REDUNDANCY, 0, 1 },
+  { "exact same", STYLE_REDUNDANCY, 0, 1 },
+  { "each and every", STYLE_REDUNDANCY, 0, 2 },  /* keep "every": cut "each and" */
+  { "first and foremost", STYLE_REDUNDANCY, 1, 2 }, /* keep "first": cut "and foremost" */
+  { "null and void", STYLE_REDUNDANCY, 0, 2 },   /* keep "void": cut "null and" */
   /* clichés — tired stock phrases */
   { "at the end of the day", STYLE_CLICHE }, { "think outside the box", STYLE_CLICHE },
   { "outside the box", STYLE_CLICHE }, { "low hanging fruit", STYLE_CLICHE },
@@ -104,18 +122,24 @@ static int style_scan(const char *text, int len, StyleSpan *out, int max) {
   int ntok = tokenize(text, len, toks, MAX_TOK);
   int n = 0, s = 0;
   while (s < ntok && n < max) {
-    int best_len = 0;
-    unsigned char best_cat = STYLE_NONE;
+    int best_len = 0, best_p = -1;
     for (int p = 0; p < N_PATTERNS; p++) {
       int m = match_at(text, toks, ntok, s, k_patterns[p].words);
-      if (m > best_len) { best_len = m; best_cat = k_patterns[p].category; }
+      if (m > best_len) { best_len = m; best_p = p; }
     }
     if (best_len > 0) {
-      out[n].start = toks[s].start;
-      out[n].end   = toks[s + best_len - 1].end;
-      out[n].category = best_cat;
+      const struct Pattern *pat = &k_patterns[best_p];
+      /* decorate only the cuttable tokens (cut_len 0 = the whole match) */
+      int from = pat->cut_len ? s + pat->cut_from : s;
+      int to   = pat->cut_len ? s + pat->cut_from + pat->cut_len - 1 : s + best_len - 1;
+      if (to > s + best_len - 1) to = s + best_len - 1;   /* clamp bad data */
+      out[n].start = toks[from].start;
+      out[n].end   = toks[to].end;
+      out[n].category = pat->category;
+      out[n].decor = (pat->category == STYLE_CLICHE) ? STYLE_DECOR_UNDERLINE
+                                                     : STYLE_DECOR_STRIKE;
       n++;
-      s += best_len;          /* don't overlap a match with the next */
+      s += best_len;          /* advance past the whole match, no overlap */
     } else {
       s++;
     }
@@ -143,14 +167,16 @@ int style_line_spans(Line *l, const StyleSpan **out) {
   return l->style_span_count;
 }
 
-int style_struck_at(Line *l, unsigned int style_mask, int col) {
-  if (!style_mask) return 0;
+StyleDecor style_decor_at(Line *l, unsigned int style_mask, int col) {
+  if (!style_mask) return STYLE_DECOR_NONE;
   const StyleSpan *spans;
   int n = style_line_spans(l, &spans);
   for (int i = 0; i < n; i++) {
     if (col < spans[i].start) break;
-    if (col < spans[i].end)
-      return (style_mask & STYLE_BIT(spans[i].category)) != 0;
+    if (col < spans[i].end) {
+      if (style_mask & STYLE_BIT(spans[i].category)) return (StyleDecor)spans[i].decor;
+      return STYLE_DECOR_NONE;   /* covered, but category masked off */
+    }
   }
-  return 0;
+  return STYLE_DECOR_NONE;
 }

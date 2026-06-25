@@ -30,14 +30,15 @@ static void test_filler(void) {
   const StyleSpan *sp;
   int n = style_line_spans(&l, &sp);
   CHECK_IEQ(n, 1);
-  CHECK_IEQ(sp[0].start, 7);  CHECK_IEQ(sp[0].end, 13);   /* "really" */
+  CHECK_IEQ(sp[0].start, 7);  CHECK_IEQ(sp[0].end, 13);   /* whole word "really" */
   CHECK_IEQ(sp[0].category, STYLE_FILLER);
+  CHECK_IEQ(sp[0].decor, STYLE_DECOR_STRIKE);
   CHECK_IEQ(cat_at(&l, 9), STYLE_FILLER);
   CHECK_IEQ(cat_at(&l, 2), STYLE_NONE);   /* "felt" is fine */
   freeline(&l);
 }
 
-/* A multi-word redundancy spans the whole phrase, marker to marker. */
+/* A redundancy strikes only its cuttable word; the kept word stays unmarked. */
 static void test_redundancy_phrase(void) {
   /*            0         1
                 0123456789012345678 */
@@ -45,11 +46,20 @@ static void test_redundancy_phrase(void) {
   const StyleSpan *sp;
   int n = style_line_spans(&l, &sp);
   CHECK_IEQ(n, 1);
-  CHECK_IEQ(sp[0].start, 3);   CHECK_IEQ(sp[0].end, 14);  /* "added bonus" */
+  CHECK_IEQ(sp[0].start, 3);   CHECK_IEQ(sp[0].end, 8);   /* just "added" */
   CHECK_IEQ(sp[0].category, STYLE_REDUNDANCY);
-  CHECK_IEQ(cat_at(&l, 5), STYLE_REDUNDANCY);    /* inside "added" */
-  CHECK_IEQ(cat_at(&l, 11), STYLE_REDUNDANCY);   /* inside "bonus" */
+  CHECK_IEQ(sp[0].decor, STYLE_DECOR_STRIKE);
+  CHECK_IEQ(cat_at(&l, 5), STYLE_REDUNDANCY);    /* inside "added" (struck) */
+  CHECK_IEQ(cat_at(&l, 11), STYLE_NONE);         /* "bonus" is kept */
   CHECK_IEQ(cat_at(&l, 16), STYLE_NONE);         /* "here" */
+
+  /* an "X and Y" doublet cuts its redundant side: "each and" struck, "every" kept */
+  /*             0         1
+                 012345678901234 */
+  Line d = mkline("each and every");
+  CHECK_IEQ(cat_at(&d, 0), STYLE_REDUNDANCY);    /* "each" struck */
+  CHECK_IEQ(cat_at(&d, 9), STYLE_NONE);          /* "every" kept */
+  freeline(&d);
   freeline(&l);
 }
 
@@ -72,7 +82,9 @@ static void test_cliche(void) {
   CHECK_IEQ(n, 2);
   CHECK_IEQ(sp[0].start, 0);   CHECK_IEQ(sp[0].end, 9);   /* "Obviously" */
   CHECK_IEQ(sp[0].category, STYLE_CLICHE);
-  CHECK_IEQ(sp[1].category, STYLE_CLICHE);                /* "at the end of the day" */
+  CHECK_IEQ(sp[0].decor, STYLE_DECOR_UNDERLINE);          /* clichés underline */
+  CHECK_IEQ(sp[1].category, STYLE_CLICHE);                /* whole "at the end of the day" */
+  CHECK_IEQ(sp[1].decor, STYLE_DECOR_UNDERLINE);
   CHECK_IEQ(cat_at(&l, 14), STYLE_CLICHE);                /* inside the phrase */
   freeline(&l);
 
@@ -82,21 +94,22 @@ static void test_cliche(void) {
   freeline(&h);
 }
 
-/* style_struck_at honors the mask: a disabled category doesn't strike. */
+/* style_decor_at honors the mask: a disabled category isn't decorated. */
 static void test_masking(void) {
   /*            0         1
                 012345678901234567 */
-  Line l = mkline("really added bonus");  /* filler + redundancy */
+  Line l = mkline("really added bonus");  /* filler + redundancy ("added") */
 
-  CHECK_IEQ(style_struck_at(&l, 0, 2), 0);                  /* off */
+  CHECK_IEQ(style_decor_at(&l, 0, 2), STYLE_DECOR_NONE);                 /* off */
 
   unsigned int fillers = STYLE_BIT(STYLE_FILLER);
-  CHECK_IEQ(style_struck_at(&l, fillers, 2), 1);            /* "really" */
-  CHECK_IEQ(style_struck_at(&l, fillers, 9), 0);            /* redundancy masked off */
+  CHECK_IEQ(style_decor_at(&l, fillers, 2), STYLE_DECOR_STRIKE);         /* "really" */
+  CHECK_IEQ(style_decor_at(&l, fillers, 9), STYLE_DECOR_NONE);           /* redundancy off */
 
-  CHECK_IEQ(style_struck_at(&l, STYLE_MASK_ALL, 2), 1);
-  CHECK_IEQ(style_struck_at(&l, STYLE_MASK_ALL, 9), 1);
-  CHECK_IEQ(style_struck_at(&l, STYLE_MASK_ALL, 6), 0);     /* the space */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 2), STYLE_DECOR_STRIKE);  /* "really" */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 9), STYLE_DECOR_STRIKE);  /* "added" cut word */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 15), STYLE_DECOR_NONE);   /* "bonus" kept */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 6), STYLE_DECOR_NONE);    /* the space */
   freeline(&l);
 }
 
@@ -124,7 +137,7 @@ static void test_no_false_positives(void) {
 
   Line e = mkline("");
   CHECK_IEQ(style_line_spans(&e, &sp), 0);
-  CHECK_IEQ(style_struck_at(&e, STYLE_MASK_ALL, 0), 0);
+  CHECK_IEQ(style_decor_at(&e, STYLE_MASK_ALL, 0), STYLE_DECOR_NONE);
   freeline(&e);
 }
 

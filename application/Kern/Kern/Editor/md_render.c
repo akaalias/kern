@@ -270,10 +270,12 @@ float md_draw_text(Line *l, int start, int end,
       if (pos_color_at(l, g_syntax_mask, i, &pc)) fg = pc;
     }
 
-    /* Style check: a cuttable word is greyed and struck through, overriding any
-       markdown or POS color — it reads as "delete me". */
-    int struck = g_style_mask && style_struck_at(l, g_style_mask, i);
-    if (struck) fg = strike_fg;
+    /* Style check: cuttable text (fillers, the redundant word) is greyed and
+       struck — "delete me"; a cliché gets a wavy underline with its color kept,
+       since it wants rewriting, not deletion. */
+    StyleDecor decor = g_style_mask ? style_decor_at(l, g_style_mask, i)
+                                    : STYLE_DECOR_NONE;
+    if (decor == STYLE_DECOR_STRIKE) fg = strike_fg;
 
     if (i == track_cursor_col) *out_cursor_x = (int)px;
 
@@ -291,14 +293,16 @@ float md_draw_text(Line *l, int start, int end,
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
       r_draw_text(ch, vec2((int)px, (int)y), md_fade(fg, op));
-      if (struck) {
-        /* a lightly scribbled strike: short dashes with a ±1px hand-drawn
-           wobble keyed to absolute x, so it wavers as one line across the word */
-        int sy = (int)y + (int)(font_h * 0.45f);
+      if (decor != STYLE_DECOR_NONE) {
+        /* a lightly scribbled line: short dashes with a ±1px hand-drawn wobble
+           keyed to absolute x, so it wavers as one continuous line across the
+           word. A strike rides the x-height (delete); an underline rides the
+           baseline (rewrite). */
+        int dy = (int)y + (int)(font_h * (decor == STYLE_DECOR_UNDERLINE ? 0.92f : 0.45f));
         for (int sx = (int)px; sx < (int)px + w; sx += 3) {
           int seg = (int)px + w - sx; if (seg > 3) seg = 3;
           int woff = wave[(sx / 3) & 3] - 1;   /* {0,1,2,1} -> -1,0,1,0 */
-          r_draw_rect(rect(sx, sy + woff, seg, strike_thick), md_fade(strike_fg, op));
+          r_draw_rect(rect(sx, dy + woff, seg, strike_thick), md_fade(strike_fg, op));
         }
       }
     }

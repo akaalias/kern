@@ -22,9 +22,24 @@ typedef enum {
   STYLE_CATEGORY_COUNT
 } StyleCategory;
 
-/* A cuttable run: byte range [start,end) into the line text and its category.
-   Tagged so editor_types.h can forward-declare it for the per-line cache. */
-typedef struct StyleSpan { int start, end; unsigned char category; } StyleSpan;
+/* How a span is drawn, chosen by the action the category implies:
+   - STRIKE: greyed + struck — "delete this" (fillers; the cuttable word of a
+     redundancy, so the kept word stays unmarked);
+   - UNDERLINE: a wavy underline, text kept readable — "rewrite this" (clichés). */
+typedef enum {
+  STYLE_DECOR_NONE = 0,
+  STYLE_DECOR_STRIKE,
+  STYLE_DECOR_UNDERLINE
+} StyleDecor;
+
+/* A flagged run: the byte range [start,end) to *decorate* (for a redundancy this
+   is just the cuttable word, not the whole phrase), its category, and how to draw
+   it. Tagged so editor_types.h can forward-declare it for the per-line cache. */
+typedef struct StyleSpan {
+  int start, end;
+  unsigned char category;   /* StyleCategory, for masking */
+  unsigned char decor;      /* StyleDecor */
+} StyleSpan;
 
 #define STYLE_MAX_SPANS  256
 #define STYLE_BIT(cat)   (1u << (cat))
@@ -36,8 +51,8 @@ typedef struct StyleSpan { int start, end; unsigned char category; } StyleSpan;
    count; *out receives the span array, owned by the line. */
 int style_line_spans(Line *l, const StyleSpan **out);
 
-/* Whether byte `col` of line `l` falls in a struck span whose category is
-   enabled by `style_mask`. */
-int style_struck_at(Line *l, unsigned int style_mask, int col);
+/* The decoration to draw at byte `col` of line `l` — STYLE_DECOR_NONE unless a
+   span whose category is enabled by `style_mask` covers the column. */
+StyleDecor style_decor_at(Line *l, unsigned int style_mask, int col);
 
 #endif /* STYLE_CHECK_H */
