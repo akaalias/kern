@@ -43,6 +43,11 @@ void md_set_text_opacity(float o);
    md_draw_text output. The render pass sets it from ViewState.syntax_mask. */
 void md_set_syntax_mask(unsigned int m);
 
+/* Set the style-check mask (bit per StyleCategory; 0 = off) used by subsequent
+   md_draw_text output. The render pass sets it from ViewState.style_mask;
+   cuttable words within it are greyed and struck through. */
+void md_set_style_mask(unsigned int m);
+
 /* Opacity for a line mid focus-crossfade: the focused line `cur` fades up from
    FOCUS_DIM_OPACITY→1, the line just left `prev` fades 1→dim, others stay dim.
    t in [0,1] is the crossfade progress (1 = settled). */

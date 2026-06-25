@@ -22,6 +22,7 @@
 /* ---- line ---- */
 struct MdSpan;          /* inline-markdown span; defined in md_render.c */
 struct PosSpan;         /* part-of-speech span; defined in pos_tagger.h */
+struct StyleSpan;       /* cuttable-text span; defined in style_check.h */
 typedef struct {
   char *text;
   int   len;
@@ -31,6 +32,8 @@ typedef struct {
   int   md_span_count;          /* spans in md_spans; -1 = not yet computed */
   struct PosSpan *pos_spans;    /* cached part-of-speech span map (lazy, owned) */
   int   pos_span_count;         /* spans in pos_spans; -1 = not yet computed */
+  struct StyleSpan *style_spans; /* cached cuttable-span map (lazy, owned) */
+  int   style_span_count;       /* spans in style_spans; -1 = not yet computed */
 } Line;
 
 /* ---- undo (operation-based) ---- */
@@ -121,6 +124,10 @@ struct ViewState {
   /* syntax highlighting: bit per PosClass to color (0 = off, the default).
      See pos_render.h (SYNTAX_MASK_ALL / POS_BIT). */
   unsigned int syntax_mask;
+
+  /* style check: bit per StyleCategory to strike (0 = off, the default).
+     See style_check.h (STYLE_MASK_ALL / STYLE_BIT). */
+  unsigned int style_mask;
 
   /* typewriter mode: pin the active line at a fixed fraction of the page */
   int    typewriter_mode;

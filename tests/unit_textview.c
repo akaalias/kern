@@ -13,6 +13,7 @@
 #include "buffer.h"
 #include "clock_fake.h"
 #include "pos_render.h"
+#include "style_check.h"
 #include "renderer.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
@@ -124,6 +125,18 @@ static void test_cx_y_toggles_syntax(void) {
   key(KMOD_CTRL, SDLK_x);
   key(0, SDLK_y);                          /* C-x y again turns it off */
   CHECK_IEQ(VS->syntax_mask, 0);
+}
+
+static void test_cx_s_toggles_style_check(void) {
+  tv_begin(); load("hi");
+  CHECK_IEQ(VS->style_mask, 0);            /* off by default */
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_s);                          /* C-x s turns it on */
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);
+  CHECK_IEQ(VS->style_mask, STYLE_MASK_ALL);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_s);                          /* C-x s again turns it off */
+  CHECK_IEQ(VS->style_mask, 0);
 }
 
 static void test_cx_cf_opens_find_minibuffer(void) {
@@ -439,6 +452,7 @@ void suite_textview(void) {
   /* prefix chords */
   RUN(test_cx_prefix_sets_and_clears);
   RUN(test_cx_y_toggles_syntax);
+  RUN(test_cx_s_toggles_style_check);
   RUN(test_cx_cf_opens_find_minibuffer);
   RUN(test_cx_unrecognized_still_clears_prefix);
   RUN(test_esc_clears_mark_else_starts_meta);

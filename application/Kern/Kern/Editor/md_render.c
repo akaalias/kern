@@ -4,6 +4,7 @@
 #include <string.h>
 #include "md_render.h"
 #include "pos_render.h"
+#include "style_check.h"
 #include "renderer.h"
 #include "utf8.h"
 
@@ -195,6 +196,11 @@ void md_set_text_opacity(float o) { g_text_opacity = o; }
 static unsigned int g_syntax_mask = 0;
 void md_set_syntax_mask(unsigned int m) { g_syntax_mask = m; }
 
+/* Active style-check mask (bit per StyleCategory; 0 = off). Set per frame from
+   ViewState.style_mask; cuttable words within it are greyed and struck through. */
+static unsigned int g_style_mask = 0;
+void md_set_style_mask(unsigned int m) { g_style_mask = m; }
+
 static Color md_fade(Color c, float o) {
   return color(c.r, c.g, c.b, (int)(c.a * o + 0.5f));
 }
@@ -221,6 +227,8 @@ float md_draw_text(Line *l, int start, int end,
   Color link_bg = color(80, 50, 120, 255);
   Color code_fg = color(180, 140, 100, 255);
   Color hl_bg   = color(240, 214, 92, 70);   /* soft highlighter yellow */
+  Color strike_fg = color(120, 116, 111, 255); /* greyed cuttable text */
+  int strike_thick = font_h >= 24 ? 2 : 1;
   static const int wave[4] = { 0, 1, 2, 1 };       /* hand-drawn wobble */
 
   const struct MdSpan *spans;
@@ -262,6 +270,11 @@ float md_draw_text(Line *l, int start, int end,
       if (pos_color_at(l, g_syntax_mask, i, &pc)) fg = pc;
     }
 
+    /* Style check: a cuttable word is greyed and struck through, overriding any
+       markdown or POS color — it reads as "delete me". */
+    int struck = g_style_mask && style_struck_at(l, g_style_mask, i);
+    if (struck) fg = strike_fg;
+
     if (i == track_cursor_col) *out_cursor_x = (int)px;
 
     int n = utf8_len(text + i, end - i);          /* draw a whole codepoint */
@@ -278,6 +291,16 @@ float md_draw_text(Line *l, int start, int end,
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
       r_draw_text(ch, vec2((int)px, (int)y), md_fade(fg, op));
+      if (struck) {
+        /* a lightly scribbled strike: short dashes with a ±1px hand-drawn
+           wobble keyed to absolute x, so it wavers as one line across the word */
+        int sy = (int)y + (int)(font_h * 0.45f);
+        for (int sx = (int)px; sx < (int)px + w; sx += 3) {
+          int seg = (int)px + w - sx; if (seg > 3) seg = 3;
+          int woff = wave[(sx / 3) & 3] - 1;   /* {0,1,2,1} -> -1,0,1,0 */
+          r_draw_rect(rect(sx, sy + woff, seg, strike_thick), md_fade(strike_fg, op));
+        }
+      }
     }
     px += w;
     i += n;

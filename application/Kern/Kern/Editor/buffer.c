@@ -159,11 +159,15 @@ void line_init(Line *l, const char *s, int len) {
   l->md_span_count = -1;
   l->pos_spans = NULL;
   l->pos_span_count = -1;
+  l->style_spans = NULL;
+  l->style_span_count = -1;
 }
 
-/* any edit invalidates this line's cached wraps, inline-span map, and POS tags */
+/* any edit invalidates this line's cached wraps, inline spans, POS tags, and
+   style-check spans */
 void line_dirty(Line *l) {
-  l->wrap_count = -1; l->md_span_count = -1; l->pos_span_count = -1;
+  l->wrap_count = -1; l->md_span_count = -1;
+  l->pos_span_count = -1; l->style_span_count = -1;
 }
 
 void buf_ensure_lines_cap(EditorState *ed, int need) {
@@ -186,6 +190,7 @@ void buf_delete_line_at(EditorState *ed, int idx) {
   free(ed->lines[idx].text);
   free(ed->lines[idx].md_spans);
   free(ed->lines[idx].pos_spans);
+  free(ed->lines[idx].style_spans);
   memmove(&ed->lines[idx], &ed->lines[idx + 1], (ed->line_count - idx - 1) * sizeof(Line));
   ed->line_count--;
 }
@@ -258,6 +263,7 @@ void buf_free_all_lines(EditorState *ed) {
     free(ed->lines[i].text);
     free(ed->lines[i].md_spans);
     free(ed->lines[i].pos_spans);
+    free(ed->lines[i].style_spans);
   }
   ed->line_count = 0;
 }
