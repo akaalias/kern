@@ -48,12 +48,14 @@ SRC     := $(CORE) $(TESTS)
 HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
            $(APP)/Editor/utf8.h $(APP)/Editor/editor_loop.h
 
-# Production files we measure line coverage on (the testable Editor core +
-# textview.c's now-tested event/dispatch layer).
+# Production files the gated coverage floor (>=85% lines) measures: the testable
+# Editor core, which is ~99% saturated. textview.c is intentionally NOT here — it
+# is a partly-tested shell (its event/dispatch layer is covered by unit_textview.c,
+# but the do_render/process_frame GL chrome is not), so folding it into the gated
+# number would mask the core's saturation. Use `make coverage-textview` to see it.
 COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
-           $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
-           $(APP)/Editor/textview.c
+           $(APP)/Editor/recent.c $(APP)/Editor/commands.c
 
 BIN     := kern_tests
 
@@ -75,6 +77,18 @@ coverage:
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
 	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
+	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
+
+# Non-gated: coverage of textview.c's event/dispatch layer (unit_textview.c).
+# The uncovered remainder is the do_render/process_frame GL chrome + the
+# #ifdef'd-out editor_main, neither reachable from the headless harness.
+.PHONY: coverage-textview
+coverage-textview:
+	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
+	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
+	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
+	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(APP)/Editor/textview.c
 	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
 
 # ---- performance harness ----
