@@ -39,6 +39,10 @@ int md_col_x(Line *l, int start, int end, int x0, int heading, int col);
    (1.0 = full). Typewriter mode fades non-focused lines; reset to 1.0 after. */
 void md_set_text_opacity(float o);
 
+/* Set the syntax-highlight mask (bit per PosClass; 0 = off) used by subsequent
+   md_draw_text output. The render pass sets it from ViewState.syntax_mask. */
+void md_set_syntax_mask(unsigned int m);
+
 /* Opacity for a line mid focus-crossfade: the focused line `cur` fades up from
    FOCUS_DIM_OPACITY→1, the line just left `prev` fades 1→dim, others stay dim.
    t in [0,1] is the crossfade progress (1 = settled). */

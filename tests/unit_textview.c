@@ -12,6 +12,7 @@
 #include "editor_types.h"
 #include "buffer.h"
 #include "clock_fake.h"
+#include "pos_render.h"
 #include "renderer.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
@@ -111,6 +112,18 @@ static void test_cx_prefix_sets_and_clears(void) {
   key(0, SDLK_t);
   CHECK_IEQ(VS->ctrl_x_prefix, 0);
   CHECK_IEQ(VS->typewriter_mode, 1);
+}
+
+static void test_cx_y_toggles_syntax(void) {
+  tv_begin(); load("hi");
+  CHECK_IEQ(VS->syntax_mask, 0);          /* off by default */
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_y);                          /* C-x y turns it on */
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);         /* prefix cleared */
+  CHECK_IEQ(VS->syntax_mask, SYNTAX_MASK_ALL);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_y);                          /* C-x y again turns it off */
+  CHECK_IEQ(VS->syntax_mask, 0);
 }
 
 static void test_cx_cf_opens_find_minibuffer(void) {
@@ -425,6 +438,7 @@ static void test_autosave_skips_clean_and_scratch(void) {
 void suite_textview(void) {
   /* prefix chords */
   RUN(test_cx_prefix_sets_and_clears);
+  RUN(test_cx_y_toggles_syntax);
   RUN(test_cx_cf_opens_find_minibuffer);
   RUN(test_cx_unrecognized_still_clears_prefix);
   RUN(test_esc_clears_mark_else_starts_meta);

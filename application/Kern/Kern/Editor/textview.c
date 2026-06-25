@@ -14,6 +14,8 @@
 #include "navigation.h"
 #include "editing.h"
 #include "md_render.h"
+#include "pos_render.h"
+#include "pos_tagger.h"
 #include "undo.h"
 #include "recent.h"
 #include "clipboard.h"
@@ -791,6 +793,13 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     g_vs.suppress_next_text = 1;   /* swallow the "t" text event that triggered this */
     return 1;
   }
+  if (!ctrl && sym == SDLK_y) {                                       /* C-x y */
+    g_vs.syntax_mask = g_vs.syntax_mask ? 0 : SYNTAX_MASK_ALL;
+    nav_status_set(&g_vs, g_vs.syntax_mask ? "Syntax highlight on"
+                                           : "Syntax highlight off");
+    g_vs.suppress_next_text = 1;   /* swallow the "y" text event */
+    return 1;
+  }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -900,6 +909,7 @@ static void do_render(void) {
   r_set_font_style(FONT_REGULAR);
   r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
   Color text_color = color(204, 200, 195, 255);
+  md_set_syntax_mask(g_vs.syntax_mask);   /* POS coloring (0 = off) for this pass */
   g_vs.cursor_x = -1;
   for (int i = 0; i < g_vs.vis_row_count; i++) {
     VisRow *vr = &g_vs.vis_rows[i];
@@ -949,6 +959,7 @@ static void do_render(void) {
     r_set_font_style(FONT_REGULAR);
   }
   md_set_text_opacity(1.0f);   /* don't leak the focus dim past the text pass */
+  md_set_syntax_mask(0);       /* status bar etc. draw in their own colors */
 
   /* draw cursor (post-render, uses markdown-aware x position) */
   int cursor_py = -1;
@@ -1406,6 +1417,7 @@ int editor_main(int argc, char **argv) {
   g_vs.cursor_x = -1;
   if (!g_ed.filename) g_ed.filename = "*scratch*";
   r_init();
+  pos_tagger_warm();   /* pay the POS model-load cost now, before the first frame */
   r_set_font_size(g_vs.font_size);
   r_set_title(g_ed.filename);
   macos_style_window(r_get_window());

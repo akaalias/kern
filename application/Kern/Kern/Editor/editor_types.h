@@ -21,6 +21,7 @@
 
 /* ---- line ---- */
 struct MdSpan;          /* inline-markdown span; defined in md_render.c */
+struct PosSpan;         /* part-of-speech span; defined in pos_tagger.h */
 typedef struct {
   char *text;
   int   len;
@@ -28,6 +29,8 @@ typedef struct {
   int   wrap_count;             /* cached visual line count, -1 = dirty */
   struct MdSpan *md_spans;      /* cached inline-span map (lazy, owned) */
   int   md_span_count;          /* spans in md_spans; -1 = not yet computed */
+  struct PosSpan *pos_spans;    /* cached part-of-speech span map (lazy, owned) */
+  int   pos_span_count;         /* spans in pos_spans; -1 = not yet computed */
 } Line;
 
 /* ---- undo (operation-based) ---- */
@@ -114,6 +117,10 @@ struct ViewState {
   VisRow vis_rows[MAX_VIS_ROWS];
   int    vis_row_count;
   int    cursor_x;   /* computed during markdown draw, -1 if off-screen */
+
+  /* syntax highlighting: bit per PosClass to color (0 = off, the default).
+     See pos_render.h (SYNTAX_MASK_ALL / POS_BIT). */
+  unsigned int syntax_mask;
 
   /* typewriter mode: pin the active line at a fixed fraction of the page */
   int    typewriter_mode;

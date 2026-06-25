@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "md_render.h"
+#include "pos_render.h"
 #include "renderer.h"
 #include "utf8.h"
 
@@ -188,6 +189,12 @@ static int md_line_spans(Line *l, const struct MdSpan **out) {
 static float g_text_opacity = 1.0f;
 void md_set_text_opacity(float o) { g_text_opacity = o; }
 
+/* Active syntax-highlight mask (bit per PosClass; 0 = off). Like g_text_opacity,
+   a module global so the many md_draw_text callers don't thread it through. The
+   render pass sets it from ViewState.syntax_mask each frame. */
+static unsigned int g_syntax_mask = 0;
+void md_set_syntax_mask(unsigned int m) { g_syntax_mask = m; }
+
 static Color md_fade(Color c, float o) {
   return color(c.r, c.g, c.b, (int)(c.a * o + 0.5f));
 }
@@ -243,6 +250,16 @@ float md_draw_text(Line *l, int start, int end,
           case SP_HL:     bg = 2; break;
         }
       }
+    }
+
+    /* Part-of-speech coloring layers on top of markdown: it recolors only runs
+       markdown left at the base color, so links/code/delimiters keep their hue,
+       while bold/italic words keep their weight and take the POS color. */
+    if (g_syntax_mask &&
+        fg.r == base_color.r && fg.g == base_color.g &&
+        fg.b == base_color.b && fg.a == base_color.a) {
+      Color pc;
+      if (pos_color_at(l, g_syntax_mask, i, &pc)) fg = pc;
     }
 
     if (i == track_cursor_col) *out_cursor_x = (int)px;
