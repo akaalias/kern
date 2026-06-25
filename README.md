@@ -105,14 +105,58 @@ Markdown headings, bold, and italic are styled live as you type.
 | `Cmd-Enter`                   | Follow the `[[wikilink]]` under the cursor        |
 | `Cmd-Shift-←` / `Cmd-Shift-→` | Back / forward through note history               |
 | `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
+| `Cmd-Shift-T`                 | Publish the current note (or selection) to X / Twitter |
+
+## Publishing to X (Twitter)
+
+`Cmd-Shift-T` posts the note you're viewing — or the marked region, if one is
+active — straight to your X timeline. Progress and results appear in the editor's
+status bar (`Posted to X ✓`).
+
+**One-time setup**
+
+1. **Create an X app** at [console.x.com](https://console.x.com) (pay-per-use;
+   ~$0.015/post). In *User authentication settings*:
+   - **App permissions:** Read and write
+   - **Type of App:** Native App (public client — PKCE, no secret)
+   - **Callback URI:** `http://127.0.0.1:8123/callback`
+2. **Add your Client ID locally.** Copy the OAuth 2.0 **Client ID** from the
+   portal into a gitignored config file:
+   ```sh
+   cp application/Kern/Config/Secrets.example.xcconfig \
+      application/Kern/Config/Secrets.xcconfig
+   # then paste your id into X_CLIENT_ID
+   ```
+   It's injected at build time via `Info.plist`, so it never enters the repo. A
+   clone without this file still builds; the X feature just reports
+   "not configured".
+3. **Connect.** Build & run, open **Settings (⌘,) → X**, click **Connect X
+   Account**, and approve in your browser. Tokens are stored in the macOS
+   Keychain and auto-refreshed, so you only do this once. (The panel reads state
+   when opened — use **Refresh** if it looks stale.)
+
+**Behavior**
+
+- ≤ 280 characters → a normal post.
+- \> 280 characters → sent as one long-form post (requires X Premium). Note that
+  X's API support for >280 is inconsistent even for Premium; if it's rejected
+  you'll see `X: Your Tweet text is too long` and nothing is posted.
+
+**How it works.** OAuth 2.0 with PKCE via a short-lived loopback redirect
+listener (RFC 8252), all on a background thread — `editor_main` parks the main
+thread in the SDL event loop, so the Swift networking layer must stay off the
+main actor and report through the C status bar.
 
 ## Layout
 
 ```
 application/Kern/
   Kern.xcodeproj    the app project (open this)
+  Info.plist        app metadata; injects X_CLIENT_ID from the xcconfig
+  Config/           Base.xcconfig + Secrets.example.xcconfig (Secrets.xcconfig
+                    is local-only / gitignored)
   Kern/
-    App/            SwiftUI shell, bridging header, asset catalog
+    App/            SwiftUI shell + X publishing, bridging header, asset catalog
     Editor/         the C editor: textview, buffer, editing, navigation,
                     undo, md_render, commands, recent, clipboard, clock,
                     gfx, editor_types
