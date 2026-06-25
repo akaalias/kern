@@ -5,6 +5,7 @@
 #include "md_render.h"
 #include "pos_render.h"
 #include "style_check.h"
+#include "sub_render.h"
 #include "renderer.h"
 #include "utf8.h"
 
@@ -236,6 +237,15 @@ float md_draw_text(Line *l, int start, int end,
   int si = 0;
   while (si < span_count && spans[si].end <= start) si++;   /* first span over `start` */
 
+  /* text→symbol substitution: a source token (->, --, a straight quote) draws as
+     one replacement glyph. Streamed with a forward cursor alongside the md spans;
+     wrap breaks are token-aligned, so a token never crosses [start,end). */
+  unsigned int sub_mask = sub_active_mask();
+  const SubSpan *subs = NULL;
+  int sub_count = sub_mask ? sub_line_spans(l, &subs) : 0;
+  int xi = 0;
+  int reveal_col = sub_count ? sub_reveal_col(l) : -1;   /* caret on this line */
+
   float px = x;
   for (int i = start; i < end; ) {
     while (si < span_count && i >= spans[si].end) si++;
@@ -277,14 +287,36 @@ float md_draw_text(Line *l, int start, int end,
                                     : STYLE_DECOR_NONE;
     if (decor == STYLE_DECOR_STRIKE) fg = strike_fg;   /* only the filler strike greys */
 
-    if (i == track_cursor_col) *out_cursor_x = (int)px;
+    /* does a substituted token begin exactly here? (skip if it would cross the
+       row edge — defensive; wrap keeps tokens whole) */
+    const SubSpan *sub = NULL;
+    if (sub_count) {
+      while (xi < sub_count && subs[xi].start + subs[xi].len <= i) xi++;
+      if (xi < sub_count && subs[xi].start == i &&
+          subs[xi].start + subs[xi].len <= end &&
+          (sub_mask & SUB_BIT(subs[xi].category)))
+        sub = &subs[xi];
+    }
+    /* reveal-on-contact: the caret touching the token draws it literally */
+    if (sub && reveal_col >= sub->start && reveal_col <= sub->start + sub->len)
+      sub = NULL;
 
-    int n = utf8_len(text + i, end - i);          /* draw a whole codepoint */
+    int n = sub ? sub->len : utf8_len(text + i, end - i);   /* source bytes */
+    /* the caret anywhere within a collapsed token renders at its left edge */
+    if (track_cursor_col >= i && track_cursor_col < i + n) *out_cursor_x = (int)px;
+
     char ch[5];
-    memcpy(ch, text + i, n);
-    ch[n] = '\0';
+    const char *glyph;
+    int glyph_n;
+    if (sub) {
+      glyph = sub->glyph; glyph_n = sub->glyph_len;
+    } else {
+      memcpy(ch, text + i, n);
+      ch[n] = '\0';
+      glyph = ch; glyph_n = n;
+    }
     r_set_font_style(style);
-    int w = r_get_text_width(ch, n);
+    int w = r_get_text_width(glyph, glyph_n);
     if (draw) {
       if (bg == 1) {
         r_draw_rect(rect((int)px, (int)y, w, font_h), md_fade(link_bg, op));
@@ -292,7 +324,7 @@ float md_draw_text(Line *l, int start, int end,
         int woff = wave[i & 3];
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
-      r_draw_text(ch, vec2((int)px, (int)y), md_fade(fg, op));
+      r_draw_text(glyph, vec2((int)px, (int)y), md_fade(fg, op));
       /* Each style category gets its own line texture, keyed to absolute x so
          the line stays continuous across characters:
            - filler     STRIKE:           light wobble through the x-height;
@@ -359,6 +391,14 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
   int si = 0;
   while (si < span_count && spans[si].end <= start) si++;
 
+  /* mirror md_draw_text's substitution so a click lands on the same column the
+     caret would: a token resolves to its left or right edge, never its interior */
+  unsigned int sub_mask = sub_active_mask();
+  const SubSpan *subs = NULL;
+  int sub_count = sub_mask ? sub_line_spans(l, &subs) : 0;
+  int xi = 0;
+  int reveal_col = sub_count ? sub_reveal_col(l) : -1;
+
   float px = (float)x0;
   int col = start;
   for (int i = start; i < end; ) {
@@ -380,9 +420,21 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
       }
     }
 
-    int n = utf8_len(text + i, end - i);
+    const SubSpan *sub = NULL;
+    if (sub_count) {
+      while (xi < sub_count && subs[xi].start + subs[xi].len <= i) xi++;
+      if (xi < sub_count && subs[xi].start == i &&
+          subs[xi].start + subs[xi].len <= end &&
+          (sub_mask & SUB_BIT(subs[xi].category)))
+        sub = &subs[xi];
+    }
+    if (sub && reveal_col >= sub->start && reveal_col <= sub->start + sub->len)
+      sub = NULL;   /* revealed: measure the literal, mirroring md_draw_text */
+
+    int n = sub ? sub->len : utf8_len(text + i, end - i);
     r_set_font_style(style);
-    int w = r_get_text_width(text + i, n);
+    int w = sub ? r_get_text_width(sub->glyph, sub->glyph_len)
+                : r_get_text_width(text + i, n);
     if (px + w / 2.0f > (float)target_x) { col = i; r_set_font_style(saved_style); return col; }
     px += w;
     i += n;

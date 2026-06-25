@@ -64,6 +64,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-x t`       | Typewriter mode (pin active line at golden ratio) |
 | `C-x y`       | Syntax highlight (parts of speech, by brightness) |
 | `C-x s`       | Style check (strike cuttable fillers/redundancies) |
+| `C-x l`       | Symbols on/off (draw `->` `--` `!=` `(c)` straight quotes as → — ≠ © “ ”; on by default) |
 | `M-g`         | Go to line                      |
 
 **Editing**

@@ -8,6 +8,7 @@
 #include "navigation.h"
 #include "renderer.h"
 #include "md_render.h"
+#include "sub_render.h"
 #include "buffer.h"
 #include "clock.h"
 #include "utf8.h"
@@ -88,6 +89,11 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
      wrap points past the right edge and out of step with what's drawn. */
   int avail = nav_page_w() - md_row_indent(l, row_start);
 
+  /* Wrap measures the *literal* text width, independent of symbol substitution:
+     a collapsed glyph (→) is never wider than its source (->), so a literal-width
+     wrap point always still fits when drawn collapsed, and — crucially — the line
+     does not reflow as the caret enters a token and reveals it (reveal-on-contact
+     redraws the literal, which is exactly the width wrap already reserved). */
   while (i < l->len && count < max_starts) {
     int n = utf8_len(l->text + i, l->len - i);   /* step whole codepoints */
     int cw = r_get_text_width(l->text + i, n);
@@ -236,6 +242,7 @@ static void nav_row_geom(EditorState *ed, int ln, int row_start,
 }
 
 int nav_cursor_x(EditorState *ed, int line, int col) {
+  sub_set_caret(&ed->lines[ed->cursor_line], ed->cursor_col);  /* reveal under the live caret */
   Line *l = &ed->lines[line];
   int starts[256];
   int nrows = nav_get_wrap_breaks(l, starts, 256);
@@ -252,6 +259,7 @@ int nav_cursor_x(EditorState *ed, int line, int col) {
 /* ---- click to cursor ---- */
 
 void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
+  sub_set_caret(&ed->lines[ed->cursor_line], ed->cursor_col);  /* match the drawn (collapsed/revealed) line */
   int lh = nav_line_height();
   int rel_y = my - vs->content_y + (int)vs->scroll_y;
   int vis_line = rel_y / lh;

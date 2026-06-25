@@ -17,6 +17,7 @@
 #include "pos_render.h"
 #include "pos_tagger.h"
 #include "style_check.h"
+#include "sub_render.h"
 #include "undo.h"
 #include "recent.h"
 #include "clipboard.h"
@@ -56,6 +57,12 @@ void kern_toggle_style(void) {
   nav_status_set(&g_vs, g_vs.style_mask ? "Style check on" : "Style check off");
 }
 int  kern_style_enabled(void) { return g_vs.style_mask != 0; }
+
+void kern_toggle_subs(void) {
+  g_vs.sub_mask = g_vs.sub_mask ? 0 : SUB_MASK_ALL;
+  nav_status_set(&g_vs, g_vs.sub_mask ? "Symbols on" : "Symbols off");
+}
+int  kern_subs_enabled(void) { return g_vs.sub_mask != 0; }
 
 
 /* ---- minibuffer filename completion ---- */
@@ -807,6 +814,11 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     g_vs.suppress_next_text = 1;   /* swallow the "s" text event */
     return 1;
   }
+  if (!ctrl && sym == SDLK_l) {                                       /* C-x l */
+    kern_toggle_subs();
+    g_vs.suppress_next_text = 1;   /* swallow the "l" text event */
+    return 1;
+  }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -918,6 +930,8 @@ static void do_render(void) {
   Color text_color = color(204, 200, 195, 255);
   md_set_syntax_mask(g_vs.syntax_mask);   /* POS coloring (0 = off) for this pass */
   md_set_style_mask(g_vs.style_mask);     /* style-check strikes (0 = off) */
+  sub_set_mask(g_vs.sub_mask);            /* text→symbol substitution (0 = off) */
+  sub_set_caret(&g_ed.lines[g_ed.cursor_line], g_ed.cursor_col);  /* reveal-on-contact */
   g_vs.cursor_x = -1;
   for (int i = 0; i < g_vs.vis_row_count; i++) {
     VisRow *vr = &g_vs.vis_rows[i];
@@ -968,6 +982,7 @@ static void do_render(void) {
   md_set_text_opacity(1.0f);   /* don't leak the focus dim past the text pass */
   md_set_syntax_mask(0);       /* status bar etc. draw in their own colors */
   md_set_style_mask(0);
+  sub_set_mask(0);             /* status bar / chrome draw literal text */
 
   /* draw cursor (post-render, uses markdown-aware x position) */
   int cursor_py = -1;
@@ -1419,6 +1434,7 @@ int editor_main(int argc, char **argv) {
 
   SDL_Init(SDL_INIT_EVERYTHING);
   g_vs.font_size = 26.0f;
+  g_vs.sub_mask = SUB_MASK_ALL;   /* symbol substitution on by default */
   g_vs.search_direction = 1;
   g_vs.search_match_line = -1;
   g_vs.search_match_col = -1;

@@ -38,6 +38,7 @@ LDFLAGS := $(SAN)
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/pos_render.c $(APP)/Editor/style_check.c \
+           $(APP)/Editor/sub_render.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
            $(APP)/Editor/textview.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
@@ -45,7 +46,7 @@ TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
            unit_status.c unit_commands.c unit_utf8.c unit_textview.c \
-           unit_pos.c unit_style.c snapshot.c
+           unit_pos.c unit_style.c unit_sub.c snapshot.c
 SRC     := $(CORE) $(TESTS)
 HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
            $(APP)/Editor/utf8.h $(APP)/Editor/editor_loop.h
@@ -58,6 +59,7 @@ HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
 COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/pos_render.c $(APP)/Editor/style_check.c \
+           $(APP)/Editor/sub_render.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c
 
 BIN     := kern_tests
@@ -104,7 +106,7 @@ PERF_BIN := kern_perf
 PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c pos_tagger_fake.c \
             $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c \
             $(APP)/Editor/md_render.c $(APP)/Editor/pos_render.c \
-            $(APP)/Editor/style_check.c
+            $(APP)/Editor/style_check.c $(APP)/Editor/sub_render.c
 
 $(PERF_BIN): $(PERF_SRC) stub_renderer.h clock_fake.h
 	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC)
