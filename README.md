@@ -83,7 +83,8 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 |---------------|----------------------------|
 | `C-Space`     | Set mark                   |
 | `C-w` / `M-w` | Cut / copy region          |
-| `C-y`         | Yank (paste)               |
+| `⌘C`          | Copy region                |
+| `C-y` / `⌘V`  | Yank (paste)               |
 | `C-x h`       | Select whole buffer        |
 | `C-x C-x`     | Exchange point & mark      |
 

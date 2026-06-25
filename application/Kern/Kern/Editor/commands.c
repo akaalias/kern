@@ -328,7 +328,9 @@ static const Command g_commands[] = {
   { KMOD_CTRL, SDLK_k,         cmd_kill_line },
   { KMOD_CTRL, SDLK_w,         cmd_kill_region },
   { KMOD_CTRL, SDLK_y,         cmd_yank },
+  { KMOD_GUI,  SDLK_v,         cmd_yank },          /* ⌘V paste */
   { KMOD_ALT,  SDLK_w,         cmd_copy_region },
+  { KMOD_GUI,  SDLK_c,         cmd_copy_region },   /* ⌘C copy region */
   { KMOD_ALT,  SDLK_d,         cmd_kill_word_fwd },
   { KMOD_ALT,  SDLK_BACKSPACE, cmd_kill_word_back },
   { KMOD_ALT,  SDLK_u,         cmd_upcase_word },

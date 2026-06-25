@@ -211,6 +211,28 @@ static void test_copy_then_yank_via_dispatch(void) {
   ed_teardown(&ed);
 }
 
+/* ⌘V pastes from the system clipboard (same action as C-y). */
+static void test_cmd_v_pastes(void) {
+  EditorState ed = {0}; buf_init_empty(&ed);
+  ViewState vs = vs_make();
+  kern_clipboard_set("pasted");
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_v);
+  CHECK_SEQ(LINE(ed, 0), "pasted");
+  ed_teardown(&ed);
+}
+
+/* ⌘C copies the marked region to the clipboard (same action as M-w). */
+static void test_cmd_c_copies_region(void) {
+  EditorState ed = {0}; ed_load(&ed, "hello world");
+  ed.cursor_col = 0; buf_mark_set(&ed); ed.cursor_col = 5;
+  ViewState vs = vs_make();
+  kern_dispatch_key(&ed, &vs, KMOD_GUI, SDLK_c);   /* copy "hello" */
+  char *clip = kern_clipboard_get();
+  CHECK_SEQ(clip, "hello");
+  if (clip) kern_clipboard_free(clip);
+  ed_teardown(&ed);
+}
+
 static void test_meta_d_kill_word_forward(void) {
   EditorState ed = {0}; ed_load(&ed, "alpha beta"); ed.cursor_col = 0;
   ViewState vs = vs_make();
@@ -513,6 +535,8 @@ void suite_commands(void) {
   RUN(test_meta_w_copy_region_keeps_text);
   RUN(test_ctrl_y_yank_from_clipboard);
   RUN(test_copy_then_yank_via_dispatch);
+  RUN(test_cmd_v_pastes);
+  RUN(test_cmd_c_copies_region);
   RUN(test_meta_d_kill_word_forward);
   RUN(test_meta_case_words);
   RUN(test_buffer_ends);
