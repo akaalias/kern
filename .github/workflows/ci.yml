@@ -15,7 +15,12 @@ jobs:
       - name: Install toolchain
         # clang for sanitizer parity with local dev; libsdl2-dev provides
         # Linux-correct SDL headers (the vendored ones are macOS-configured).
-        run: sudo apt-get update && sudo apt-get install -y clang libsdl2-dev
+        run: |
+          # GitHub's Ubuntu runner ships packages.microsoft.com apt sources that
+          # intermittently 403 on apt-get update; we don't use them, so drop them.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
+          sudo apt-get update
+          sudo apt-get install -y clang libsdl2-dev
 
       - name: Build & run unit tests
         working-directory: tests
@@ -29,7 +34,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang llvm libsdl2-dev
+        run: |
+          # GitHub's Ubuntu runner ships packages.microsoft.com apt sources that
+          # intermittently 403 on apt-get update; we don't use them, so drop them.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libsdl2-dev
       - name: Measure & enforce core coverage
         working-directory: tests
         run: |
@@ -45,7 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang libsdl2-dev
+        run: |
+          # GitHub's Ubuntu runner ships packages.microsoft.com apt sources that
+          # intermittently 403 on apt-get update; we don't use them, so drop them.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
+          sudo apt-get update
+          sudo apt-get install -y clang libsdl2-dev
       - name: Generate corpus
         run: python3 tools/gen_prose.py 25MB test_corpus.txt
       - name: Build & run perf budgets
