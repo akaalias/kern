@@ -244,7 +244,6 @@ float md_draw_text(Line *l, int start, int end,
   const SubSpan *subs = NULL;
   int sub_count = sub_mask ? sub_line_spans(l, &subs) : 0;
   int xi = 0;
-  int reveal_col = sub_count ? sub_reveal_col(l) : -1;   /* caret on this line */
 
   float px = x;
   for (int i = start; i < end; ) {
@@ -300,9 +299,8 @@ float md_draw_text(Line *l, int start, int end,
           (sub_mask & SUB_BIT(subs[xi].category)))
         sub = &subs[xi];
     }
-    /* reveal-on-contact: the caret touching the token draws it literally */
-    if (sub && reveal_col >= sub->start && reveal_col <= sub->start + sub->len)
-      sub = NULL;
+    /* reveal-on-contact: a token under the caret / in the selection draws literally */
+    if (sub && sub_token_revealed(l, sub->start, sub->len)) sub = NULL;
 
     int n = sub ? sub->len : utf8_len(text + i, end - i);   /* source bytes */
     /* the caret anywhere within a collapsed token renders at its left edge */
@@ -400,7 +398,6 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
   const SubSpan *subs = NULL;
   int sub_count = sub_mask ? sub_line_spans(l, &subs) : 0;
   int xi = 0;
-  int reveal_col = sub_count ? sub_reveal_col(l) : -1;
 
   float px = (float)x0;
   int col = start;
@@ -431,7 +428,7 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
           (sub_mask & SUB_BIT(subs[xi].category)))
         sub = &subs[xi];
     }
-    if (sub && reveal_col >= sub->start && reveal_col <= sub->start + sub->len)
+    if (sub && sub_token_revealed(l, sub->start, sub->len))
       sub = NULL;   /* revealed: measure the literal, mirroring md_draw_text */
 
     int n = sub ? sub->len : utf8_len(text + i, end - i);

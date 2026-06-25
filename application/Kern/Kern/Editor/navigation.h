@@ -39,6 +39,12 @@ int nav_heading_markers_hang(Line *l);
    (list hanging indent + per-span font metrics + hung heading markers). */
 int nav_cursor_x(EditorState *ed, int line, int col);
 
+/* Publish the symbol-substitution reveal range for logical line `ln` (the caret
+   point unioned with the active selection's extent on that line). Call before any
+   md_draw_text / md_col_x / md_x_to_col for `ln` so they collapse/reveal the same
+   tokens the render pass does. */
+void nav_sub_reveal_for_line(EditorState *ed, int ln);
+
 /* Move the caret one *visual* row (dir = +1 down, -1 up), keeping a pixel goal
    column. Wrapped paragraphs move a screen row at a time, not a whole logical
    line. Backs C-n/C-p and the down/up arrows. */

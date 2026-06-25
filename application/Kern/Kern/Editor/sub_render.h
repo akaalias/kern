@@ -65,12 +65,16 @@ void sub_set_mask(unsigned int m);
 unsigned int sub_active_mask(void);
 
 /* Reveal-on-contact: the render and measure walks draw a token literally (its
-   source bytes), not the glyph, when the caret touches it [start, start+len], so
-   it stays editable. The caller marks the caret's line+column each frame (and
-   before event-time click/vertical-move measurement); sub_reveal_col returns that
-   column for the caret's line, -1 for any other line (whose tokens stay
-   collapsed). Wrap is measured literally regardless, so reveal never reflows. */
+   source bytes), not the glyph, when it overlaps the reveal range on its line, so
+   it stays editable. The caller sets the range each frame per visual line (and
+   before event-time click/vertical-move measurement): the caret point, unioned
+   with the active selection's extent on that line, so selected symbols stay
+   expanded rather than flip-flopping as the caret passes. sub_token_revealed tests
+   one token. l == NULL (or an empty lo>hi range) reveals nothing on that line.
+   Wrap is measured literally regardless, so reveal never reflows.
+   sub_set_caret is the point-reveal convenience (lo == hi == col). */
+void sub_set_reveal(const Line *l, int lo, int hi);
 void sub_set_caret(const Line *l, int col);
-int  sub_reveal_col(const Line *l);
+int  sub_token_revealed(const Line *l, int start, int len);
 
 #endif /* SUB_RENDER_H */

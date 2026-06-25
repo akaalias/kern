@@ -241,8 +241,28 @@ static void nav_row_geom(EditorState *ed, int ln, int row_start,
   *heading = h;
 }
 
+/* Publish the symbol reveal range for logical line `ln`: the caret point (when
+   the caret is on it), unioned with the active selection's extent on that line, so
+   render and measurement collapse/reveal the same tokens and a selected symbol
+   stays expanded. Call before any md_draw_text / md_col_x / md_x_to_col for `ln`. */
+void nav_sub_reveal_for_line(EditorState *ed, int ln) {
+  int has = 0, lo = 0, hi = 0;
+  if (ln == ed->cursor_line) { lo = hi = ed->cursor_col; has = 1; }
+  if (ed->mark_active) {
+    int sl, sc, el, ec;
+    buf_region_ordered(ed, &sl, &sc, &el, &ec);
+    if (ln >= sl && ln <= el) {
+      int rlo = (ln == sl) ? sc : 0;
+      int rhi = (ln == el) ? ec : ed->lines[ln].len;
+      if (!has) { lo = rlo; hi = rhi; has = 1; }
+      else { if (rlo < lo) lo = rlo; if (rhi > hi) hi = rhi; }
+    }
+  }
+  sub_set_reveal(has ? &ed->lines[ln] : NULL, lo, hi);
+}
+
 int nav_cursor_x(EditorState *ed, int line, int col) {
-  sub_set_caret(&ed->lines[ed->cursor_line], ed->cursor_col);  /* reveal under the live caret */
+  nav_sub_reveal_for_line(ed, line);   /* reveal the caret/selection tokens on this line */
   Line *l = &ed->lines[line];
   int starts[256];
   int nrows = nav_get_wrap_breaks(l, starts, 256);
@@ -259,7 +279,6 @@ int nav_cursor_x(EditorState *ed, int line, int col) {
 /* ---- click to cursor ---- */
 
 void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
-  sub_set_caret(&ed->lines[ed->cursor_line], ed->cursor_col);  /* match the drawn (collapsed/revealed) line */
   int lh = nav_line_height();
   int rel_y = my - vs->content_y + (int)vs->scroll_y;
   int vis_line = rel_y / lh;
@@ -282,6 +301,7 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
   /* measure with the same per-span / hanging-indent metrics the row is drawn
      with — body_width(FONT_REGULAR) from the bare page margin used to ignore
      both, so clicks landed offset on list/heading/bold lines. */
+  nav_sub_reveal_for_line(ed, ln);   /* match the clicked line's collapsed/revealed state */
   int col = md_x_to_col(&ed->lines[ln], row_start, row_end, x0, heading, mx);
 
   ed->cursor_line = ln;
@@ -320,6 +340,7 @@ void nav_visual_move(EditorState *ed, ViewState *vs, int dir) {
     int x0, draw_start, heading;
     nav_row_geom(ed, ln, row_start, &x0, &draw_start, &heading);
     int ms = draw_start > row_start ? draw_start : row_start;
+    nav_sub_reveal_for_line(ed, ln);   /* match the target line's collapsed/revealed state */
     ed->cursor_line = ln;
     ed->cursor_col = md_x_to_col(&ed->lines[ln], ms, row_end, x0, heading, vs->goal_x);
   }

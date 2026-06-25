@@ -458,6 +458,7 @@ static void process_frame(void) {
       int wrap_off;
       int ln = nav_visual_to_logical(&g_ed, vis_idx, &wrap_off);
       Line *l = &g_ed.lines[ln];
+      nav_sub_reveal_for_line(&g_ed, ln);   /* highlights measure the same glyphs the text draws */
 
       int starts[256];
       int nrows = nav_get_wrap_breaks(l, starts, 256);
@@ -961,6 +962,12 @@ static int handle_wikilink_key(int sym, int ctrl) {
 
 static void do_render(void) {
   r_clear(color(30, 30, 32, 255));
+  /* Set substitution BEFORE process_frame: it draws the selection/search
+     highlights via md_col_x, which must measure the same collapsed/revealed glyph
+     widths the text pass draws — otherwise the highlight (literal width) and the
+     text (collapsed) disagree and the marked region looks wonky around symbols.
+     process_frame sets the per-line reveal range itself, per visual row. */
+  sub_set_mask(g_vs.sub_mask);
   process_frame();          /* lays out + draws bg, highlights, scrollbar */
   wikilink_refresh();
 
@@ -971,12 +978,12 @@ static void do_render(void) {
   Color text_color = color(204, 200, 195, 255);
   md_set_syntax_mask(g_vs.syntax_mask);   /* POS coloring (0 = off) for this pass */
   md_set_style_mask(g_vs.style_mask);     /* style-check strikes (0 = off) */
-  sub_set_mask(g_vs.sub_mask);            /* text→symbol substitution (0 = off) */
-  sub_set_caret(&g_ed.lines[g_ed.cursor_line], g_ed.cursor_col);  /* reveal-on-contact */
+  /* sub_set_mask already set before process_frame (see do_render top) */
   g_vs.cursor_x = -1;
   for (int i = 0; i < g_vs.vis_row_count; i++) {
     VisRow *vr = &g_vs.vis_rows[i];
     Line *L = &g_ed.lines[vr->ln];
+    nav_sub_reveal_for_line(&g_ed, vr->ln);   /* reveal caret/selection tokens on this row */
     /* typewriter focus: fade every line except the caret's, crossfading on a
        line change (focus_prev_line → dim, focus_cur_line → full) */
     md_set_text_opacity(g_vs.typewriter_mode

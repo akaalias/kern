@@ -133,11 +133,19 @@ static unsigned int g_sub_mask = 0;
 void sub_set_mask(unsigned int m) { g_sub_mask = m; }
 unsigned int sub_active_mask(void) { return g_sub_mask; }
 
-/* reveal-on-contact: the line + column holding the caret, set each frame. A
-   token is drawn literally (not collapsed) when the caret touches it, so it can
-   be read and edited. Compared by pointer — never dereferenced — so a stale
-   value (after a line-array realloc between frames) is harmless. */
-static const Line *g_caret_line = NULL;
-static int g_caret_col = -1;
-void sub_set_caret(const Line *l, int col) { g_caret_line = l; g_caret_col = col; }
-int sub_reveal_col(const Line *l) { return l == g_caret_line ? g_caret_col : -1; }
+/* reveal-on-contact: tokens on g_reveal_line whose byte range overlaps the
+   inclusive reveal range [g_reveal_lo, g_reveal_hi] are drawn literally (not
+   collapsed) so they can be read and edited. The range is the caret point, unioned
+   with the active selection's extent on that line — so a symbol stays expanded for
+   as long as it is selected, instead of flip-flopping as the caret passes it.
+   g_reveal_line is compared by pointer, never dereferenced, so a stale value
+   (after a line-array realloc between frames) is harmless. */
+static const Line *g_reveal_line = NULL;
+static int g_reveal_lo = 1, g_reveal_hi = 0;   /* lo > hi → empty (reveals nothing) */
+void sub_set_reveal(const Line *l, int lo, int hi) {
+  g_reveal_line = l; g_reveal_lo = lo; g_reveal_hi = hi;
+}
+void sub_set_caret(const Line *l, int col) { sub_set_reveal(l, col, col); }
+int sub_token_revealed(const Line *l, int start, int len) {
+  return l == g_reveal_line && start <= g_reveal_hi && start + len >= g_reveal_lo;
+}

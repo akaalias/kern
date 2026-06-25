@@ -193,11 +193,32 @@ static void test_reveal_on_contact(void) {
   CHECK(saw_hyphen);
 
   /* reveal is scoped to the caret's line: a different line stays collapsed */
-  CHECK_IEQ(sub_reveal_col(&l), 3);
+  CHECK(sub_token_revealed(&l, 2, 2));        /* "->" at [2,4) is revealed */
   Line other = mkline("x -> y");
-  CHECK_IEQ(sub_reveal_col(&other), -1);
+  CHECK(!sub_token_revealed(&other, 2, 2));   /* a different line is not revealed */
   CHECK_IEQ(md_col_x(&other, 0, 6, 0, 0, 4), 50);   /* collapsed: 20 + glyph 30 */
   freeline(&other);
+
+  sub_set_caret(NULL, -1);
+  sub_set_mask(0);
+  freeline(&l);
+}
+
+/* A selection (reveal range, not a single point) reveals every token it overlaps,
+   so a selected symbol stays literal instead of flip-flopping as the caret passes.
+   A selection clear of the token leaves it collapsed. */
+static void test_reveal_selection_range(void) {
+  stub_reset();
+  sub_set_mask(SUB_MASK_ALL);
+  Line l = mkline("a -> b");                  /* token "->" at [2,4) */
+
+  sub_set_reveal(&l, 0, 6);                   /* whole line selected */
+  CHECK(sub_token_revealed(&l, 2, 2));
+  CHECK_IEQ(md_col_x(&l, 0, 6, 0, 0, 4), 40); /* literal width (4 cells) */
+
+  sub_set_reveal(&l, 5, 6);                   /* selection right of the token */
+  CHECK(!sub_token_revealed(&l, 2, 2));
+  CHECK_IEQ(md_col_x(&l, 0, 6, 0, 0, 4), 50); /* collapsed (20 + glyph 30) */
 
   sub_set_caret(NULL, -1);
   sub_set_mask(0);
@@ -263,6 +284,7 @@ void suite_sub(void) {
   RUN(test_cache);
   RUN(test_caret_click_parity);
   RUN(test_reveal_on_contact);
+  RUN(test_reveal_selection_range);
   RUN(test_draw_emits_glyph);
   RUN(test_wrap_is_substitution_independent);
 }
