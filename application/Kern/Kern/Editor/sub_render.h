@@ -23,12 +23,13 @@
 #include "editor_types.h"
 
 /* Substitution categories. Enum values double as bit indices for
-   ViewState.sub_mask. (SUB_GREEK / SUB_CODE are planned phase-2 additions, gated
-   on whole-word boundaries / code context.) */
+   ViewState.sub_mask. SUB_GREEK / SUB_MATH (phase 2) are whole-word matched. */
 typedef enum {
   SUB_NONE = 0,
   SUB_PUNCT,   /* typography: smart quotes, em/en dash, ellipsis, © ® ™, ± */
   SUB_ARROW,   /* arrows & relations: -> <- => <=> != <= >= ~= */
+  SUB_GREEK,   /* Greek letters by name (whole-word): lambda → λ, Sigma → Σ, … */
+  SUB_MATH,    /* math operator words (whole-word): forall → ∀, sqrt → √, … */
   SUB_CATEGORY_COUNT
 } SubCategory;
 
@@ -45,7 +46,8 @@ typedef struct SubSpan {
 
 #define SUB_MAX_SPANS  512
 #define SUB_BIT(cat)   (1u << (cat))
-#define SUB_MASK_ALL   (SUB_BIT(SUB_PUNCT) | SUB_BIT(SUB_ARROW))
+#define SUB_MASK_ALL   (SUB_BIT(SUB_PUNCT) | SUB_BIT(SUB_ARROW) | \
+                        SUB_BIT(SUB_GREEK) | SUB_BIT(SUB_MATH))
 
 /* Lazily scan the line and cache its substitution-span map (recomputed when
    sub_span_count is -1, which line_dirty sets on every edit). Returns the count;

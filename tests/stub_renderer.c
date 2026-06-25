@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "stub_renderer.h"
+#include "utf8.h"
 
 StubText stub_texts[STUB_MAX];
 int      stub_text_count;
@@ -18,13 +19,23 @@ static int s_style = FONT_REGULAR;
    life closely enough for most tests). A test can widen e.g. FONT_MONO to model
    the real renderer, where measuring in the wrong font corrupts wrap caches. */
 static int s_style_extra[FONT_COUNT];
+/* codepoints a test has declared absent from the "font" (default: all present),
+   so r_has_glyph can be exercised; cleared by stub_reset. */
+static int s_missing_cp[32];
+static int s_missing_n;
 
 void stub_reset(void) {
   stub_text_count = 0;
   stub_rect_count = 0;
   stub_op_count = 0;
   s_style = FONT_REGULAR;
+  s_missing_n = 0;
   for (int i = 0; i < FONT_COUNT; i++) s_style_extra[i] = 0;
+}
+
+void stub_set_glyph_missing(int cp) {
+  if (s_missing_n < (int)(sizeof s_missing_cp / sizeof s_missing_cp[0]))
+    s_missing_cp[s_missing_n++] = cp;
 }
 
 void stub_set_metrics(int cell_w, int cell_h, int win_w, int win_h) {
@@ -42,6 +53,12 @@ int  r_get_text_width(const char *text, int len) {
 }
 int  r_get_text_height(void)                     { return s_cell_h; }
 void r_get_size(int *w, int *h)                  { if (w) *w = s_win_w; if (h) *h = s_win_h; }
+int  r_has_glyph(const char *utf8, int byte_len) {
+  int cp = 0;
+  utf8_decode(utf8, byte_len, &cp);
+  for (int i = 0; i < s_missing_n; i++) if (s_missing_cp[i] == cp) return 0;
+  return 1;   /* present unless a test marked it missing */
+}
 
 /* ---- font style ---- */
 void r_set_font_style(int style) { s_style = style; }

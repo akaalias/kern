@@ -381,6 +381,17 @@ int r_get_text_height(void) {
   return (int)(font_size + 0.5f);
 }
 
+int r_has_glyph(const char *utf8, int byte_len) {
+  int cp = 0;
+  utf8_decode(utf8, byte_len, &cp);
+  if (cp <= 0) return 0;
+  /* gate on the body font (where substituted glyphs render in prose); a font
+     missing a codepoint returns glyph index 0 (.notdef / the tofu box) */
+  FontData *fd = &fonts[FONT_REGULAR];
+  if (!fd->loaded) return 1;          /* font not ready: don't suppress */
+  return stbtt_FindGlyphIndex(&fd->info, cp) != 0;
+}
+
 
 void r_set_font_size(float size) {
   if (fabsf(size - font_size) < 0.5f) return;

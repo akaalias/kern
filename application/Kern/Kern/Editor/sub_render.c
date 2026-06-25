@@ -4,36 +4,74 @@
 #include <string.h>
 #include <stdlib.h>
 #include "sub_render.h"
+#include "renderer.h"   /* r_has_glyph — fall back to literal for glyphs the font lacks */
 
-/* Fixed substitutions matched literally at a position, longest-match-first (so
-   "<=>" wins over "<="). Curated precision-first: each is unambiguous enough to
-   render in any prose context. Context-sensitive cases (smart quotes, the en
-   dash between digits) are handled in sub_scan, not here. */
-struct Fixed { const char *src; const char *glyph; unsigned char category; };
+/* Fixed substitutions matched at a position, longest-match-first (so "<=>" wins
+   over "<="). Curated precision-first. `word` entries (Greek names, math operator
+   words) must match a whole word — bounded by non-word characters on both sides —
+   so "lambda" → λ but "lambdas" / "flambda" / "lambda_x" stay literal; they are
+   also case-sensitive ("Delta" → Δ, "delta" → δ). Context-sensitive cases (smart
+   quotes, the en dash between digits) are handled in sub_scan, not here.
+   Deliberately excluded: triggers that are also common English words (in, sum,
+   and, or, partial, …) — there is no clean way to tell prose from math, and
+   reveal-on-contact can't rescue a false positive you didn't notice. */
+struct Fixed { const char *src; const char *glyph; unsigned char category; unsigned char word; };
 
 static const struct Fixed k_fixed[] = {
   /* arrows & relations */
-  { "<=>", "⇔", SUB_ARROW },   /* ⇔ */
-  { "->",  "→", SUB_ARROW },   /* → */
-  { "<-",  "←", SUB_ARROW },   /* ← */
-  { "=>",  "⇒", SUB_ARROW },   /* ⇒ */
-  { "!=",  "≠", SUB_ARROW },   /* ≠ */
-  { "<=",  "≤", SUB_ARROW },   /* ≤ */
-  { ">=",  "≥", SUB_ARROW },   /* ≥ */
-  { "~=",  "≈", SUB_ARROW },   /* ≈ */
+  { "<=>", "⇔", SUB_ARROW, 0 },
+  { "->",  "→", SUB_ARROW, 0 },
+  { "<-",  "←", SUB_ARROW, 0 },
+  { "=>",  "⇒", SUB_ARROW, 0 },
+  { "!=",  "≠", SUB_ARROW, 0 },
+  { "<=",  "≤", SUB_ARROW, 0 },
+  { ">=",  "≥", SUB_ARROW, 0 },
+  { "~=",  "≈", SUB_ARROW, 0 },
   /* typography */
-  { "--",  "—", SUB_PUNCT },   /* — em dash */
-  { "...", "…", SUB_PUNCT },   /* … */
-  { "+-",  "±", SUB_PUNCT },   /* ± */
-  { "(c)", "©", SUB_PUNCT },   /* © */
-  { "(r)", "®", SUB_PUNCT },   /* ® */
-  { "(tm)","™", SUB_PUNCT },   /* ™ */
+  { "--",  "—", SUB_PUNCT, 0 },   /* em dash */
+  { "...", "…", SUB_PUNCT, 0 },
+  { "+-",  "±", SUB_PUNCT, 0 },
+  { "(c)", "©", SUB_PUNCT, 0 },
+  { "(r)", "®", SUB_PUNCT, 0 },
+  { "(tm)","™", SUB_PUNCT, 0 },
+  /* Greek by name — whole-word. Only names that are never English words: the
+     short collision-prone ones (eta/nu/xi/chi/iota) are left out on purpose. */
+  { "lambda",  "λ", SUB_GREEK, 1 }, { "Lambda",  "Λ", SUB_GREEK, 1 },
+  { "alpha",   "α", SUB_GREEK, 1 },
+  { "beta",    "β", SUB_GREEK, 1 },
+  { "gamma",   "γ", SUB_GREEK, 1 }, { "Gamma",   "Γ", SUB_GREEK, 1 },
+  { "delta",   "δ", SUB_GREEK, 1 }, { "Delta",   "Δ", SUB_GREEK, 1 },
+  { "epsilon", "ε", SUB_GREEK, 1 },
+  { "zeta",    "ζ", SUB_GREEK, 1 },
+  { "theta",   "θ", SUB_GREEK, 1 }, { "Theta",   "Θ", SUB_GREEK, 1 },
+  { "kappa",   "κ", SUB_GREEK, 1 },
+  { "mu",      "μ", SUB_GREEK, 1 },
+  { "pi",      "π", SUB_GREEK, 1 }, { "Pi",      "Π", SUB_GREEK, 1 },
+  { "rho",     "ρ", SUB_GREEK, 1 },
+  { "sigma",   "σ", SUB_GREEK, 1 }, { "Sigma",   "Σ", SUB_GREEK, 1 },
+  { "tau",     "τ", SUB_GREEK, 1 },
+  { "phi",     "φ", SUB_GREEK, 1 }, { "Phi",     "Φ", SUB_GREEK, 1 },
+  { "psi",     "ψ", SUB_GREEK, 1 }, { "Psi",     "Ψ", SUB_GREEK, 1 },
+  { "omega",   "ω", SUB_GREEK, 1 }, { "Omega",   "Ω", SUB_GREEK, 1 },
+  /* math operators — whole-word, and only non-English words */
+  { "forall",   "∀", SUB_MATH, 1 },
+  { "exists",   "∃", SUB_MATH, 1 },
+  { "nabla",    "∇", SUB_MATH, 1 },
+  { "infinity", "∞", SUB_MATH, 1 },
+  { "sqrt",     "√", SUB_MATH, 1 },
 };
 #define N_FIXED ((int)(sizeof k_fixed / sizeof k_fixed[0]))
+
+/* a "word" character for whole-word boundary tests (so a Greek name inside an
+   identifier — lambda_x, lambda2 — is left alone) */
+static int is_word_char(unsigned char c) { return isalnum(c) || c == '_'; }
 
 static void emit(SubSpan *out, int *pn, int max, int start, int len,
                  unsigned char cat, const char *glyph) {
   if (*pn >= max) return;
+  /* skip the substitution when the font can't draw the glyph — the source then
+     renders as literal text instead of a tofu box */
+  if (!r_has_glyph(glyph, (int)strlen(glyph))) return;
   SubSpan *s = &out[(*pn)++];
   s->start = start; s->len = len; s->category = cat;
   int gl = (int)strlen(glyph);
@@ -80,13 +118,16 @@ static int sub_scan(const char *t, int len, SubSpan *out, int max) {
       i++; continue;
     }
 
-    /* fixed longest-match tokens */
+    /* fixed longest-match tokens (word entries require whole-word boundaries) */
     int best = -1, best_len = 0;
     for (int k = 0; k < N_FIXED; k++) {
       int sl = (int)strlen(k_fixed[k].src);
-      if (sl > best_len && starts_with(t, len, i, k_fixed[k].src)) {
-        best = k; best_len = sl;
+      if (sl <= best_len || !starts_with(t, len, i, k_fixed[k].src)) continue;
+      if (k_fixed[k].word) {
+        if (i > 0 && is_word_char((unsigned char)t[i - 1])) continue;        /* left  */
+        if (i + sl < len && is_word_char((unsigned char)t[i + sl])) continue; /* right */
       }
+      best = k; best_len = sl;
     }
     if (best >= 0) {
       emit(out, &n, max, i, best_len, k_fixed[best].category, k_fixed[best].glyph);

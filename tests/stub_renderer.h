@@ -33,5 +33,6 @@ extern int      stub_op_count;
 void stub_reset(void);                                  /* clear captured ops + style */
 void stub_set_metrics(int cell_w, int cell_h, int win_w, int win_h);
 void stub_set_style_extra(int style, int extra);       /* per-style extra px/char */
+void stub_set_glyph_missing(int cp);                    /* make r_has_glyph(cp) return 0 */
 
 #endif /* KERN_STUB_RENDERER_H */

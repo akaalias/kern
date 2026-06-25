@@ -116,6 +116,66 @@ static void test_symbols(void) {
   Line f = mkline("(cat)");     const SubSpan *sp; CHECK_IEQ(sub_line_spans(&f, &sp), 0); freeline(&f);
 }
 
+/* Greek-by-name, whole-word and case-sensitive. */
+static void test_greek(void) {
+  Line a = mkline("the lambda calculus");
+  const SubSpan *s = span_at(&a, 4);
+  CHECK(glyph_is(s, "λ"));
+  CHECK_IEQ(s->len, 6);
+  CHECK_IEQ(s->category, SUB_GREEK);
+  freeline(&a);
+
+  Line b = mkline("delta vs Delta");        /* lower vs capital are distinct glyphs */
+  CHECK(glyph_is(span_at(&b, 0), "δ"));
+  CHECK(glyph_is(span_at(&b, 9), "Δ"));
+  freeline(&b);
+
+  Line c = mkline("sum over Sigma");        /* "sum" is excluded; "Sigma" maps */
+  const SubSpan *sp; CHECK_IEQ(sub_line_spans(&c, &sp), 1);
+  CHECK(glyph_is(span_at(&c, 9), "Σ"));
+  freeline(&c);
+}
+
+/* whole-word boundaries: a Greek name inside a longer token is left alone. */
+static void test_greek_word_boundary(void) {
+  const SubSpan *sp;
+  Line a = mkline("lambdas");      CHECK_IEQ(sub_line_spans(&a, &sp), 0); freeline(&a); /* suffix */
+  Line b = mkline("flambda");      CHECK_IEQ(sub_line_spans(&b, &sp), 0); freeline(&b); /* prefix */
+  Line c = mkline("lambda_x");     CHECK_IEQ(sub_line_spans(&c, &sp), 0); freeline(&c); /* identifier */
+  Line d = mkline("pi2");          CHECK_IEQ(sub_line_spans(&d, &sp), 0); freeline(&d); /* digit after */
+  Line e = mkline("(lambda)");     CHECK(glyph_is(span_at(&e, 1), "λ"));  freeline(&e); /* bracketed */
+  Line f = mkline("a beta.");      CHECK(glyph_is(span_at(&f, 2), "β"));  freeline(&f); /* punctuation */
+}
+
+/* math operator words — only non-English triggers. */
+static void test_math(void) {
+  Line a = mkline("forall x exists y");
+  CHECK(glyph_is(span_at(&a, 0), "∀"));
+  CHECK(glyph_is(span_at(&a, 9), "∃"));
+  CHECK_IEQ(span_at(&a, 0)->category, SUB_MATH);
+  freeline(&a);
+  Line b = mkline("sqrt of infinity");
+  CHECK(glyph_is(span_at(&b, 0), "√"));
+  CHECK(glyph_is(span_at(&b, 8), "∞"));
+  freeline(&b);
+}
+
+/* A glyph the font can't draw is skipped — the source renders as literal text
+   instead of a tofu box (real fonts have partial Unicode coverage). */
+static void test_unrenderable_falls_back(void) {
+  const SubSpan *sp;
+  stub_reset();
+  stub_set_glyph_missing(0x21D2);             /* ⇒ absent from the "font" */
+  Line a = mkline("a => b");
+  CHECK_IEQ(sub_line_spans(&a, &sp), 0);      /* no span: "=>" stays literal */
+  freeline(&a);
+
+  stub_reset();                               /* glyph present again */
+  Line b = mkline("a => b");
+  CHECK(glyph_is(span_at(&b, 2), "⇒"));
+  freeline(&b);
+}
+
 /* ---- masking ---- */
 
 static void test_mask(void) {
@@ -280,6 +340,10 @@ void suite_sub(void) {
   RUN(test_dashes);
   RUN(test_smart_quotes);
   RUN(test_symbols);
+  RUN(test_greek);
+  RUN(test_greek_word_boundary);
+  RUN(test_math);
+  RUN(test_unrenderable_falls_back);
   RUN(test_mask);
   RUN(test_cache);
   RUN(test_caret_click_parity);
