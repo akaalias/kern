@@ -6,12 +6,13 @@ the iA Writer Quattro/Mono typefaces, live markdown styling, and a full-window
 writing surface.
 
 A macOS app: a thin SwiftUI shell launches the editor, which is written in C
-with SDL2 + OpenGL for rendering. Built on
-[microui](https://github.com/rxi/microui) (the immediate-mode UI library
-provides the window, command list, clipping, and input plumbing) and
-[stb_truetype](https://github.com/nothings/stb) for font rasterization. SDL2 is
-statically linked from a vendored library, so the `.app` is self-contained
-(no Homebrew dependency) and runs with Hardened Runtime + App Sandbox.
+with SDL2 + OpenGL for rendering and
+[stb_truetype](https://github.com/nothings/stb) for font rasterization. There's
+no UI toolkit — the editor draws everything immediately through a small
+12-function renderer interface (`renderer.h`) over a ~30-line geometry/color
+header (`gfx.h`). SDL2 is statically linked from a vendored library, so the
+`.app` is self-contained (no Homebrew dependency) and runs with Hardened
+Runtime + App Sandbox.
 
 ## Building
 
@@ -24,7 +25,9 @@ bundled as resources. Apple Silicon only.
 
 ## Usage
 
-Launches into an empty buffer. Files live in the app's sandbox container:
+On launch it opens today's daily note (`YYYY-MM-DD.md`, seeded with a date
+heading). The buffer auto-saves every few seconds while modified. Files live in
+the app's sandbox container:
 
 ```
 ~/Library/Containers/com.rondeau.Kern/Data/Documents/
@@ -44,6 +47,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-x C-f` | Find/open file (inline completion — Tab to accept)|
 | `C-x C-s` | Save                                              |
 | `C-x C-w` | Write file (save as)                              |
+| `C-x b`   | Switch buffer (recent files — Tab to list/cycle)  |
 | `C-x C-c` | Quit                                              |
 
 **Movement**
@@ -68,6 +72,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `M-d` / `M-⌫`         | Kill word forward / backward        |
 | `C-t`                 | Transpose characters                |
 | `C-o`                 | Open line                           |
+| `Tab` / `Shift-Tab`   | Indent / outdent list item          |
 | `M-u` / `M-l` / `M-c` | Upcase / downcase / capitalize word |
 | `C-/`                 | Undo                                |
 
@@ -92,6 +97,15 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 
 Markdown headings, bold, and italic are styled live as you type.
 
+**Notes & wikilinks**
+
+| Keys                          | Action                                            |
+|-------------------------------|---------------------------------------------------|
+| `[[`                          | Wikilink autocomplete (↑/↓ to pick, Tab/Enter to accept) |
+| `Cmd-Enter`                   | Follow the `[[wikilink]]` under the cursor        |
+| `Cmd-Shift-←` / `Cmd-Shift-→` | Back / forward through note history               |
+| `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
+
 ## Layout
 
 ```
@@ -100,17 +114,18 @@ application/Kern/
   Kern/
     App/            SwiftUI shell, bridging header, asset catalog
     Editor/         the C editor: textview, buffer, editing, navigation,
-                    undo, md_render, editor_types
+                    undo, md_render, commands, recent, clipboard, clock,
+                    gfx, editor_types
     Platform/       SDL/GL renderer + macOS window chrome
-    ThirdParty/     microui, stb_truetype, atlas
+    ThirdParty/     stb_truetype
     Resources/      iA Writer fonts + OFL.txt
   Vendor/SDL2/      vendored SDL2 static lib + headers
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Includes microui (© rxi), SDL2 (zlib), and
-stb_truetype (public domain), each under their own licenses. Typeset in the
+MIT — see [LICENSE](LICENSE). Includes SDL2 (zlib) and stb_truetype (public
+domain), each under their own licenses. Typeset in the
 [iA Writer](https://github.com/iaolo/iA-Fonts) Quattro & Mono typefaces
 (© Information Architects), used under the SIL Open Font License 1.1 — see
 [OFL.txt](application/Kern/Kern/Resources/OFL.txt).

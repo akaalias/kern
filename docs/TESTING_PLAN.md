@@ -2,9 +2,11 @@
 
 > Companion docs: [TESTING_PROGRESS.md](./TESTING_PROGRESS.md) (live status tracker) · [REFACTORING.md](./REFACTORING.md) (refactor candidates this net unlocks)
 
+> **Status (2026-06-25):** this plan is largely executed. Phases A–E shipped (headless unit/integration/snapshot/feature/perf layers, sanitizers, coverage, CI); the core sits at ~99.5% line / 100% function coverage across 155 tests, and the microui dependency it references has since been removed (geometry types now come from `gfx.h`). Phase F (GUI smoke + full CI matrix) and a keydown seam for `textview.c` remain. See TESTING_PROGRESS.md for current status; the strategy below is kept as the original plan of record.
+
 ## Context
 
-Kern is a ~4,300-line C macOS editor (microui + SDL2 + OpenGL behind a thin Swift/AppKit shell) with **zero tests and zero CI today**. The goal is to fortify it with as much coverage as possible so we can then **aggressively refactor toward readability, minimalism, and C-idiomacy while guaranteeing feature + performance parity**.
+Kern is a C macOS editor (SDL2 + OpenGL behind a thin Swift/AppKit shell) that **began with zero tests and zero CI**. The goal is to fortify it with as much coverage as possible so we can then **aggressively refactor toward readability, minimalism, and C-idiomacy while guaranteeing feature + performance parity**. (At the time of writing it still vendored microui; that dependency has since been removed.)
 
 The architecture is favorable: there is already a pure data core (`EditorState` + `buffer.c`/`editing.c`/`undo.c`) that touches no SDL/GL, and `navigation.c`/`md_render.c` depend only on the 12-function `renderer.h` interface. The one obstacle to fast feature tests is that `textview.c` (1,580 lines) keeps event dispatch and rendering inline inside `editor_main`'s `for(;;)` loop — there is no callable "handle one event / render-from-state" seam.
 
@@ -38,7 +40,7 @@ These are the levers that actually deliver *parity-guaranteed refactoring*, beyo
 ## Phased implementation
 
 ### Phase A — Foundation + pure-core unit tests (no production refactor)
-- Add `tests/` with a standalone **Makefile** (and optional CMake) that compiles the portable core (`buffer.c`, `editing.c`, `undo.c`), `microui.c` (for `mu_*` typedefs used via `editor_types.h`), SDL *headers only* (no `libSDL2.a`), and test files into a `kern_tests` binary — all under ASan+UBSan.
+- Add `tests/` with a standalone **Makefile** (and optional CMake) that compiles the portable core (`buffer.c`, `editing.c`, `undo.c`, and later `navigation.c`/`md_render.c`/`recent.c`/`commands.c`), SDL *headers only* (no `libSDL2.a`; geometry types come from `gfx.h`), and test files into a `kern_tests` binary — all under ASan+UBSan.
 - Single-header harness `tests/test.h` (custom ~80 lines or vendored utest.h).
 - Unit tests: `editing.c` (all `ed_*`, incl. the new `ed_indent_line`/`ed_dedent_line`), `undo.c` (push/coalesce/group/perform round-trips), `buffer.c` (`buf_load_file`/`buf_save` via temp files, line growth, region/mark, `buf_resolve_path`, filename completion).
 - Invariants + characterization tests for current behavior.
