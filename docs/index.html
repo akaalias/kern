@@ -159,6 +159,33 @@
   }
   dl.features dd kbd { font-size: 0.78em; }
 
+  /* Performance table ------------------------------------------------- */
+  table.perf {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 1.1rem;
+  }
+  table.perf th, table.perf td {
+    text-align: left;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(55, 55, 57, 0.6);
+  }
+  table.perf thead th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    font-weight: 700;
+  }
+  table.perf .num {
+    text-align: right;
+    font-family: "iA Mono", monospace;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  table.perf tbody td:first-child { color: var(--fg); }
+  .perf-note { color: var(--dim); font-size: 0.9rem; }
+
   /* Footer ------------------------------------------------------------ */
   .colophon {
     margin-top: 4rem;
@@ -249,6 +276,27 @@
       <dd>iA Writer Quattro and Mono — the very faces rendering this page.</dd>
     </div>
   </dl>
+
+  <h2>Why "beefy"</h2>
+
+  <p>Beefy means it doesn't flinch at large files. The same immediate-mode renderer that draws every glyph also lays out hundreds of thousands of lines without a spinner — open a multi-megabyte note, jump to the end, search it, resize the window, all in a frame or two. Lazy per-line caches do the rest: every line is wrapped once, then reused.</p>
+
+  <p>Numbers from the performance smoke test, on a <strong>26&nbsp;MB plain-text file of 330,894 lines</strong>:</p>
+
+  <table class="perf">
+    <thead>
+      <tr><th>Operation</th><th class="num">Time</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Open the file</td><td class="num">127 ms</td></tr>
+      <tr><td>Lay out every line (cold wrap)</td><td class="num">145 ms</td></tr>
+      <tr><td>Jump to the last line</td><td class="num">0.2 ms</td></tr>
+      <tr><td>Incremental search</td><td class="num">&lt; 1 ms</td></tr>
+      <tr><td>Re-wrap on window resize</td><td class="num">140 ms</td></tr>
+    </tbody>
+  </table>
+
+  <p class="perf-note">Only the cold open and full re-wrap touch every line; everything after runs against warm caches. Reproduce it yourself with <kbd>make perf</kbd>.</p>
 
   <h2>Get it</h2>
 
