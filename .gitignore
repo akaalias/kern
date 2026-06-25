@@ -37,3 +37,6 @@ tests/perf_corpus.txt
 
 # Claude Code local session/settings
 .claude/
+
+# Local X OAuth client id — never commit
+application/Kern/Config/Secrets.xcconfig

@@ -9,4 +9,9 @@ int editor_main(int argc, char **argv);
    folder). Call before editor_main. */
 void editor_set_documents_dir(const char *path);
 
+/* Report an X / Twitter publish result in the editor status bar. Implemented in
+   C (textview.c); called from the Swift networking layer (KernApp.swift),
+   possibly off the main thread. */
+void kern_x_set_status(const char *msg);
+
 #endif /* Kern_Bridging_Header_h */

@@ -24,6 +24,16 @@
 static EditorState g_ed = {0};
 static ViewState   g_vs = {0};
 
+/* ---- X / Twitter publishing bridge (the network + OAuth half lives in Swift,
+   KernApp.swift) ---------------------------------------------------------- */
+extern void kern_x_publish(const char *text);   /* Swift @_cdecl: async post */
+extern int  kern_x_is_connected(void);          /* Swift @_cdecl: 1 if linked */
+
+/* Swift calls this (possibly off the main thread) to report a publish result.
+   We only stash a string + timestamp; the 250ms event-loop tick repaints it,
+   so no synthetic SDL event is needed. */
+void kern_x_set_status(const char *msg) { nav_status_set(&g_vs, msg); }
+
 
 /* ---- minibuffer filename completion ---- */
 
@@ -212,6 +222,44 @@ static void cmd_extract_region_to_note(void) {
   char msg[256];
   snprintf(msg, sizeof(msg), "Created %s", fname);
   nav_status_set(&g_vs, msg);
+}
+
+/* Join the whole buffer into one malloc'd, NUL-terminated string, lines
+   separated by '\n'. Caller frees; *len_out gets the byte length. */
+static char *buffer_dup_all(EditorState *ed, int *len_out) {
+  int total = 1;  /* room for the trailing NUL even on an empty buffer */
+  for (int i = 0; i < ed->line_count; i++) total += ed->lines[i].len + 1;
+  char *out = malloc(total);
+  if (!out) { if (len_out) *len_out = 0; return NULL; }
+  int p = 0;
+  for (int i = 0; i < ed->line_count; i++) {
+    memcpy(out + p, ed->lines[i].text, ed->lines[i].len);
+    p += ed->lines[i].len;
+    if (i + 1 < ed->line_count) out[p++] = '\n';
+  }
+  out[p] = '\0';
+  if (len_out) *len_out = p;
+  return out;
+}
+
+/* Cmd-Shift-T: publish the current note to X. If a region is marked, only that
+   is posted; otherwise the whole note goes. The text is handed to the Swift
+   layer, which owns OAuth, the HTTP call, and reporting back via
+   kern_x_set_status(). */
+static void cmd_publish_to_x(void) {
+  if (!kern_x_is_connected()) {
+    nav_status_set(&g_vs, "Connect your X account first (Settings \xE2\x80\xBA X)");
+    return;
+  }
+
+  int len = 0;
+  char *text = g_ed.mark_active ? ed_region_dup(&g_ed, &len)
+                                : buffer_dup_all(&g_ed, &len);
+  if (!text || len == 0) { free(text); nav_status_set(&g_vs, "Nothing to publish"); return; }
+
+  nav_status_set(&g_vs, "Publishing to X\xE2\x80\xA6");
+  kern_x_publish(text);   /* async; the result arrives via kern_x_set_status */
+  free(text);
 }
 
 /* word wrapping, cursor navigation, editing, and markdown rendering
@@ -1125,6 +1173,11 @@ int editor_main(int argc, char **argv) {
             if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
                 sym == SDLK_n) {
               cmd_extract_region_to_note(); break;
+            }
+            /* Cmd-Shift-T: publish the current note (or region) to X / Twitter */
+            if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+                sym == SDLK_t) {
+              cmd_publish_to_x(); break;
             }
 
             /* 1d. Tab / Shift-Tab indent or outdent the current list item.

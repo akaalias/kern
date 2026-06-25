@@ -1,0 +1,13 @@
+// Base build configuration for Kern.
+//
+// Local-only secrets (e.g. the X OAuth2 client id) are layered in via an
+// OPTIONAL include below. A fresh clone with no Secrets.xcconfig still builds
+// fine — the include is silently skipped and X_CLIENT_ID stays empty, which the
+// app handles gracefully (the X feature just reports "not configured").
+//
+// To enable X publishing: copy Secrets.example.xcconfig -> Secrets.xcconfig and
+// paste your client id. Secrets.xcconfig is gitignored.
+
+X_CLIENT_ID =
+
+#include? "Secrets.xcconfig"
