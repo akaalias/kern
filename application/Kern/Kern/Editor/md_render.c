@@ -4,6 +4,7 @@
 #include <string.h>
 #include "md_render.h"
 #include "renderer.h"
+#include "utf8.h"
 
 /* base indent shared by every list level; nesting is added on top by the line's
    own leading whitespace, which is drawn as literal text */
@@ -180,10 +181,30 @@ static int md_line_spans(Line *l, const struct MdSpan **out) {
    rows. Renders one character at a time.
      track_cursor_col: if in [start,end] the pen x at that column is written to
      *out_cursor_x. Returns the pen x after the window. */
+/* Global focus dim (typewriter mode): scales the alpha of everything drawn so
+   non-focused lines fade toward the background. 1.0 = full opacity (default).
+   A module global rather than a parameter so the measure-only and test callers
+   don't have to thread it through. */
+static float g_text_opacity = 1.0f;
+void md_set_text_opacity(float o) { g_text_opacity = o; }
+
+static Color md_fade(Color c, float o) {
+  return color(c.r, c.g, c.b, (int)(c.a * o + 0.5f));
+}
+
+float md_focus_opacity(int line, int cur, int prev, float t) {
+  /* newly focused line fades dim→full; the line just left fades full→dim;
+     every other line stays dim. t in [0,1] is the crossfade progress. */
+  if (line == cur)  return FOCUS_DIM_OPACITY + (1.0f - FOCUS_DIM_OPACITY) * t;
+  if (line == prev) return 1.0f - (1.0f - FOCUS_DIM_OPACITY) * t;
+  return FOCUS_DIM_OPACITY;
+}
+
 float md_draw_text(Line *l, int start, int end,
                    float x, float y, Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw) {
   const char *text = l->text;
+  float op = g_text_opacity;
   int saved_style = r_get_font_style();
   int base_style  = heading ? FONT_BOLD : FONT_REGULAR;
   int font_h      = r_get_text_height();
@@ -201,7 +222,7 @@ float md_draw_text(Line *l, int start, int end,
   while (si < span_count && spans[si].end <= start) si++;   /* first span over `start` */
 
   float px = x;
-  for (int i = start; i < end; i++) {
+  for (int i = start; i < end; ) {
     while (si < span_count && i >= spans[si].end) si++;
 
     /* attributes for the character at i */
@@ -226,19 +247,23 @@ float md_draw_text(Line *l, int start, int end,
 
     if (i == track_cursor_col) *out_cursor_x = (int)px;
 
+    int n = utf8_len(text + i, end - i);          /* draw a whole codepoint */
+    char ch[5];
+    memcpy(ch, text + i, n);
+    ch[n] = '\0';
     r_set_font_style(style);
-    char ch[2] = { text[i], '\0' };
-    int w = r_get_text_width(ch, 1);
+    int w = r_get_text_width(ch, n);
     if (draw) {
       if (bg == 1) {
-        r_draw_rect(rect((int)px, (int)y, w, font_h), link_bg);
+        r_draw_rect(rect((int)px, (int)y, w, font_h), md_fade(link_bg, op));
       } else if (bg == 2) {
         int woff = wave[i & 3];
-        r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), hl_bg);
+        r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
-      r_draw_text(ch, vec2((int)px, (int)y), fg);
+      r_draw_text(ch, vec2((int)px, (int)y), md_fade(fg, op));
     }
     px += w;
+    i += n;
   }
 
   if (track_cursor_col >= end) *out_cursor_x = (int)px;

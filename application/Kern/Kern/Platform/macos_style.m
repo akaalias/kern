@@ -5,6 +5,11 @@
 /* from buffer.c — the sandbox-container Documents directory */
 extern const char *buf_get_documents_dir(void);
 
+/* from textview.c — publish the current note to X (runs on the main thread) */
+extern void kern_publish_to_x(void);
+/* from KernApp.swift (@_cdecl) — 1 if an X account is linked */
+extern int kern_x_is_connected(void);
+
 #pragma mark - Keyboard-shortcut sheet
 
 /* A small rounded "key-cap" view that draws one key (e.g. ⌃ or "X"). */
@@ -62,6 +67,7 @@ extern const char *buf_get_documents_dir(void);
 - (void)openDocsFolder:(id)sender;
 - (void)showShortcuts:(id)sender;
 - (void)closeShortcuts:(id)sender;
+- (void)publishToX:(id)sender;
 @end
 
 static NSPanel *g_shortcuts_panel;  /* strong while the panel is up */
@@ -74,6 +80,13 @@ static NSPanel *g_shortcuts_panel;  /* strong while the panel is up */
   if (!p || !*p) return;
   NSString *path = [NSString stringWithUTF8String:p];
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
+}
+
+- (void)publishToX:(id)sender {
+  (void)sender;
+  /* the title-bar button only appears when X is connected; the C side reads the
+     current note/region and hands it to the async Swift publisher. */
+  kern_publish_to_x();
 }
 
 /* Make a label NSTextField (non-editable, no background). */
@@ -483,6 +496,14 @@ static NSView *kern_legend_card(void) {
 @end
 
 static KernTitlebarActions *g_titlebar_actions;  /* strong (ARC) — keep alive */
+static NSButton *g_publish_btn;                  /* the "Publish to X" title-bar button */
+
+/* Called from the editor loop (main thread) when the X connection state flips.
+   The button lives in an NSStackView, so toggling `hidden` collapses/expands its
+   slot with no leftover gap. */
+void kern_titlebar_set_x_connected(int connected) {
+  g_publish_btn.hidden = connected ? NO : YES;
+}
 
 #pragma mark - Window chrome
 
@@ -524,8 +545,9 @@ void macos_style_window(SDL_Window *sdl_window) {
   nswindow.toolbar = toolbar;
 
   /* icon-only buttons in the top-right of the title bar: a help button that
-     lists the keyboard shortcuts, and a folder button that opens the documents
-     folder in Finder. */
+     lists the keyboard shortcuts, a folder button that opens the documents
+     folder in Finder, and a publish button that posts the current note to X
+     (shown only while an X account is connected). */
   g_titlebar_actions = [KernTitlebarActions new];
   NSButton *helpBtn = kern_titlebar_button(@"info.circle", @"Keyboard shortcuts",
                                            @"Keyboard shortcuts",
@@ -535,25 +557,38 @@ void macos_style_window(SDL_Window *sdl_window) {
                                           @"Open documents folder in Finder",
                                           @selector(openDocsFolder:),
                                           NSZeroRect);
+  g_publish_btn = kern_titlebar_button(@"paperplane", @"Publish to X",
+                                       @"Publish this note to X",
+                                       @selector(publishToX:),
+                                       NSZeroRect);
+  g_publish_btn.hidden = (kern_x_is_connected() == 0);   /* until/unless connected */
 
   /* AppKit stretches the accessory view to the full (toolbar-tall) title bar
      height. Pin the buttons to its vertical center via Auto Layout so they line
-     up with the window title instead of sinking to the bottom edge. */
-  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 82, 30)];
+     up with the window title instead of sinking to the bottom edge. The three
+     buttons are pinned from the *right* (folder, then help, then publish to its
+     left); when the publish button is hidden its empty slot falls on the inner
+     side against the title bar, so there's no visible gap. */
+  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 120, 30)];
   helpBtn.translatesAutoresizingMaskIntoConstraints = NO;
   folder.translatesAutoresizingMaskIntoConstraints = NO;
+  g_publish_btn.translatesAutoresizingMaskIntoConstraints = NO;
   [buttons addSubview:helpBtn];
   [buttons addSubview:folder];
+  [buttons addSubview:g_publish_btn];
   [NSLayoutConstraint activateConstraints:@[
     [helpBtn.widthAnchor constraintEqualToConstant:32],
     [helpBtn.heightAnchor constraintEqualToConstant:24],
     [folder.widthAnchor constraintEqualToConstant:32],
     [folder.heightAnchor constraintEqualToConstant:24],
-    [helpBtn.leadingAnchor constraintEqualToAnchor:buttons.leadingAnchor constant:4],
-    [folder.leadingAnchor constraintEqualToAnchor:helpBtn.trailingAnchor constant:6],
+    [g_publish_btn.widthAnchor constraintEqualToConstant:32],
+    [g_publish_btn.heightAnchor constraintEqualToConstant:24],
     [folder.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-8],
+    [helpBtn.trailingAnchor constraintEqualToAnchor:folder.leadingAnchor constant:-6],
+    [g_publish_btn.trailingAnchor constraintEqualToAnchor:helpBtn.leadingAnchor constant:-6],
     [helpBtn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
     [folder.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
+    [g_publish_btn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
   ]];
 
   NSTitlebarAccessoryViewController *acc = [[NSTitlebarAccessoryViewController alloc] init];

@@ -14,6 +14,10 @@
 #define MAX_VIS_ROWS      200
 #define MAX_LINE_LEN      65536  /* split lines longer than this on load */
 #define STATUS_DURATION   3000   /* ms to show a transient status message */
+#define TYPEWRITER_FRACTION 0.382f  /* golden ratio: active line pins this far down the page */
+#define SCROLL_EASE         0.30f   /* per-frame fraction closed toward scroll_target_y (typewriter glide) */
+#define FOCUS_DIM_OPACITY   0.40f   /* opacity of non-focused lines in typewriter mode */
+#define FOCUS_EASE          0.30f   /* per-frame fraction of the focus crossfade closed */
 
 /* ---- line ---- */
 struct MdSpan;          /* inline-markdown span; defined in md_render.c */
@@ -92,6 +96,7 @@ typedef struct {
 typedef struct ViewState ViewState;
 struct ViewState {
   float  scroll_y;
+  float  scroll_target_y;   /* typewriter mode eases scroll_y toward this each frame */
   float  font_size;
   int    content_y;
   int    content_h;
@@ -109,6 +114,14 @@ struct ViewState {
   VisRow vis_rows[MAX_VIS_ROWS];
   int    vis_row_count;
   int    cursor_x;   /* computed during markdown draw, -1 if off-screen */
+
+  /* typewriter mode: pin the active line at a fixed fraction of the page */
+  int    typewriter_mode;
+  /* focus crossfade: as the caret changes line, the old line fades down and the
+     new line fades up over focus_t in [0,1] (1 = settled). */
+  int    focus_cur_line;
+  int    focus_prev_line;
+  float  focus_t;
 
   /* input mode flags */
   int    ctrl_x_prefix;

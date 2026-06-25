@@ -40,6 +40,33 @@ static void test_insert_utf8_is_byte_indexed(void) {
   ed_teardown(&ed);
 }
 
+/* The pasted-smart-quote bug: one backspace must remove the whole 3-byte
+   codepoint, not a single byte (which used to take three presses). */
+static void test_backspace_removes_whole_codepoint(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  ed_insert_char(&ed, "x");
+  ed_insert_char(&ed, "\xe2\x80\x99");   /* U+2019 ’ smart apostrophe */
+  CHECK_IEQ(ed.cursor_col, 4);
+  ed_backspace(&ed);                      /* one press */
+  CHECK_SEQ(LINE(ed, 0), "x");
+  CHECK_IEQ(ed.cursor_col, 1);
+  ed_teardown(&ed);
+}
+
+/* Forward-delete likewise removes the whole codepoint at point. */
+static void test_delete_removes_whole_codepoint(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  ed_insert_char(&ed, "\xe2\x80\x99");   /* ’ */
+  ed_insert_char(&ed, "y");
+  ed.cursor_col = 0;
+  ed_delete(&ed);
+  CHECK_SEQ(LINE(ed, 0), "y");
+  CHECK_IEQ(ed.cursor_col, 0);
+  ed_teardown(&ed);
+}
+
 /* ---- ed_backspace ---- */
 
 static void test_backspace_in_line(void) {
@@ -474,6 +501,8 @@ void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
   RUN(test_insert_utf8_is_byte_indexed);
+  RUN(test_backspace_removes_whole_codepoint);
+  RUN(test_delete_removes_whole_codepoint);
   RUN(test_backspace_in_line);
   RUN(test_backspace_joins_lines);
   RUN(test_enter_splits_line);

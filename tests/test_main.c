@@ -32,6 +32,7 @@ void suite_md_render(void);
 void suite_recent(void);
 void suite_status(void);
 void suite_commands(void);
+void suite_utf8(void);
 void suite_snapshot(void);
 
 int main(void) {
@@ -44,6 +45,7 @@ int main(void) {
   suite_recent();
   suite_status();
   suite_commands();
+  suite_utf8();
   suite_snapshot();
 
   fprintf(stdout, "\n%d tests (%d failed), %d checks (%d failed)\n",

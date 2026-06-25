@@ -61,6 +61,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-v` / `M-v` | Page down / up                  |
 | `M-<` / `M->` | Beginning / end of buffer       |
 | `C-l`         | Recenter (center → top → bottom)|
+| `C-x t`       | Typewriter mode (pin active line at golden ratio) |
 | `M-g`         | Go to line                      |
 
 **Editing**
@@ -105,13 +106,16 @@ Markdown headings, bold, and italic are styled live as you type.
 | `Cmd-Enter`                   | Follow the `[[wikilink]]` under the cursor        |
 | `Cmd-Shift-←` / `Cmd-Shift-→` | Back / forward through note history               |
 | `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
-| `Cmd-Shift-T`                 | Publish the current note (or selection) to X / Twitter |
+| `Cmd-Shift-T`                 | Open (or create) today's daily note               |
 
 ## Publishing to X (Twitter)
 
-`Cmd-Shift-T` posts the note you're viewing — or the marked region, if one is
-active — straight to your X timeline. Progress and results appear in the editor's
-status bar (`Posted to X ✓`).
+When an X account is connected, a **paper-plane button** appears in the top-right
+of the title bar (next to the help and folder buttons). Click it to post the note
+you're viewing — or the marked region, if one is active — straight to your X
+timeline. The result shows up both as a macOS notification (`Posted to X ✓` / a
+failure banner) and in the editor's status bar. The button is hidden until you
+link an account.
 
 **One-time setup**
 

@@ -37,9 +37,9 @@ CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
-           unit_status.c unit_commands.c snapshot.c
+           unit_status.c unit_commands.c unit_utf8.c snapshot.c
 SRC     := $(CORE) $(TESTS)
-HDRS    := test.h ed_fixture.h stub_renderer.h
+HDRS    := test.h ed_fixture.h stub_renderer.h $(APP)/Editor/utf8.h
 
 # Production files we measure line coverage on (the testable Editor core).
 COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \

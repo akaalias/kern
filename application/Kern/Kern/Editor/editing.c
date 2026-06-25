@@ -7,6 +7,7 @@
 #include "editing.h"
 #include "buffer.h"
 #include "undo.h"
+#include "utf8.h"
 
 static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec);
 
@@ -64,11 +65,14 @@ void ed_dedent_line(EditorState *ed) {
 void ed_backspace(EditorState *ed) {
   if (ed->cursor_col > 0) {
     Line *l = &ed->lines[ed->cursor_line];
-    char deleted = l->text[ed->cursor_col - 1];
-    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col - 1, &deleted, 1);
-    memmove(l->text + ed->cursor_col - 1, l->text + ed->cursor_col, l->len - ed->cursor_col + 1);
-    l->len--;
-    ed->cursor_col--;
+    int nb = utf8_back(l->text, ed->cursor_col);   /* whole codepoint, not one byte */
+    char deleted[5];
+    memcpy(deleted, l->text + ed->cursor_col - nb, nb);
+    deleted[nb] = '\0';
+    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col - nb, deleted, nb);
+    memmove(l->text + ed->cursor_col - nb, l->text + ed->cursor_col, l->len - ed->cursor_col + 1);
+    l->len -= nb;
+    ed->cursor_col -= nb;
     line_dirty(l);
   } else if (ed->cursor_line > 0) {
     int prev = ed->cursor_line - 1;
@@ -88,10 +92,13 @@ void ed_backspace(EditorState *ed) {
 void ed_delete(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
   if (ed->cursor_col < l->len) {
-    char deleted = l->text[ed->cursor_col];
-    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col, &deleted, 1);
-    memmove(l->text + ed->cursor_col, l->text + ed->cursor_col + 1, l->len - ed->cursor_col);
-    l->len--;
+    int nb = utf8_len(l->text + ed->cursor_col, l->len - ed->cursor_col);   /* whole codepoint */
+    char deleted[5];
+    memcpy(deleted, l->text + ed->cursor_col, nb);
+    deleted[nb] = '\0';
+    undo_push_op(ed, UNDO_DELETE, ed->cursor_line, ed->cursor_col, deleted, nb);
+    memmove(l->text + ed->cursor_col, l->text + ed->cursor_col + nb, l->len - ed->cursor_col - nb + 1);
+    l->len -= nb;
     line_dirty(l);
   } else if (ed->cursor_line < ed->line_count - 1) {
     int next = ed->cursor_line + 1;

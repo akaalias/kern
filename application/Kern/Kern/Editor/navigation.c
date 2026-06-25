@@ -9,6 +9,7 @@
 #include "renderer.h"
 #include "buffer.h"
 #include "clock.h"
+#include "utf8.h"
 
 /* ---- window / page metrics ---- */
 
@@ -62,7 +63,8 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
   int i = 0;
 
   while (i < l->len && count < max_starts) {
-    int cw = r_get_text_width(l->text + i, 1);
+    int n = utf8_len(l->text + i, l->len - i);   /* step whole codepoints */
+    int cw = r_get_text_width(l->text + i, n);
 
     if (x + cw > nav_page_w() && i > row_start) {
       int brk = i;
@@ -76,9 +78,9 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
       continue;
     }
 
-    if (l->text[i] == ' ') last_space = i;
+    if (l->text[i] == ' ') last_space = i;       /* spaces are ASCII */
     x += cw;
-    i++;
+    i += n;
   }
 
   if (saved_style != FONT_REGULAR) r_set_font_style(saved_style);
@@ -148,10 +150,33 @@ void nav_cursor_clamp(EditorState *ed) {
   if (ed->cursor_line < 0) ed->cursor_line = 0;
   if (ed->cursor_line >= ed->line_count) ed->cursor_line = ed->line_count - 1;
   if (ed->cursor_col < 0) ed->cursor_col = 0;
-  if (ed->cursor_col > ed->lines[ed->cursor_line].len) ed->cursor_col = ed->lines[ed->cursor_line].len;
+  Line *l = &ed->lines[ed->cursor_line];
+  if (ed->cursor_col > l->len) ed->cursor_col = l->len;
+  /* never rest in the middle of a multibyte codepoint (e.g. after a vertical
+     move or search jump landed on a target byte): snap back to its start */
+  while (ed->cursor_col > 0 && ((unsigned char)l->text[ed->cursor_col] & 0xC0) == 0x80)
+    ed->cursor_col--;
+}
+
+float nav_pin_target(EditorState *ed, ViewState *vs, float fraction) {
+  int lh = nav_line_height();
+  int view_h = vs->content_h > 0 ? vs->content_h : nav_win_h();
+  float cursor_top = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col) * lh;
+  /* May be negative for the first lines: that's virtual whitespace above the top
+     so the first line can still pin at the golden height. process_frame clamps
+     it to a valid range (0 outside typewriter mode). */
+  return cursor_top - (int)((view_h - lh) * fraction);
+}
+
+void nav_pin_cursor(EditorState *ed, ViewState *vs, float fraction) {
+  float t = nav_pin_target(ed, vs, fraction);   /* recenter floors at the top — no virtual whitespace */
+  vs->scroll_y = vs->scroll_target_y = t < 0 ? 0 : t;
 }
 
 void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs) {
+  /* Typewriter mode only moves the *target*; process_frame eases scroll_y to it
+     for a smooth glide instead of snapping. */
+  if (vs->typewriter_mode) { vs->scroll_target_y = nav_pin_target(ed, vs, TYPEWRITER_FRACTION); return; }
   int lh = nav_line_height();
   int vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
   float cursor_top = vis * lh;
@@ -184,11 +209,15 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
   int pm = nav_page_margin();
   if (mx > pm) {
     int px = pm;
-    for (int i = row_start; i < row_end; i++) {
-      int cw = body_width(ed->lines[ln].text + i, 1);
+    const char *txt = ed->lines[ln].text;
+    int i = row_start;
+    while (i < row_end) {
+      int n = utf8_len(txt + i, row_end - i);    /* land on codepoint boundaries */
+      int cw = body_width(txt + i, n);
       if (px + cw / 2 > mx) break;
       px += cw;
-      col = i + 1;
+      i += n;
+      col = i;
     }
   }
 

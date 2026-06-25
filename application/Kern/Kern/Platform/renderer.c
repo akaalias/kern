@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "renderer.h"
+#include "utf8.h"
 
 /* stb_truetype */
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -31,6 +32,7 @@ static GLuint current_tex;
 /* ---- TTF fonts (multi-style) ---- */
 #define FONT_ATLAS_W 2048
 #define FONT_ATLAS_H 2048
+#define DYN_CAP      2048   /* open-addressing cache slots for codepoints >= 128 */
 
 typedef struct {
   int x0, y0, x1, y1;
@@ -42,7 +44,13 @@ typedef struct {
 typedef struct {
   stbtt_fontinfo info;
   unsigned char *file_buf;
-  GlyphInfo glyphs[128];
+  GlyphInfo glyphs[128];           /* ASCII fast path, indexed by codepoint */
+  /* on-demand cache for codepoints >= 128 (smart quotes, dashes, accents, …);
+     dyn_cp[i]==0 means empty. Reset on a font-size rebuild. */
+  int       dyn_cp[DYN_CAP];
+  GlyphInfo dyn_glyph[DYN_CAP];
+  int       pen_x, pen_y, row_h;   /* persistent atlas packer position */
+  float     scale;                 /* px scale for on-demand rasterization */
   unsigned char atlas[FONT_ATLAS_W * FONT_ATLAS_H];
   GLuint tex;
   float baseline;
@@ -84,56 +92,58 @@ static void load_ttf(int style, const char *filename) {
   fd->loaded = 1;
 }
 
+/* Rasterize codepoint `cp` at fd->scale into the atlas at the running pen,
+   filling *gi. Shared by the initial ASCII build and on-demand caching. If the
+   atlas is full, the glyph draws nothing but keeps a sane advance for spacing. */
+static void pack_glyph(FontData *fd, int cp, GlyphInfo *gi) {
+  int w, h, xoff, yoff;
+  unsigned char *bmp = stbtt_GetCodepointBitmap(&fd->info, 0, fd->scale, cp, &w, &h, &xoff, &yoff);
+
+  if (fd->pen_x + w + 1 >= FONT_ATLAS_W) {
+    fd->pen_x = 1;
+    fd->pen_y += fd->row_h + 1;
+    fd->row_h = 0;
+  }
+
+  int advance, lsb;
+  stbtt_GetCodepointHMetrics(&fd->info, cp, &advance, &lsb);
+
+  if (fd->pen_y + h + 1 >= FONT_ATLAS_H) {       /* atlas exhausted */
+    if (bmp) stbtt_FreeBitmap(bmp, NULL);
+    memset(gi, 0, sizeof *gi);
+    gi->xadvance = (advance * fd->scale) / dpi_scale;
+    return;
+  }
+
+  if (bmp) {
+    for (int r = 0; r < h; r++)
+      memcpy(&fd->atlas[(fd->pen_y + r) * FONT_ATLAS_W + fd->pen_x], &bmp[r * w], w);
+    stbtt_FreeBitmap(bmp, NULL);
+  }
+
+  gi->x0 = fd->pen_x;        gi->y0 = fd->pen_y;
+  gi->x1 = fd->pen_x + w;    gi->y1 = fd->pen_y + h;
+  gi->xoff = xoff / dpi_scale; gi->yoff = yoff / dpi_scale;
+  gi->bw = w / dpi_scale;      gi->bh = h / dpi_scale;
+  gi->xadvance = (advance * fd->scale) / dpi_scale;
+
+  fd->pen_x += w + 1;
+  if (h > fd->row_h) fd->row_h = h;
+}
+
 static void rebuild_font_atlas_for(FontData *fd) {
   memset(fd->atlas, 0, sizeof(fd->atlas));
+  memset(fd->dyn_cp, 0, sizeof(fd->dyn_cp));   /* drop on-demand glyphs; re-raster at the new size */
 
   float render_size = font_size * dpi_scale;
-  float scale = stbtt_ScaleForPixelHeight(&fd->info, render_size);
+  fd->scale = stbtt_ScaleForPixelHeight(&fd->info, render_size);
 
   int asc, desc, lg;
   stbtt_GetFontVMetrics(&fd->info, &asc, &desc, &lg);
-  fd->baseline = (asc * scale) / dpi_scale;
+  fd->baseline = (asc * fd->scale) / dpi_scale;
 
-  int pen_x = 1, pen_y = 1, row_h = 0;
-
-  for (int c = 32; c < 128; c++) {
-    int w, h, xoff, yoff;
-    unsigned char *bmp = stbtt_GetCodepointBitmap(&fd->info, 0, scale, c, &w, &h, &xoff, &yoff);
-
-    if (pen_x + w + 1 >= FONT_ATLAS_W) {
-      pen_x = 1;
-      pen_y += row_h + 1;
-      row_h = 0;
-    }
-
-    if (pen_y + h + 1 >= FONT_ATLAS_H) {
-      if (bmp) stbtt_FreeBitmap(bmp, NULL);
-      break;
-    }
-
-    if (bmp) {
-      for (int r = 0; r < h; r++) {
-        memcpy(&fd->atlas[(pen_y + r) * FONT_ATLAS_W + pen_x], &bmp[r * w], w);
-      }
-      stbtt_FreeBitmap(bmp, NULL);
-    }
-
-    fd->glyphs[c].x0 = pen_x;
-    fd->glyphs[c].y0 = pen_y;
-    fd->glyphs[c].x1 = pen_x + w;
-    fd->glyphs[c].y1 = pen_y + h;
-    fd->glyphs[c].xoff = xoff / dpi_scale;
-    fd->glyphs[c].yoff = yoff / dpi_scale;
-    fd->glyphs[c].bw = w / dpi_scale;
-    fd->glyphs[c].bh = h / dpi_scale;
-
-    int advance, lsb;
-    stbtt_GetCodepointHMetrics(&fd->info, c, &advance, &lsb);
-    fd->glyphs[c].xadvance = (advance * scale) / dpi_scale;
-
-    pen_x += w + 1;
-    if (h > row_h) row_h = h;
-  }
+  fd->pen_x = 1; fd->pen_y = 1; fd->row_h = 0;
+  for (int c = 32; c < 128; c++) pack_glyph(fd, c, &fd->glyphs[c]);
 
   glBindTexture(GL_TEXTURE_2D, fd->tex);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, FONT_ATLAS_W, FONT_ATLAS_H, 0,
@@ -293,17 +303,47 @@ void r_draw_rect(Rect rect, Color color) {
 }
 
 
+/* Glyph for codepoint `cp`: ASCII from the prebuilt table; anything else from
+   the on-demand cache (rasterized + uploaded the first time it's seen). */
+static GlyphInfo *glyph_for(FontData *fd, int cp) {
+  if (cp < 32) cp = '?';                 /* control chars render as '?', as before */
+  if (cp < 128) return &fd->glyphs[cp];
+
+  unsigned hash = (unsigned)cp & (DYN_CAP - 1);
+  for (int probe = 0; probe < DYN_CAP; probe++) {
+    int idx = (hash + probe) & (DYN_CAP - 1);
+    if (fd->dyn_cp[idx] == cp) return &fd->dyn_glyph[idx];
+    if (fd->dyn_cp[idx] == 0) {            /* miss → rasterize into this slot */
+      fd->dyn_cp[idx] = cp;
+      flush();                             /* finish pending quads before touching the texture */
+      pack_glyph(fd, cp, &fd->dyn_glyph[idx]);
+      GlyphInfo *gi = &fd->dyn_glyph[idx];
+      int gw = gi->x1 - gi->x0, gh = gi->y1 - gi->y0;
+      if (gw > 0 && gh > 0) {
+        glBindTexture(GL_TEXTURE_2D, fd->tex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, FONT_ATLAS_W);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, gi->x0, gi->y0, gw, gh,
+                        GL_ALPHA, GL_UNSIGNED_BYTE,
+                        &fd->atlas[gi->y0 * FONT_ATLAS_W + gi->x0]);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glBindTexture(GL_TEXTURE_2D, current_tex);   /* keep GL binding == current_tex */
+      }
+      return gi;
+    }
+  }
+  return &fd->glyphs['?'];                  /* cache full (unreachable in practice) */
+}
+
 void r_draw_text(const char *text, Vec2 pos, Color color) {
   FontData *fd = &fonts[current_font];
   switch_texture(fd->tex);
   float x = pos.x;
   float y = pos.y;
-  for (const char *p = text; *p; p++) {
-    if ((*p & 0xc0) == 0x80) { continue; }
-    int c = (unsigned char)*p;
-    if (c < 32 || c > 127) c = '?';
-
-    GlyphInfo *g = &fd->glyphs[c];
+  for (const char *p = text; *p; ) {
+    int cp;
+    p += utf8_decode(p, 4, &cp);
+    GlyphInfo *g = glyph_for(fd, cp);
 
     if (g->bw > 0 && g->bh > 0) {
       float u0 = g->x0 / (float)FONT_ATLAS_W;
@@ -327,11 +367,11 @@ void r_draw_text(const char *text, Vec2 pos, Color color) {
 int r_get_text_width(const char *text, int len) {
   FontData *fd = &fonts[current_font];
   float w = 0;
-  for (const char *p = text; *p && len--; p++) {
-    if ((*p & 0xc0) == 0x80) { continue; }
-    int c = (unsigned char)*p;
-    if (c < 32 || c > 127) c = '?';
-    w += fd->glyphs[c].xadvance;
+  int i = 0;
+  while (i < len && text[i]) {
+    int cp;
+    i += utf8_decode(text + i, len - i, &cp);
+    w += glyph_for(fd, cp)->xadvance;
   }
   return (int)(w + 0.5f);
 }

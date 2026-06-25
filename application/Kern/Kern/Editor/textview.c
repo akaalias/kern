@@ -29,6 +29,9 @@ static ViewState   g_vs = {0};
 extern void kern_x_publish(const char *text);   /* Swift @_cdecl: async post */
 extern int  kern_x_is_connected(void);          /* Swift @_cdecl: 1 if linked */
 
+/* show/hide the title-bar "Publish to X" button (macos_style.m) */
+extern void kern_titlebar_set_x_connected(int connected);
+
 /* Swift calls this (possibly off the main thread) to report a publish result.
    We only stash a string + timestamp; the 250ms event-loop tick repaints it,
    so no synthetic SDL event is needed. */
@@ -242,10 +245,10 @@ static char *buffer_dup_all(EditorState *ed, int *len_out) {
   return out;
 }
 
-/* Cmd-Shift-T: publish the current note to X. If a region is marked, only that
-   is posted; otherwise the whole note goes. The text is handed to the Swift
-   layer, which owns OAuth, the HTTP call, and reporting back via
-   kern_x_set_status(). */
+/* Publish the current note to X (triggered by the title-bar button). If a region
+   is marked, only that is posted; otherwise the whole note goes. The text is
+   handed to the Swift layer, which owns OAuth, the HTTP call, and reporting back
+   via kern_x_set_status(). */
 static void cmd_publish_to_x(void) {
   if (!kern_x_is_connected()) {
     nav_status_set(&g_vs, "Connect your X account first (Settings \xE2\x80\xBA X)");
@@ -261,6 +264,9 @@ static void cmd_publish_to_x(void) {
   kern_x_publish(text);   /* async; the result arrives via kern_x_set_status */
   free(text);
 }
+
+/* Called from the title-bar "Publish to X" button (macos_style.m, main thread). */
+void kern_publish_to_x(void) { cmd_publish_to_x(); }
 
 /* word wrapping, cursor navigation, editing, and markdown rendering
    now in navigation.c, editing.c, md_render.c (accessed via shims above) */
@@ -290,6 +296,12 @@ static int heading_markers_hang(Line *l) {
    g_mouse_pressed is the press edge for this frame. */
 static int g_mouse_x, g_mouse_y, g_mouse_down, g_mouse_pressed;
 
+/* Set by process_frame while scroll_y is gliding toward scroll_target_y (g_scroll_animating)
+   or a focus crossfade is in progress (g_dim_animating); either makes the event loop
+   poll faster (≈60fps) so the animation runs. */
+static int g_scroll_animating;
+static int g_dim_animating;
+
 /* Lay out and immediately draw the frame's chrome: window background, content
    clip, selection/search highlights and the scrollbar. The markdown text is
    drawn afterward in do_render. */
@@ -316,15 +328,65 @@ static void process_frame(void) {
     /* content area */
     int total_vis = nav_total_visual_lines(&g_ed);
     float max_scroll = (total_vis * lh) - g_vs.content_h;
+    /* typewriter mode adds virtual whitespace below the last line so it can
+       still pin at the golden line near EOF (matches iA Writer). */
+    if (g_vs.typewriter_mode)
+      max_scroll += (int)((1.0f - TYPEWRITER_FRACTION) * (g_vs.content_h - lh));
     if (max_scroll < 0) max_scroll = 0;
-    if (g_vs.scroll_y < 0) g_vs.scroll_y = 0;
+    /* typewriter mode also adds virtual whitespace ABOVE the first line so it,
+       too, can pin at the golden height (negative scroll). */
+    float min_scroll = 0;
+    if (g_vs.typewriter_mode)
+      min_scroll = -(int)(TYPEWRITER_FRACTION * (g_vs.content_h - lh));
+
+    /* Clamp the ease target first so the glide settles exactly on a valid scroll
+       position, then ease scroll_y toward it (typewriter mode only — every other
+       scroll path writes scroll_y directly and snaps as before). */
+    if (g_vs.scroll_target_y < min_scroll) g_vs.scroll_target_y = min_scroll;
+    if (g_vs.scroll_target_y > max_scroll) g_vs.scroll_target_y = max_scroll;
+    if (g_vs.typewriter_mode) {
+      float d = g_vs.scroll_target_y - g_vs.scroll_y;
+      if (d > -0.5f && d < 0.5f) g_vs.scroll_y = g_vs.scroll_target_y;  /* settle */
+      else                       g_vs.scroll_y += d * SCROLL_EASE;
+      g_scroll_animating = (g_vs.scroll_y != g_vs.scroll_target_y);
+    } else {
+      g_scroll_animating = 0;
+    }
+
+    if (g_vs.scroll_y < min_scroll) g_vs.scroll_y = min_scroll;
     if (g_vs.scroll_y > max_scroll) g_vs.scroll_y = max_scroll;
 
-    int first_vis = (int)(g_vs.scroll_y / lh);
-    float y_offset = g_vs.scroll_y - (first_vis * lh);
+    /* typewriter focus crossfade: when the caret changes line, start fading the
+       old line down and the new line up; advance focus_t toward 1 (settled). */
+    if (g_vs.typewriter_mode) {
+      if (g_ed.cursor_line != g_vs.focus_cur_line) {
+        g_vs.focus_prev_line = g_vs.focus_cur_line;
+        g_vs.focus_cur_line  = g_ed.cursor_line;
+        g_vs.focus_t = 0.0f;
+      }
+      if (g_vs.focus_t < 1.0f) {
+        g_vs.focus_t += (1.0f - g_vs.focus_t) * FOCUS_EASE;
+        if (g_vs.focus_t > 0.999f) g_vs.focus_t = 1.0f;
+      }
+      g_dim_animating = (g_vs.focus_t < 1.0f);
+    } else {
+      g_dim_animating = 0;
+    }
 
-    /* how many visual lines fit on screen */
-    int vis_on_screen = g_vs.content_h / lh + 4;
+    /* Negative scroll_y = virtual whitespace above line 1: keep the first row at
+       index 0 and push it down by |scroll_y| instead of indexing off the top. */
+    int first_vis; float y_offset;
+    if (g_vs.scroll_y >= 0) {
+      first_vis = (int)(g_vs.scroll_y / lh);
+      y_offset  = g_vs.scroll_y - (first_vis * lh);
+    } else {
+      first_vis = 0;
+      y_offset  = g_vs.scroll_y;   /* negative → py = content_y + |scroll_y| */
+    }
+
+    /* how many visual lines fit on screen (a negative y_offset pushes the first
+       row down, so more rows are needed to fill the bottom) */
+    int vis_on_screen = (g_vs.content_h - (int)y_offset) / lh + 4;
 
     /* clip to content area */
     r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
@@ -425,7 +487,10 @@ static void process_frame(void) {
       float thumb_ratio = (float)g_vs.content_h / (total_vis * lh);
       int thumb_h = (int)(sb_h * thumb_ratio);
       if (thumb_h < 20) thumb_h = 20;
-      int thumb_y = g_vs.content_y + (int)((g_vs.scroll_y / max_scroll) * (sb_h - thumb_h));
+      float sb_ratio = g_vs.scroll_y / max_scroll;   /* may be <0 in typewriter mode */
+      if (sb_ratio < 0) sb_ratio = 0;
+      if (sb_ratio > 1) sb_ratio = 1;
+      int thumb_y = g_vs.content_y + (int)(sb_ratio * (sb_h - thumb_h));
 
       int mx = g_mouse_x, my = g_mouse_y;
       int mouse_in_track = (mx >= sb_x - 4 && mx < sb_x + sb_w + 4 && my >= g_vs.content_y && my < g_vs.content_y + sb_h);
@@ -435,7 +500,7 @@ static void process_frame(void) {
           float ratio = (my - g_vs.drag_offset - g_vs.content_y) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
-          g_vs.scroll_y = ratio * max_scroll;
+          g_vs.scroll_y = g_vs.scroll_target_y = ratio * max_scroll;
         } else {
           g_vs.scrollbar_dragging = 0;
         }
@@ -447,7 +512,7 @@ static void process_frame(void) {
           float ratio = (my - g_vs.content_y - thumb_h / 2.0f) / (float)(sb_h - thumb_h);
           if (ratio < 0) ratio = 0;
           if (ratio > 1) ratio = 1;
-          g_vs.scroll_y = ratio * max_scroll;
+          g_vs.scroll_y = g_vs.scroll_target_y = ratio * max_scroll;
           g_vs.scrollbar_dragging = 1;
           g_vs.drag_offset = thumb_h / 2.0f;
         }
@@ -720,6 +785,11 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
   if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(&g_ed, &g_vs); return 1; }   /* C-x h */
   if (ctrl && sym == SDLK_x)  { cmd_exchange_point_mark(&g_ed, &g_vs); return 1; } /* C-x C-x */
   if (!ctrl && sym == SDLK_b) { cmd_switch_buffer(); return 1; }       /* C-x b */
+  if (!ctrl && sym == SDLK_t) {                                       /* C-x t */
+    cmd_toggle_typewriter(&g_ed, &g_vs);
+    g_vs.suppress_next_text = 1;   /* swallow the "t" text event that triggered this */
+    return 1;
+  }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -833,6 +903,11 @@ static void do_render(void) {
   for (int i = 0; i < g_vs.vis_row_count; i++) {
     VisRow *vr = &g_vs.vis_rows[i];
     Line *L = &g_ed.lines[vr->ln];
+    /* typewriter focus: fade every line except the caret's, crossfading on a
+       line change (focus_prev_line → dim, focus_cur_line → full) */
+    md_set_text_opacity(g_vs.typewriter_mode
+      ? md_focus_opacity(vr->ln, g_vs.focus_cur_line, g_vs.focus_prev_line, g_vs.focus_t)
+      : 1.0f);
     int indent = md_list_indent(L);
     /* hang wrapped list text under the item text, not the marker */
     if (vr->row_start > 0) indent += md_list_marker_width(L);
@@ -872,6 +947,7 @@ static void do_render(void) {
                  &g_vs.cursor_x, 1);
     r_set_font_style(FONT_REGULAR);
   }
+  md_set_text_opacity(1.0f);   /* don't leak the focus dim past the text pass */
 
   /* draw cursor (post-render, uses markdown-aware x position) */
   int cursor_py = -1;
@@ -1042,6 +1118,20 @@ static void load_daily_note(void) {
   }
 }
 
+/* Cmd-Shift-T: jump to today's daily note. Saves the current buffer first, then
+   loads (or seeds) today's note and refreshes the view like any buffer switch. */
+static void cmd_open_daily_note(void) {
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  load_daily_note();
+  g_vs.scroll_y = 0;
+  buf_invalidate_all_wraps(&g_ed);
+  r_set_title(g_ed.filename);
+  recent_push(g_ed.filepath);
+  char msg[256];
+  snprintf(msg, sizeof(msg), "Opened %s", g_ed.filename);
+  nav_status_set(&g_vs, msg);
+}
+
 int editor_main(int argc, char **argv) {
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
@@ -1074,7 +1164,7 @@ int editor_main(int argc, char **argv) {
     /* Block until input arrives (NULL leaves events queued for the drain loop
        below) instead of busy-spinning. The timeout wakes us periodically so
        transient status-bar messages can still clear without input. */
-    SDL_WaitEventTimeout(NULL, 250);
+    SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating) ? 16 : 250);
     while (SDL_PollEvent(&e)) {
       switch (e.type) {
         case SDL_QUIT: exit(EXIT_SUCCESS); break;
@@ -1088,7 +1178,10 @@ int editor_main(int argc, char **argv) {
           }
           break;
         case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
-        case SDL_MOUSEWHEEL: g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3; break;
+        case SDL_MOUSEWHEEL:
+          g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3;
+          g_vs.scroll_target_y = g_vs.scroll_y;   /* don't let the ease fight the wheel */
+          break;
 
         case SDL_TEXTINPUT:
           if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
@@ -1174,10 +1267,10 @@ int editor_main(int argc, char **argv) {
                 sym == SDLK_n) {
               cmd_extract_region_to_note(); break;
             }
-            /* Cmd-Shift-T: publish the current note (or region) to X / Twitter */
+            /* Cmd-Shift-T: open (or create) today's daily note */
             if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
                 sym == SDLK_t) {
-              cmd_publish_to_x(); break;
+              cmd_open_daily_note(); break;
             }
 
             /* 1d. Tab / Shift-Tab indent or outdent the current list item.
@@ -1300,6 +1393,15 @@ int editor_main(int argc, char **argv) {
           nav_status_set(&g_vs, "Auto-saved");
         }
       }
+    }
+
+    /* keep the title-bar "Publish to X" button in sync with the connection
+       state (the user may link/unlink X via Settings while running). Cheap
+       in-memory check; only touches AppKit when the state actually flips. */
+    {
+      static int last_x_conn = -1;
+      int c = kern_x_is_connected();
+      if (c != last_x_conn) { last_x_conn = c; kern_titlebar_set_x_connected(c); }
     }
 
     do_render();

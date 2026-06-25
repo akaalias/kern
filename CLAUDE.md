@@ -10,7 +10,7 @@ Kern is a macOS text editor — Emacs keybindings/editing model with an iA Write
 
 **Keep this list current — add an entry whenever a user-facing feature lands.** It exists so a session can answer "do we have X?" without spelunking. Keybindings are tabulated in `README.md`.
 
-- **Daily notes** — launch opens today's `YYYY-MM-DD.md` (seeded with a date heading); the buffer auto-saves every few seconds while modified.
+- **Daily notes** — launch opens today's `YYYY-MM-DD.md` (seeded with a date heading); `Cmd-Shift-T` jumps to (or creates) today's note at any time; the buffer auto-saves every few seconds while modified.
 - **Emacs editing model** — movement, kill/yank ring, operation-based grouped undo (`C-/`), open-line, transpose, word case ops (`editing.c` / `undo.c`, dispatched via `commands.c`).
 - **Mark & region** — `C-Space` mark, cut/copy/yank synced with the macOS clipboard, select-whole-buffer, exchange point/mark.
 - **Search** — incremental `C-s`/`C-r`; `⌘F` search with match highlights (`navigation.c`).
@@ -18,7 +18,8 @@ Kern is a macOS text editor — Emacs keybindings/editing model with an iA Write
 - **Notes & wikilinks** — `[[` autocomplete, `Cmd-Enter` follows the link, `Cmd-Shift-←/→` history; `Cmd-Shift-N` extracts the selection into a new linked note (`textview.c`, `recent.c`).
 - **Files** — find/open with inline completion, save, save-as, recent-buffer switch (MRU); all paths sandboxed under the app container.
 - **View** — font size `⌘=`/`⌘-`, recenter `C-l`, goto-line `M-g`, list indent/outdent (`Tab`/`Shift-Tab`).
-- **X (Twitter) publishing** — `Cmd-Shift-T` posts the current note (or marked region). OAuth 2.0 PKCE via a loopback listener, Keychain tokens, **Settings → X** tab to connect. Client id injected at build from gitignored `Config/Secrets.xcconfig` → `Info.plist`. Lives in `App/KernApp.swift` + the `kern_x_*` bridge in `textview.c`; setup in `README.md`. (See the main-thread gotcha below.)
+- **Typewriter mode** — `C-x t` toggles; the active line pins at the golden ratio (~38% down the page) and the buffer scrolls under the cursor. Virtual whitespace below EOF lets the last line still pin. Shares `nav_pin_cursor` with `C-l` recenter; flag is `ViewState.typewriter_mode` (`navigation.c` / `commands.c`).
+- **X (Twitter) publishing** — a paper-plane **title-bar button** (built in `Platform/macos_style.m`) posts the current note (or marked region); it's shown only while an X account is connected (the editor loop polls `kern_x_is_connected()` and calls `kern_titlebar_set_x_connected()` on change). Clicking it calls the `kern_publish_to_x()` bridge in `textview.c`. Results report via both a macOS notification (`UNUserNotificationCenter`, authorized at launch in `AppDelegate`) and the C status bar. OAuth 2.0 PKCE via a loopback listener, Keychain tokens, **Settings → X** tab to connect. Client id injected at build from gitignored `Config/Secrets.xcconfig` → `Info.plist`. Lives in `App/KernApp.swift` + the `kern_x_*` bridge in `textview.c`; setup in `README.md`. (See the main-thread gotcha below.)
 
 ## Commands
 

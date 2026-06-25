@@ -9,6 +9,7 @@
 #include "undo.h"
 #include "clipboard.h"
 #include "renderer.h"
+#include "utf8.h"
 
 /* ---- cursor movement ---- */
 
@@ -25,8 +26,9 @@ static void cmd_end_of_line(EditorState *ed, ViewState *vs) {
 }
 
 void cmd_forward_char(EditorState *ed, ViewState *vs) {
-  if (ed->cursor_col < ed->lines[ed->cursor_line].len) {
-    ed->cursor_col++;
+  Line *l = &ed->lines[ed->cursor_line];
+  if (ed->cursor_col < l->len) {
+    ed->cursor_col += utf8_len(l->text + ed->cursor_col, l->len - ed->cursor_col);
   } else if (ed->cursor_line < ed->line_count - 1) {
     ed->cursor_line++;
     ed->cursor_col = 0;
@@ -37,7 +39,7 @@ void cmd_forward_char(EditorState *ed, ViewState *vs) {
 
 void cmd_backward_char(EditorState *ed, ViewState *vs) {
   if (ed->cursor_col > 0) {
-    ed->cursor_col--;
+    ed->cursor_col -= utf8_back(ed->lines[ed->cursor_line].text, ed->cursor_col);
   } else if (ed->cursor_line > 0) {
     ed->cursor_line--;
     ed->cursor_col = ed->lines[ed->cursor_line].len;
@@ -268,13 +270,20 @@ void cmd_page_up(EditorState *ed, ViewState *vs) {             /* M-v */
 
 static int g_recenter_state = 0;
 static void cmd_recenter(EditorState *ed, ViewState *vs) {     /* C-l: center→top→bottom */
-  int lh = nav_line_height();
-  int top = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col) * lh;
-  if (g_recenter_state == 0)      vs->scroll_y = top - (vs->content_h - lh) / 2;
-  else if (g_recenter_state == 1) vs->scroll_y = top;
-  else                            vs->scroll_y = top - (vs->content_h - lh);
-  if (vs->scroll_y < 0) vs->scroll_y = 0;
+  if (g_recenter_state == 0)      nav_pin_cursor(ed, vs, 0.5f);
+  else if (g_recenter_state == 1) nav_pin_cursor(ed, vs, 0.0f);
+  else                            nav_pin_cursor(ed, vs, 1.0f);
   g_recenter_state = (g_recenter_state + 1) % 3;
+}
+
+void cmd_toggle_typewriter(EditorState *ed, ViewState *vs) {   /* C-x t */
+  vs->typewriter_mode = !vs->typewriter_mode;
+  /* start the focus crossfade settled on the current line so toggling doesn't
+     flash the previously-focused line */
+  vs->focus_cur_line = vs->focus_prev_line = ed->cursor_line;
+  vs->focus_t = 1.0f;
+  nav_status_set(vs, vs->typewriter_mode ? "Typewriter mode on" : "Typewriter mode off");
+  nav_ensure_cursor_visible(ed, vs);
 }
 
 /* A font change alters glyph widths, so all wraps are invalid even if the page

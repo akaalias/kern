@@ -17,6 +17,7 @@
 import SwiftUI
 import CryptoKit
 import Network
+import UserNotifications
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -31,6 +32,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Preload the X account link from the Keychain so the Settings tab
         // reflects it the first time it's opened.
         _ = XAuth.shared.isConnected
+
+        // Ask once (now, before the main thread is parked) for permission to post
+        // banners. The completion runs on a background queue, so it's safe; if the
+        // user denies, publish results still land in the editor's status bar.
+        UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         // Hand off to the C editor once the app is a proper foreground app.
         // editor_main runs SDL's own window + event loop (blocking); the
@@ -146,6 +153,19 @@ struct XSettingsView: View {
 /// works while the main thread is parked in the SDL loop).
 nonisolated func reportXStatus(_ s: String) {
     s.withCString { kern_x_set_status($0) }
+}
+
+/// Post a native macOS banner (Notification Center). Safe from any thread —
+/// UNUserNotificationCenter is thread-safe, so this sidesteps the parked main
+/// actor. Silently no-ops if the user declined notification permission.
+nonisolated func notifyX(_ title: String, _ body: String) {
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.sound = .default
+    let req = UNNotificationRequest(identifier: UUID().uuidString,
+                                    content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(req)
 }
 
 // MARK: - OAuth 2.0 + posting
@@ -530,8 +550,10 @@ public func kern_x_publish(_ ctext: UnsafePointer<CChar>?) {
         do {
             try await XAuth.shared.post(text: text)
             reportXStatus("Posted to X \u{2713}")
+            notifyX("Posted to X \u{2713}", "Your note is live on X.")
         } catch {
             reportXStatus("X: \(error.localizedDescription)")
+            notifyX("X publish failed", error.localizedDescription)
         }
     }
 }

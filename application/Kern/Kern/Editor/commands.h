@@ -38,5 +38,6 @@ void cmd_end_of_buffer_alt(EditorState *ed, ViewState *vs);    /* M-S-. / Cmd-S-
 void cmd_beginning_of_buffer_alt(EditorState *ed, ViewState *vs); /* M-S-, / Cmd-S-, */
 void cmd_mark_whole_buffer(EditorState *ed, ViewState *vs);    /* C-x h */
 void cmd_exchange_point_mark(EditorState *ed, ViewState *vs);  /* C-x C-x */
+void cmd_toggle_typewriter(EditorState *ed, ViewState *vs);    /* C-x t */
 
 #endif /* COMMANDS_H */

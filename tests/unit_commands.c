@@ -5,6 +5,7 @@
 #include "test.h"
 #include "ed_fixture.h"
 #include "commands.h"
+#include "navigation.h"
 #include "clipboard.h"
 
 /* A ViewState with a realistic viewport so nav_ensure_cursor_visible behaves. */
@@ -327,15 +328,104 @@ static void test_page_up_moves_cursor(void) {
   ed_teardown(&ed);
 }
 
-/* C-l cycles center → top → bottom; each step keeps scroll_y in range. */
+/* C-l cycles center → top → bottom. The cycle phase is a static in commands.c
+   (unknown start here), so assert the three consecutive steps produce exactly
+   that set of scroll positions, order-independent. */
 static void test_recenter_cycles(void) {
   EditorState ed = {0}; mkbuf(&ed, 60);
   ViewState vs = vs_make();
   ed.cursor_line = 30; ed.cursor_col = 0;
+  int lh = nav_line_height();
+  int top = nav_cursor_to_visual(&ed, ed.cursor_line, ed.cursor_col) * lh;
+  int center = top - (int)((vs.content_h - lh) * 0.5f);
+  int bottom = top - (vs.content_h - lh);
+  int seen_center = 0, seen_top = 0, seen_bottom = 0;
   for (int i = 0; i < 3; i++) {
     kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_l);
-    CHECK(vs.scroll_y >= 0);
+    int s = (int)vs.scroll_y;
+    if (s == center) seen_center = 1;
+    if (s == top)    seen_top = 1;
+    if (s == bottom) seen_bottom = 1;
   }
+  CHECK(seen_center && seen_top && seen_bottom);
+  ed_teardown(&ed);
+}
+
+/* C-f / C-b step over a whole multibyte codepoint, not one byte. */
+static void test_char_movement_is_codepoint_aware(void) {
+  EditorState ed = {0}; ed_load(&ed, "a\xe2\x80\x99""b");   /* a ’ b — bytes: a(1) ’(3) b(1) */
+  ViewState vs = vs_make();
+  ed.cursor_col = 0;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_f);   /* over 'a' */
+  CHECK_IEQ(ed.cursor_col, 1);
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_f);   /* over the 3-byte ’ */
+  CHECK_IEQ(ed.cursor_col, 4);
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_b);   /* back over ’ as one unit */
+  CHECK_IEQ(ed.cursor_col, 1);
+  ed_teardown(&ed);
+}
+
+/* nav_cursor_clamp never leaves the caret on a continuation byte (the catch-all
+   for vertical moves / search landing mid-codepoint). */
+static void test_clamp_snaps_off_continuation_byte(void) {
+  EditorState ed = {0}; ed_load(&ed, "\xe2\x80\x99");   /* a single 3-byte char */
+  ed.cursor_col = 2;                                     /* mid-codepoint */
+  nav_cursor_clamp(&ed);
+  CHECK_IEQ(ed.cursor_col, 0);                           /* snapped to the start */
+  ed_teardown(&ed);
+}
+
+/* ---- typewriter mode ---- */
+
+/* C-x t toggles the flag and aims the scroll target at the golden line.
+   (scroll_y eases toward the target render-side in process_frame, untested here.) */
+static void test_typewriter_pins_at_golden(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 30; ed.cursor_col = 0;
+  cmd_toggle_typewriter(&ed, &vs);                 /* on → sets ease target */
+  CHECK_IEQ(vs.typewriter_mode, 1);
+  int lh = nav_line_height();
+  int vis = nav_cursor_to_visual(&ed, ed.cursor_line, ed.cursor_col);
+  int expected = vis * lh - (int)((vs.content_h - lh) * TYPEWRITER_FRACTION);
+  CHECK_IEQ((int)vs.scroll_target_y, expected);
+  ed_teardown(&ed);
+}
+
+/* Toggling twice returns to normal (edge-follow) scrolling. */
+static void test_typewriter_toggle_off(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  cmd_toggle_typewriter(&ed, &vs);                 /* on */
+  cmd_toggle_typewriter(&ed, &vs);                 /* off */
+  CHECK_IEQ(vs.typewriter_mode, 0);
+  ed_teardown(&ed);
+}
+
+/* With typewriter on, every cursor move re-pins (view follows the cursor). */
+static void test_typewriter_repins_on_move(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 30;
+  cmd_toggle_typewriter(&ed, &vs);
+  float before = vs.scroll_target_y;
+  kern_dispatch_key(&ed, &vs, KMOD_CTRL, SDLK_n);  /* down a line */
+  CHECK(vs.scroll_target_y > before);               /* target tracked the cursor */
+  ed_teardown(&ed);
+}
+
+/* On the first line the target goes negative (virtual whitespace above line 1)
+   so it can still pin at the golden height. process_frame clamps the negative
+   range; nav_pin_target itself returns the raw target. */
+static void test_typewriter_pins_first_line(void) {
+  EditorState ed = {0}; mkbuf(&ed, 60);
+  ViewState vs = vs_make();
+  ed.cursor_line = 0; ed.cursor_col = 0;
+  cmd_toggle_typewriter(&ed, &vs);
+  int lh = nav_line_height();
+  int expected = 0 - (int)((vs.content_h - lh) * TYPEWRITER_FRACTION);
+  CHECK_IEQ((int)vs.scroll_target_y, expected);
+  CHECK(vs.scroll_target_y < 0);
   ed_teardown(&ed);
 }
 
@@ -434,6 +524,12 @@ void suite_commands(void) {
   RUN(test_meta_del_kill_word_backward);
   RUN(test_page_up_moves_cursor);
   RUN(test_recenter_cycles);
+  RUN(test_char_movement_is_codepoint_aware);
+  RUN(test_clamp_snaps_off_continuation_byte);
+  RUN(test_typewriter_pins_at_golden);
+  RUN(test_typewriter_toggle_off);
+  RUN(test_typewriter_repins_on_move);
+  RUN(test_typewriter_pins_first_line);
   RUN(test_exchange_point_mark_without_mark_is_noop);
   RUN(test_page_down_tiny_viewport);
   RUN(test_page_down_clamps_at_bottom);

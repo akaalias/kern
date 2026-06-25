@@ -31,6 +31,14 @@ int nav_cursor_to_visual(EditorState *ed, int cline, int ccol);
 void nav_cursor_clamp(EditorState *ed);
 void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs);
 
+/* The scroll_y that puts the cursor's visual row `fraction` of the way down the
+   page (0 = top, 0.5 = center, 0.382 = golden), floored at 0. */
+float nav_pin_target(EditorState *ed, ViewState *vs, float fraction);
+
+/* Jump scroll_y (and the ease target) to nav_pin_target — instant, no glide.
+   Used by C-l recenter. */
+void nav_pin_cursor(EditorState *ed, ViewState *vs, float fraction);
+
 /* click */
 void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my);
 

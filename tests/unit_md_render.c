@@ -3,6 +3,7 @@
  * boundary (the multi-row span bug) and the ==highlight== span. */
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "test.h"
 #include "buffer.h"
 #include "md_render.h"
@@ -126,8 +127,69 @@ static void test_italic_in_heading_is_bold(void) {
   freeline(&l);
 }
 
+/* ---- typewriter focus dim (md_set_text_opacity / md_fade) ---- */
+
+/* Opacity < 1 scales the alpha of drawn glyphs so non-focused lines fade toward
+   the background. Base color GREY (a=255) at 0.4 → ~102. */
+static void test_dim_scales_text_alpha(void) {
+  stub_reset();
+  md_set_text_opacity(0.4f);
+  draw_window("abc", 0, 3);
+  md_set_text_opacity(1.0f);                  /* reset — global, would leak otherwise */
+  CHECK_IEQ(stub_text_count, 3);
+  for (int i = 0; i < stub_text_count; i++)
+    CHECK_IEQ(stub_texts[i].color.a, 102);
+}
+
+/* Full opacity (the default) leaves glyph alpha untouched. */
+static void test_full_opacity_keeps_alpha(void) {
+  stub_reset();
+  md_set_text_opacity(1.0f);
+  draw_window("abc", 0, 3);
+  CHECK_IEQ(stub_texts[0].color.a, 255);
+}
+
+/* The dim also fades background rects — here the ==highlight== bg (a=70 → ~28). */
+static void test_dim_scales_bg_rect_alpha(void) {
+  stub_reset();
+  md_set_text_opacity(0.4f);
+  draw_window("==hi==", 0, 6);                 /* 2 highlight bg rects */
+  md_set_text_opacity(1.0f);
+  CHECK_IEQ(stub_rect_count, 2);
+  for (int i = 0; i < stub_rect_count; i++)
+    CHECK_IEQ(stub_rects[i].color.a, 28);
+}
+
+static int approx(float a, float b) { return fabsf(a - b) < 1e-4f; }
+
+/* Focus crossfade: at t=1 only the focused line is full, others (incl. the line
+   just left) are dim; at t=0 the just-left line is still full and the new focus
+   is still dim; the two cross symmetrically at t=0.5. */
+static void test_focus_opacity_settled(void) {
+  CHECK(approx(md_focus_opacity(5, 5, 4, 1.0f), 1.0f));              /* focused, full */
+  CHECK(approx(md_focus_opacity(4, 5, 4, 1.0f), FOCUS_DIM_OPACITY)); /* left line, dim */
+  CHECK(approx(md_focus_opacity(9, 5, 4, 1.0f), FOCUS_DIM_OPACITY)); /* unrelated, dim */
+}
+static void test_focus_opacity_start_of_transition(void) {
+  CHECK(approx(md_focus_opacity(5, 5, 4, 0.0f), FOCUS_DIM_OPACITY)); /* new focus starts dim */
+  CHECK(approx(md_focus_opacity(4, 5, 4, 0.0f), 1.0f));             /* left line starts full */
+}
+static void test_focus_opacity_crosses_midway(void) {
+  float a = md_focus_opacity(5, 5, 4, 0.5f);   /* rising */
+  float b = md_focus_opacity(4, 5, 4, 0.5f);   /* falling */
+  CHECK(a > FOCUS_DIM_OPACITY && a < 1.0f);
+  CHECK(b > FOCUS_DIM_OPACITY && b < 1.0f);
+  CHECK(approx(a, b));                          /* symmetric crossfade */
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
+  RUN(test_focus_opacity_settled);
+  RUN(test_focus_opacity_start_of_transition);
+  RUN(test_focus_opacity_crosses_midway);
+  RUN(test_dim_scales_text_alpha);
+  RUN(test_full_opacity_keeps_alpha);
+  RUN(test_dim_scales_bg_rect_alpha);
   RUN(test_bold_carries_into_tail_window);
   RUN(test_markers_use_base_style);
   RUN(test_bold_full_line);
