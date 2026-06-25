@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kern — an Emacs-fast, iA-clean, Obsidian-linked text editor</title>
-<meta name="description" content="Kern is a macOS text editor that puts Emacs muscle memory, iA Writer typography, and Obsidian-style note linking in one small native app.">
+<title>Kern — the text editor I always wanted</title>
+<meta name="description" content="Kern is a native macOS text editor: Emacs editing, iA Writer typography, Obsidian-style note linking. Opens and searches 100MB+ files instantly. No Electron.">
 
 <style>
-  /* The app ships these. The page wears them too. */
+  /* The app's own faces. iA Writer on cream paper — its native light look. */
   @font-face {
     font-family: "iA Quattro";
     src: url("fonts/iAWriterQuattroS-Regular.ttf") format("truetype");
@@ -29,290 +29,195 @@
     font-weight: 400; font-style: normal; font-display: swap;
   }
 
-  /* Palette lifted straight from the editor (Editor/textview.c, md_render.c). */
+  /* Tufte palette, borrowed from alexisrondeau.me. Monochrome — no accent. */
   :root {
-    --bg:        rgb(30, 30, 32);
-    --fg:        rgb(204, 200, 195);
-    --dim:       rgb(120, 120, 120);
-    --faint:     rgb(90, 90, 96);
-    --rule:      rgb(55, 55, 57);
-    --link:      rgb(180, 160, 220);   /* wikilink purple */
-    --accent:    rgb(90, 200, 250);    /* cursor cyan */
-    --mark:      rgba(240, 214, 92, 0.18); /* highlighter yellow */
-    --code-fg:   rgb(190, 152, 116);
+    --paper:  #fffff8;   /* Tufte cream */
+    --ink:    #111111;   /* near-black body text */
+    --soft:   #33312b;   /* lede / pull text */
+    --muted:  #6b6a60;   /* warm gray — secondary */
+    --faint:  #9b998c;   /* fainter — captions, numerals */
+    --rule:   #d9d5c3;   /* warm hairline */
+    --rule-2: #ece9da;   /* fainter hairline */
+    --sans: "iA Quattro", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --mono: "iA Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
   html { -webkit-text-size-adjust: 100%; }
 
   body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: "iA Quattro", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-    font-size: 19px;
-    line-height: 1.62;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 20px;
+    line-height: 1.6;
     margin: 0;
-    padding: 9vh 1.5rem 16vh;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
-  main { max-width: 39rem; margin: 0 auto; }
+  .wrap {
+    max-width: 43rem;
+    margin: 0 auto;
+    padding: 7rem 1.75rem 9rem;
+  }
 
-  /* Masthead ---------------------------------------------------------- */
-  .masthead { margin-bottom: 3.2rem; }
+  /* Hero -------------------------------------------------------------- */
+  .eyebrow {
+    font-style: italic;
+    font-size: 1.05rem;
+    color: var(--muted);
+    margin: 0 0 1.4rem;
+  }
   h1 {
-    font-size: 2.6rem;
     font-weight: 700;
-    letter-spacing: -0.01em;
-    margin: 0 0 0.4rem;
-    line-height: 1.1;
+    font-size: 2.9rem;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    margin: 0 0 1.1rem;
   }
-  .tagline {
-    color: var(--dim);
-    font-size: 1.08rem;
-    margin: 0;
+  .lede {
+    font-size: 1.45rem;
+    line-height: 1.42;
+    color: var(--soft);
+    margin: 0 0 2.6rem;
   }
-  .tagline em { color: var(--fg); font-style: italic; }
 
   /* Headings ---------------------------------------------------------- */
   h2 {
-    font-size: 0.82rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--accent);
-    margin: 3.4rem 0 1.1rem;
+    font-weight: 400;
+    font-size: 1.85rem;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin: 4.2rem 0 0.3rem;
+  }
+  h2 + .sub { margin-top: 0; }
+  .sub {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 1.1rem;
+    margin: 0 0 1.6rem;
   }
 
   /* Body -------------------------------------------------------------- */
-  p { margin: 0 0 1.25rem; }
+  p { margin: 0 0 1.35rem; }
+  .signoff { margin-top: 2.2rem; font-style: italic; color: var(--soft); }
   a {
-    color: var(--link);
+    color: inherit;
     text-decoration: none;
-    border-bottom: 1px solid rgba(180, 160, 220, 0.35);
-    transition: color 0.12s ease, border-color 0.12s ease;
+    border-bottom: 1px solid var(--rule);
+    transition: border-color 0.12s ease;
   }
-  a:hover { color: var(--accent); border-bottom-color: var(--accent); }
-  strong { font-weight: 700; color: #fff; }
+  a:hover { border-bottom-color: var(--ink); }
+  strong { font-weight: 700; }
   em { font-style: italic; }
-  mark { background: var(--mark); color: var(--fg); padding: 0 0.1em; }
 
   kbd {
-    font-family: "iA Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.82em;
-    color: var(--code-fg);
-    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--mono);
+    font-size: 0.78em;
+    color: var(--muted);
     border: 1px solid var(--rule);
     border-radius: 4px;
     padding: 0.06em 0.42em;
     white-space: nowrap;
   }
 
-  hr {
-    border: 0;
-    border-top: 1px solid var(--rule);
-    margin: 3.4rem 0;
-  }
-
-  /* The three notes -------------------------------------------------- */
-  .note {
-    margin: 0 0 1.8rem;
-    padding-left: 1.1rem;
-    border-left: 2px solid var(--faint);
-  }
+  /* The three editors ------------------------------------------------- */
+  .note { margin: 0 0 1.9rem; }
   .note h3 {
-    font-size: 1.05rem;
     font-weight: 700;
-    margin: 0 0 0.35rem;
+    font-size: 1.18rem;
+    margin: 0 0 0.3rem;
   }
-  .note h3 a {
-    color: inherit;
-    border-bottom: 0;
-  }
-  .note h3 a:hover { color: var(--accent); }
   .note h3 .num {
-    font-family: "iA Mono", monospace;
-    color: var(--dim);
+    font-style: italic;
     font-weight: 400;
-    margin-right: 0.6rem;
+    color: var(--faint);
+    margin-right: 0.55em;
   }
-  .note p { margin: 0; color: var(--fg); }
-  .note .but { color: var(--dim); }
-  .note .but b { color: var(--fg); font-weight: 400; font-style: italic; }
+  .note h3 a { border-bottom: 0; }
+  .note h3 a:hover { border-bottom: 1px solid var(--ink); }
+  .note p { margin: 0; }
+  .note .but { color: var(--muted); }
+  .note .but b { font-weight: 400; font-style: italic; color: var(--soft); }
 
-  /* Feature table ----------------------------------------------------- */
-  dl.features { margin: 0; }
-  dl.features div {
-    display: grid;
-    grid-template-columns: 11rem 1fr;
-    gap: 0.4rem 1.4rem;
-    padding: 0.55rem 0;
-    border-top: 1px solid rgba(55, 55, 57, 0.6);
+  /* What Kern keeps — folded into each editor card ------------------- */
+  .note .kept {
+    margin: 1rem 0 0.5rem;
+    font-style: italic;
+    color: var(--soft);
   }
-  dl.features dt {
-    font-weight: 700;
-    color: var(--fg);
+  .note ul.took { list-style: none; margin: 0; padding: 0; }
+  .note ul.took li {
+    margin: 0 0 0.5rem;
+    color: var(--muted);
+    line-height: 1.5;
   }
-  dl.features dd {
-    margin: 0;
-    color: var(--dim);
-  }
-  dl.features dd kbd { font-size: 0.78em; }
+  .note ul.took li:last-child { margin-bottom: 0; }
+  .note ul.took li b { font-weight: 700; color: var(--ink); }
+  .note ul.took li kbd { font-size: 0.74em; }
 
   /* Performance table ------------------------------------------------- */
   table.perf {
     width: 100%;
     border-collapse: collapse;
-    margin: 0 0 1.1rem;
+    margin: 0 0 1.3rem;
   }
   table.perf th, table.perf td {
     text-align: left;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid rgba(55, 55, 57, 0.6);
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--rule-2);
   }
   table.perf thead th {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--dim);
-    font-weight: 700;
+    font-weight: 400;
+    font-style: italic;
+    font-size: 0.95rem;
+    color: var(--faint);
   }
   table.perf .num {
     text-align: right;
-    font-family: "iA Mono", monospace;
-    color: var(--accent);
+    font-family: var(--mono);
     white-space: nowrap;
   }
-  table.perf tbody td:first-child { color: var(--fg); }
-  .perf-note { color: var(--dim); font-size: 0.9rem; }
+  .perf-note { color: var(--muted); font-size: 0.98rem; }
 
-  /* Footer ------------------------------------------------------------ */
-  .colophon {
-    margin-top: 4rem;
-    color: var(--faint);
-    font-size: 0.9rem;
+  /* Get it ------------------------------------------------------------ */
+  .links { margin: 0.4rem 0 0; font-size: 1.1rem; }
+  .links a { margin-right: 2rem; }
+  .soon { color: var(--faint); border-bottom: 1px dotted var(--rule); }
+
+  /* Colophon ---------------------------------------------------------- */
+  footer {
+    margin-top: 5rem;
+    padding-top: 1.7rem;
+    border-top: 1.5px solid var(--ink);
+    color: var(--muted);
+    font-size: 1rem;
   }
-  .colophon a { color: var(--dim); border-bottom-color: rgba(120,120,120,0.3); }
-  .colophon a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
-  .links { margin: 0.4rem 0 0; }
-  .links a { margin-right: 1.6rem; }
-
-  .soon { color: var(--faint); border-bottom: 1px dotted var(--faint); cursor: default; }
-
-  @media (max-width: 540px) {
-    body { font-size: 17px; padding: 6vh 1.2rem 12vh; }
-    h1 { font-size: 2.1rem; }
-    dl.features div { grid-template-columns: 1fr; gap: 0.15rem; }
+  @media (max-width: 560px) {
+    body { font-size: 18px; }
+    .wrap { padding: 4rem 1.3rem 6rem; }
+    h1 { font-size: 2.3rem; }
+    .lede { font-size: 1.25rem; }
+    h2 { font-size: 1.55rem; }
   }
 </style>
 </head>
 <body>
-<main>
+<div class="wrap">
 
-  <header class="masthead">
-    <h1>Kern</h1>
-    <p class="tagline">The beefy love-child of <a href="https://www.gnu.org/software/emacs/">Emacs</a>, <a href="https://ia.net/writer">iA Writer</a> and <a href="https://obsidian.md">Obsidian</a> — <em>the text editor of my dreams</em>.</p>
+  <header>
+    <p class="lede">Kern is the beefy love-child of <a href="https://www.gnu.org/software/emacs/" target="_blank" rel="noopener">Emacs</a>, <a href="https://ia.net/writer" target="_blank" rel="noopener">iA Writer</a>, and <a href="https://obsidian.md" target="_blank" rel="noopener">Obsidian</a> — the text editor I've always wanted.</p>
   </header>
 
-  <p>Emacs hands, iA Writer looks, Obsidian links. Three apps, three loves, three lingering frustrations — Kern keeps what each does best and drops the rest. It's a small native thing: a SwiftUI shell over an editor written in C, drawing every glyph itself. No Electron, no plugin archaeology, no toolkit.</p>
+  <p>Kern takes the editing from <a href="https://www.gnu.org/software/emacs/" target="_blank" rel="noopener">Emacs</a> (movement, the kill-and-yank ring, grouped undo, mark and region, incremental search that jumps as you type), the writing surface from <a href="https://ia.net/writer" target="_blank" rel="noopener">iA Writer</a> (live markdown styling as you type with no preview pane, plus a typewriter mode that pins your line and scrolls the page beneath it), and the linking from <a href="https://obsidian.md" target="_blank" rel="noopener">Obsidian</a> (type two brackets to complete a note name, ⌘-Return to follow the link under the cursor, ⌘-Shift-N to split a selection into its own note). It opens to today's note each morning and saves as you write.</p>
 
-  <h2>The three apps I couldn't fully quit</h2>
+  <p>It's native and small — a thin Swift shell around an editor written in C that draws every character itself. No Electron, no plugins, no toolkit between you and the text. That's why it doesn't choke on big files: open a 100&nbsp;MB note — 1.3&nbsp;million lines — and scroll, search, and jump to the end with no spinner; it opens in under a tenth of a second.</p>
 
-  <div class="note">
-    <h3><span class="num">1</span><a href="https://www.gnu.org/software/emacs/">Emacs</a></h3>
-    <p>Fully muscle-memorized, blindingly fast text editing — no second-guessing, ever. <span class="but"><b>But</b> markdown rendering needs extra packages, the typography isn't iA Writer, and link-navigation never feels as smooth as Obsidian.</span></p>
-  </div>
-
-  <div class="note">
-    <h3><span class="num">2</span><a href="https://ia.net/writer">iA Writer</a></h3>
-    <p>Amazingly minimal — I've happily paid for it four times in ten years — with typography I'd defend in a fight. <span class="but"><b>But</b> none of the Emacs keybindings and chords, so editing feels generic, and its wikilinks sit well below the bar Obsidian set. Next to Emacs, it feels bloated.</span></p>
-  </div>
-
-  <div class="note">
-    <h3><span class="num">3</span><a href="https://obsidian.md">Obsidian</a></h3>
-    <p>Since 1.0, the best on-the-fly linking there is — add a link mid-thought, follow the link under the cursor, jump back, turn a selection into its own linked note. <span class="but"><b>But</b> it's Electron, the Emacs community plugins never quite worked, typography is so-so, and the editing itself is generic and uninspired.</span></p>
-  </div>
-
-  <p>So Kern takes the muscle memory from one, the type from the next, and the linking from the third — and refuses the bloat of all three.</p>
-
-  <h2>What it does</h2>
-
-  <dl class="features">
-    <div>
-      <dt>Emacs editing</dt>
-      <dd>Movement, kill/yank ring, grouped undo (<kbd>C-/</kbd>), transpose, word-case ops, open-line.</dd>
-    </div>
-    <div>
-      <dt>Mark &amp; region</dt>
-      <dd><kbd>C-Space</kbd> to mark; cut, copy, and yank synced with the macOS clipboard.</dd>
-    </div>
-    <div>
-      <dt>Wikilinks</dt>
-      <dd><kbd>[[</kbd> autocompletes; <kbd>⌘↵</kbd> follows the link; <kbd>⌘⇧←/→</kbd> walks history.</dd>
-    </div>
-    <div>
-      <dt>Extract to note</dt>
-      <dd><kbd>⌘⇧N</kbd> turns the selection into a new note and leaves a link behind.</dd>
-    </div>
-    <div>
-      <dt>Live markdown</dt>
-      <dd>Headings, <strong>bold</strong>, and <em>italic</em> styled as you type — no preview pane.</dd>
-    </div>
-    <div>
-      <dt>Daily notes</dt>
-      <dd>Opens today's note on launch; <kbd>⌘⇧T</kbd> jumps back to it; autosaves while you write.</dd>
-    </div>
-    <div>
-      <dt>Search</dt>
-      <dd>Incremental <kbd>C-s</kbd>/<kbd>C-r</kbd>, plus <kbd>⌘F</kbd> with match highlights.</dd>
-    </div>
-    <div>
-      <dt>Typewriter mode</dt>
-      <dd><kbd>C-x t</kbd> pins the active line at the golden ratio and scrolls the page beneath it.</dd>
-    </div>
-    <div>
-      <dt>Typography</dt>
-      <dd>iA Writer Quattro and Mono — the very faces rendering this page.</dd>
-    </div>
-  </dl>
-
-  <h2>Why "beefy"</h2>
-
-  <p>Beefy means it doesn't flinch at large files. The same immediate-mode renderer that draws every glyph also lays out hundreds of thousands of lines without a spinner — open a multi-megabyte note, jump to the end, search it, resize the window, all in a frame or two. Lazy per-line caches do the rest: every line is wrapped once, then reused.</p>
-
-  <p>Numbers from the performance smoke test, on a <strong>26&nbsp;MB plain-text file of 330,894 lines</strong>:</p>
-
-  <table class="perf">
-    <thead>
-      <tr><th>Operation</th><th class="num">Time</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Open the file</td><td class="num">127 ms</td></tr>
-      <tr><td>Lay out every line (cold wrap)</td><td class="num">145 ms</td></tr>
-      <tr><td>Jump to the last line</td><td class="num">0.2 ms</td></tr>
-      <tr><td>Incremental search</td><td class="num">&lt; 1 ms</td></tr>
-      <tr><td>Re-wrap on window resize</td><td class="num">140 ms</td></tr>
-    </tbody>
-  </table>
-
-  <p class="perf-note">Only the cold open and full re-wrap touch every line; everything after runs against warm caches. Reproduce it yourself with <kbd>make perf</kbd>.</p>
-
-  <h2>Get it</h2>
-
-  <p>Kern is open source and built in the open. <mark>A packaged download is coming.</mark> Until then, clone the repo and build it — it compiles in a few seconds.</p>
-
-  <p class="links">
-    <a href="https://github.com/akaalias/kern">Source on GitHub</a>
-    <span class="soon">Download — soon</span>
-  </p>
-
-  <hr>
-
-  <footer class="colophon">
-    <p>Built by <a href="https://alexisrondeau.me">Alexis Rondeau</a>. Set in iA Writer Quattro &amp; Mono, colored like the editor itself.</p>
+  <footer>
+    Built by <a href="https://alexisrondeau.me">Alexis Rondeau</a> &amp; Claude Code. iA Writer Quattro &amp; Mono © 2017 IBM Corp. and iA Inc., licensed under the SIL Open Font License 1.1.
   </footer>
 
-</main>
+</div>
 </body>
 </html>
