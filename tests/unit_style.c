@@ -62,6 +62,26 @@ static void test_word_boundary(void) {
   freeline(&l);
 }
 
+/* Clichés (a long phrase) and generalizations (a single word) both flag. */
+static void test_cliche(void) {
+  /*            0         1         2
+                012345678901234567890123 */
+  Line l = mkline("Obviously, at the end of the day we win");
+  const StyleSpan *sp;
+  int n = style_line_spans(&l, &sp);
+  CHECK_IEQ(n, 2);
+  CHECK_IEQ(sp[0].start, 0);   CHECK_IEQ(sp[0].end, 9);   /* "Obviously" */
+  CHECK_IEQ(sp[0].category, STYLE_CLICHE);
+  CHECK_IEQ(sp[1].category, STYLE_CLICHE);                /* "at the end of the day" */
+  CHECK_IEQ(cat_at(&l, 14), STYLE_CLICHE);                /* inside the phrase */
+  freeline(&l);
+
+  /* hyphens are token separators, so "low-hanging fruit" matches the pattern */
+  Line h = mkline("grab the low-hanging fruit");
+  CHECK_IEQ(cat_at(&h, 11), STYLE_CLICHE);   /* inside "low-hanging fruit" */
+  freeline(&h);
+}
+
 /* style_struck_at honors the mask: a disabled category doesn't strike. */
 static void test_masking(void) {
   /*            0         1
@@ -111,6 +131,7 @@ static void test_no_false_positives(void) {
 void suite_style(void) {
   RUN(test_filler);
   RUN(test_redundancy_phrase);
+  RUN(test_cliche);
   RUN(test_word_boundary);
   RUN(test_masking);
   RUN(test_cache_and_invalidate);

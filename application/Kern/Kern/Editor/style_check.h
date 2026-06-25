@@ -17,6 +17,8 @@ typedef enum {
   STYLE_NONE = 0,
   STYLE_FILLER,        /* hedges/intensifiers that weaken prose: very, just, … */
   STYLE_REDUNDANCY,    /* phrases that say one thing twice: added bonus, … */
+  STYLE_CLICHE,        /* tired phrases & sweeping generalizations: at the end
+                          of the day, think outside the box, always, everyone … */
   STYLE_CATEGORY_COUNT
 } StyleCategory;
 
@@ -26,7 +28,8 @@ typedef struct StyleSpan { int start, end; unsigned char category; } StyleSpan;
 
 #define STYLE_MAX_SPANS  256
 #define STYLE_BIT(cat)   (1u << (cat))
-#define STYLE_MASK_ALL   (STYLE_BIT(STYLE_FILLER) | STYLE_BIT(STYLE_REDUNDANCY))
+#define STYLE_MASK_ALL   (STYLE_BIT(STYLE_FILLER) | STYLE_BIT(STYLE_REDUNDANCY) | \
+                          STYLE_BIT(STYLE_CLICHE))
 
 /* Lazily scan the line and cache its cuttable-span map (recomputed when
    style_span_count is -1, which line_dirty sets on every edit). Returns the
