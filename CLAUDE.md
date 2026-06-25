@@ -6,6 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Kern is a macOS text editor — Emacs keybindings/editing model with an iA Writer look. A thin SwiftUI shell launches an editor written in C (SDL2 + OpenGL, `stb_truetype` for fonts). There is **no UI toolkit**: the editor draws immediately through a 12-function renderer interface. (The repo/folder is named `microui` for historical reasons — that dependency was removed; geometry types now come from `Editor/gfx.h`.)
 
+## Features
+
+**Keep this list current — add an entry whenever a user-facing feature lands.** It exists so a session can answer "do we have X?" without spelunking. Keybindings are tabulated in `README.md`.
+
+- **Daily notes** — launch opens today's `YYYY-MM-DD.md` (seeded with a date heading); the buffer auto-saves every few seconds while modified.
+- **Emacs editing model** — movement, kill/yank ring, operation-based grouped undo (`C-/`), open-line, transpose, word case ops (`editing.c` / `undo.c`, dispatched via `commands.c`).
+- **Mark & region** — `C-Space` mark, cut/copy/yank synced with the macOS clipboard, select-whole-buffer, exchange point/mark.
+- **Search** — incremental `C-s`/`C-r`; `⌘F` search with match highlights (`navigation.c`).
+- **Live markdown** — headings / bold / italic styled as you type (`md_render.c`).
+- **Notes & wikilinks** — `[[` autocomplete, `Cmd-Enter` follows the link, `Cmd-Shift-←/→` history; `Cmd-Shift-N` extracts the selection into a new linked note (`textview.c`, `recent.c`).
+- **Files** — find/open with inline completion, save, save-as, recent-buffer switch (MRU); all paths sandboxed under the app container.
+- **View** — font size `⌘=`/`⌘-`, recenter `C-l`, goto-line `M-g`, list indent/outdent (`Tab`/`Shift-Tab`).
+- **X (Twitter) publishing** — `Cmd-Shift-T` posts the current note (or marked region). OAuth 2.0 PKCE via a loopback listener, Keychain tokens, **Settings → X** tab to connect. Client id injected at build from gitignored `Config/Secrets.xcconfig` → `Info.plist`. Lives in `App/KernApp.swift` + the `kern_x_*` bridge in `textview.c`; setup in `README.md`. (See the main-thread gotcha below.)
+
 ## Commands
 
 All test/perf/coverage commands run from `tests/` (that's where the Makefile lives).
@@ -60,7 +74,8 @@ The test build compiles the **core only** — it does **not** compile `Editor/te
 - **File paths are sandboxed** via `buf_set_documents_dir()` (set from Swift at launch); when unset (CLI/test builds) paths are used verbatim. User paths resolve under the documents dir via `buf_resolve_path`.
 - **Test layout:** `tests/ed_fixture.h` provides `ed_load`/`ed_teardown`/`LINE()`; `tests/test.h` provides `CHECK`/`CHECK_IEQ`/`CHECK_SEQ` and `RUN`. Each `unit_*.c` exposes one `suite_*()` listed in `test_main.c`. Snapshots prove render parity; they re-implement the text pass, so a `do_render` text-loop refactor won't be caught by goldens.
 - **Coverage reality:** core is ~99% lines / 100% functions; the residual uncovered lines/branches are malloc/IO-failure paths and defensive guards (need fault injection, not more tests). `textview.c` is 0% by design.
+- **The main thread is parked by `editor_main`.** It runs SDL's blocking event loop and never returns, so the main thread / main actor is stuck for the app's life. Any Swift feature added to the app **must run off the main actor and report UI through the C status bar** (`kern_x_set_status`). `DispatchQueue.main.async`, main-actor `Task {}`, SwiftUI live updates, and `ASWebAuthenticationSession` all silently deadlock. Background threads (`Task.detached`, GCD, `NWListener`, `URLSession`, `NSWorkspace.open`) work fine. The X publishing layer (`App/KernApp.swift`) is the reference pattern.
 
 ## Docs
 
-`docs/TESTING_PLAN.md` (strategy), `docs/TESTING_PROGRESS.md` (living status log — update it as testing/refactor work lands), `docs/REFACTORING.md` (catalogue of candidate refactors with status). Commit messages end with a `Co-Authored-By` trailer; branch only when asked (work happens on `main`).
+`docs/TESTING_PLAN.md` (strategy), `docs/TESTING_PROGRESS.md` (living status log — update it as testing/refactor work lands), `docs/REFACTORING.md` (catalogue of candidate refactors with status). Commit messages end with a `Co-Authored-By` trailer. **Never create branches or PRs — all work commits directly to `main` and pushes there.**
