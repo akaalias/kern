@@ -62,7 +62,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `M-<` / `M->` | Beginning / end of buffer       |
 | `C-l`         | Recenter (center → top → bottom)|
 | `C-x t`       | Typewriter mode (pin active line at golden ratio) |
-| `C-x y`       | Syntax highlight (color parts of speech) |
+| `C-x y`       | Syntax highlight (parts of speech, by brightness) |
 | `M-g`         | Go to line                      |
 
 **Editing**

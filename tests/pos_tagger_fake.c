@@ -11,7 +11,7 @@
 
 struct entry { const char *w; unsigned char cls; };
 
-/* lowercase word -> class. Only colored classes are listed. */
+/* lowercase word -> class. Unlisted words tag as POS_OTHER (no span). */
 static const struct entry k_lex[] = {
   /* nouns */
   { "cat", POS_NOUN }, { "dog", POS_NOUN }, { "fox", POS_NOUN },
@@ -30,6 +30,17 @@ static const struct entry k_lex[] = {
   /* conjunctions */
   { "and", POS_CONJUNCTION }, { "or", POS_CONJUNCTION },
   { "but", POS_CONJUNCTION }, { "so", POS_CONJUNCTION },
+  /* determiners */
+  { "the", POS_DETERMINER }, { "a", POS_DETERMINER }, { "an", POS_DETERMINER },
+  { "this", POS_DETERMINER }, { "that", POS_DETERMINER },
+  /* prepositions */
+  { "of", POS_PREPOSITION }, { "to", POS_PREPOSITION }, { "in", POS_PREPOSITION },
+  { "from", POS_PREPOSITION }, { "with", POS_PREPOSITION }, { "at", POS_PREPOSITION },
+  /* pronouns */
+  { "i", POS_PRONOUN }, { "it", POS_PRONOUN }, { "he", POS_PRONOUN },
+  { "she", POS_PRONOUN }, { "they", POS_PRONOUN }, { "my", POS_PRONOUN },
+  /* particles */
+  { "not", POS_PARTICLE },
 };
 
 static unsigned char lookup(const char *w, int n) {

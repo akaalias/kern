@@ -13,19 +13,32 @@
 #ifndef POS_TAGGER_H
 #define POS_TAGGER_H
 
-/* Highlighted lexical classes. Anything the tagger reports that isn't one of
-   these (pronouns, determiners, prepositions, numbers, punctuation, …) maps to
-   POS_OTHER and produces no span — those words render in the base color. The
-   enum values double as bit indices for ViewState.syntax_mask. */
+/* Lexical classes Kern distinguishes. Split into two groups that the value-based
+   palette treats very differently (see pos_render.c):
+     - content words (noun/verb/adjective/adverb) — the meaning-bearing skeleton;
+     - function words (conjunction/determiner/preposition/pronoun/particle) — the
+       grammatical glue, which the palette dims so it recedes.
+   Anything else the tagger reports (numbers, interjections, punctuation, …) maps
+   to POS_OTHER and gets no span, rendering in the base text color. The enum
+   values double as bit indices for ViewState.syntax_mask. */
 typedef enum {
   POS_OTHER = 0,
+  /* content words */
   POS_NOUN,
   POS_VERB,
   POS_ADJECTIVE,
   POS_ADVERB,
+  /* function words */
   POS_CONJUNCTION,
+  POS_DETERMINER,
+  POS_PREPOSITION,
+  POS_PRONOUN,
+  POS_PARTICLE,
   POS_CLASS_COUNT
 } PosClass;
+
+/* True for the closed-class "function" words the palette recedes. */
+#define POS_IS_FUNCTION(cls) ((cls) >= POS_CONJUNCTION && (cls) <= POS_PARTICLE)
 
 /* A tagged word: a byte range [start,end) into the line text and its class.
    Tagged (a struct tag, not just a typedef) so editor_types.h can forward-

@@ -12,11 +12,17 @@
 #import "pos_tagger.h"
 
 static PosClass class_for_tag(NSLinguisticTag tag) {
+  /* content words */
   if ([tag isEqualToString:NSLinguisticTagNoun])        return POS_NOUN;
   if ([tag isEqualToString:NSLinguisticTagVerb])        return POS_VERB;
   if ([tag isEqualToString:NSLinguisticTagAdjective])   return POS_ADJECTIVE;
   if ([tag isEqualToString:NSLinguisticTagAdverb])      return POS_ADVERB;
+  /* function words — the glue the value palette dims */
   if ([tag isEqualToString:NSLinguisticTagConjunction]) return POS_CONJUNCTION;
+  if ([tag isEqualToString:NSLinguisticTagDeterminer])  return POS_DETERMINER;
+  if ([tag isEqualToString:NSLinguisticTagPreposition]) return POS_PREPOSITION;
+  if ([tag isEqualToString:NSLinguisticTagPronoun])     return POS_PRONOUN;
+  if ([tag isEqualToString:NSLinguisticTagParticle])    return POS_PARTICLE;
   return POS_OTHER;
 }
 

@@ -20,7 +20,9 @@
 #define POS_BIT(cls)     (1u << (cls))
 #define SYNTAX_MASK_ALL  (POS_BIT(POS_NOUN) | POS_BIT(POS_VERB) | \
                           POS_BIT(POS_ADJECTIVE) | POS_BIT(POS_ADVERB) | \
-                          POS_BIT(POS_CONJUNCTION))
+                          POS_BIT(POS_CONJUNCTION) | POS_BIT(POS_DETERMINER) | \
+                          POS_BIT(POS_PREPOSITION) | POS_BIT(POS_PRONOUN) | \
+                          POS_BIT(POS_PARTICLE))
 
 /* Lazily tag the line and cache its span map (recomputed when pos_span_count is
    -1, which line_dirty sets on every edit). Returns the count; *out receives the
