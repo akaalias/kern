@@ -35,6 +35,15 @@ float md_draw_text(Line *l, int start, int end,
    metrics as md_draw_text — for aligning the selection/search highlight. */
 int md_col_x(Line *l, int start, int end, int x0, int heading, int col);
 
+/* pixel indent of a visual row: the list base indent, plus the marker width on
+   continuation rows (row_start > 0) so wrapped text hangs under the item text.
+   Matches the x-origin do_render draws each row at. */
+int md_row_indent(Line *l, int row_start);
+
+/* inverse of md_col_x: the column in [start,end] nearest target_x, using the
+   same per-span font metrics as md_draw_text. x0 is the row's draw origin. */
+int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x);
+
 /* Set the global focus-dim opacity applied to all subsequent md_draw_text output
    (1.0 = full). Typewriter mode fades non-focused lines; reset to 1.0 after. */
 void md_set_text_opacity(float o);

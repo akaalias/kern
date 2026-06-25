@@ -213,6 +213,95 @@ static void test_click_on_wrapped_line(void) {
   ed_teardown(&ed);
 }
 
+/* Click on a list item must account for the hanging indent the renderer draws
+   the row at (page margin + 4-space list indent). The pre-fix code measured
+   from the bare page margin, so clicks landed offset by the indent on every
+   list line. page margin 50 + list indent 40 → row origin x = 90; 10px glyphs. */
+static void test_click_on_list_line_accounts_for_indent(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  EditorState ed = {0}; ed_load(&ed, "- hello world");
+  ViewState vs = {0}; vs.content_y = 0; vs.content_h = 600;
+
+  nav_click_to_cursor(&ed, &vs, 90, 5);          /* at the row origin → col 0 */
+  CHECK_IEQ(ed.cursor_col, 0);
+
+  nav_click_to_cursor(&ed, &vs, 90 + 35, 5);     /* 3.5 glyphs into the text */
+  CHECK_IEQ(ed.cursor_col, 4);
+  ed_teardown(&ed);
+}
+
+/* Vertical movement moves by VISUAL row, not logical line: inside a wrapped
+   paragraph, down/up stay within the same logical line until its rows are
+   exhausted. This is the bug where C-n jumped a whole paragraph. */
+static void test_visual_move_stays_in_wrapped_line(void) {
+  stub_set_metrics(10, 20, 800, 600);           /* 70 glyphs per row */
+  char s[141]; memset(s, 'a', 140); s[140] = '\0';   /* logical line 0 wraps to 2 rows */
+  EditorState ed = {0}; ed_load(&ed, s);
+  buf_insert_line_at(&ed, 1, "bbbb", 4);        /* a short logical line below */
+  ViewState vs = {0}; vs.content_h = 600; vs.goal_line = -1;
+
+  ed.cursor_line = 0; ed.cursor_col = 5; ed.cursor_target_col = 5;
+  nav_visual_move(&ed, &vs, +1);                /* down one visual row */
+  CHECK_IEQ(ed.cursor_line, 0);                 /* still the same logical line */
+  CHECK(ed.cursor_col >= 70);                   /* now on its continuation row */
+  CHECK_IEQ(ed.cursor_col, 75);                 /* same goal x (col 5 of the row) */
+  ed_teardown(&ed);
+}
+
+/* The pixel goal column persists across a run of vertical moves, so up-then-down
+   returns to the original column. */
+static void test_visual_move_keeps_goal_x(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  char s[141]; memset(s, 'a', 140); s[140] = '\0';   /* one logical line, 2 rows */
+  EditorState ed = {0}; ed_load(&ed, s);
+  ViewState vs = {0}; vs.content_h = 600; vs.goal_line = -1;
+
+  ed.cursor_line = 0; ed.cursor_col = 75; ed.cursor_target_col = 75;  /* col 5 of row 1 */
+  nav_visual_move(&ed, &vs, -1);                /* up to row 0 */
+  CHECK_IEQ(ed.cursor_col, 5);
+  nav_visual_move(&ed, &vs, +1);                /* down to row 1 again */
+  CHECK_IEQ(ed.cursor_col, 75);                 /* goal x preserved */
+  ed_teardown(&ed);
+}
+
+/* Up from the first visual row lands at the buffer start; down from the last
+   lands at the buffer end. */
+static void test_visual_move_clamps_to_buffer_ends(void) {
+  stub_set_metrics(10, 20, 800, 600);
+  EditorState ed = {0}; ed_load(&ed, "one");
+  buf_insert_line_at(&ed, 1, "two", 3);
+  ViewState vs = {0}; vs.content_h = 600; vs.goal_line = -1;
+
+  ed.cursor_line = 0; ed.cursor_col = 2; ed.cursor_target_col = 2;
+  nav_visual_move(&ed, &vs, -1);                /* above the top */
+  CHECK_IEQ(ed.cursor_line, 0);
+  CHECK_IEQ(ed.cursor_col, 0);
+
+  ed.cursor_line = 1; ed.cursor_col = 1; ed.cursor_target_col = 1; vs.goal_line = -1;
+  nav_visual_move(&ed, &vs, +1);                /* below the bottom */
+  CHECK_IEQ(ed.cursor_line, 1);
+  CHECK_IEQ(ed.cursor_col, 3);                  /* end of "two" */
+  ed_teardown(&ed);
+}
+
+/* A list item's continuation rows hang under the item text, so they fit fewer
+   characters than a flush paragraph — the wrap measurement must match the
+   render (which the old full-page-width measurement did not). */
+static void test_wrap_breaks_account_for_list_indent(void) {
+  stub_set_metrics(10, 20, 800, 600);           /* page width 700 = 70 glyphs */
+  /* "- " + 100 a's: a flush line wraps at 70; a list line's first row holds
+     fewer, since indent (40) + marker (20) shrink the continuation width. */
+  char s[120]; s[0] = '-'; s[1] = ' '; memset(s + 2, 'a', 100); s[102] = '\0';
+  Line l = mkline(s);
+  int starts[16];
+  int rows = nav_get_wrap_breaks(&l, starts, 16);
+  CHECK(rows >= 2);
+  /* first row origin is margin+indent (40); continuation hangs at +marker (60),
+     so neither row spans the full 70 glyphs a flush line would. */
+  CHECK(starts[1] <= 66);                        /* row 0 holds ≤66 glyphs (700-40)/10 */
+  free(l.text);
+}
+
 void suite_navigation(void) {
   RUN(test_wrap_empty_line);
   RUN(test_reflow_only_on_width_change);
@@ -228,4 +317,9 @@ void suite_navigation(void) {
   RUN(test_cursor_clamp_all_directions);
   RUN(test_ensure_visible_without_content_h);
   RUN(test_click_on_wrapped_line);
+  RUN(test_click_on_list_line_accounts_for_indent);
+  RUN(test_visual_move_stays_in_wrapped_line);
+  RUN(test_visual_move_keeps_goal_x);
+  RUN(test_visual_move_clamps_to_buffer_ends);
+  RUN(test_wrap_breaks_account_for_list_indent);
 }

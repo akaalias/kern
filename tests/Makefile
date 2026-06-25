@@ -98,8 +98,13 @@ coverage-textview:
 # Built WITHOUT sanitizers at -O2 for realistic timing. Measures the algorithm
 # (wrap/search/load) via the deterministic stub renderer, not GL.
 PERF_BIN := kern_perf
-PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c \
-            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c
+# navigation.c now mirrors the render geometry (hanging indent + per-span
+# widths), so it links against md_render.c and its span providers (pos/style +
+# the fake tagger) — the same minimal graph the test binary uses.
+PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c pos_tagger_fake.c \
+            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c \
+            $(APP)/Editor/md_render.c $(APP)/Editor/pos_render.c \
+            $(APP)/Editor/style_check.c
 
 $(PERF_BIN): $(PERF_SRC) stub_renderer.h clock_fake.h
 	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC)

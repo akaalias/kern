@@ -31,6 +31,19 @@ int nav_cursor_to_visual(EditorState *ed, int cline, int ccol);
 void nav_cursor_clamp(EditorState *ed);
 void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs);
 
+/* whether a heading's "### " markers fit in the left margin (so they hang there
+   rather than rendering inline). Mirrors do_render's layout decision. */
+int nav_heading_markers_hang(Line *l);
+
+/* absolute screen x of the caret at (line, col), matching the render pass
+   (list hanging indent + per-span font metrics + hung heading markers). */
+int nav_cursor_x(EditorState *ed, int line, int col);
+
+/* Move the caret one *visual* row (dir = +1 down, -1 up), keeping a pixel goal
+   column. Wrapped paragraphs move a screen row at a time, not a whole logical
+   line. Backs C-n/C-p and the down/up arrows. */
+void nav_visual_move(EditorState *ed, ViewState *vs, int dir);
+
 /* The scroll_y that puts the cursor's visual row `fraction` of the way down the
    page (0 = top, 0.5 = center, 0.382 = golden), floored at 0. */
 float nav_pin_target(EditorState *ed, ViewState *vs, float fraction);

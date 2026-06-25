@@ -7,6 +7,7 @@
 #include <SDL2/SDL.h>
 #include "navigation.h"
 #include "renderer.h"
+#include "md_render.h"
 #include "buffer.h"
 #include "clock.h"
 #include "utf8.h"
@@ -46,6 +47,24 @@ int nav_line_height(void) {
   return (int)(r_get_text_height() * LINE_HEIGHT_MULT + 0.5f);
 }
 
+/* True if a heading's "### " markers fit in the left margin (so do_render hangs
+   them there and draws the body flush at the margin). False in a narrow window,
+   where they render inline. Kept here so click/movement geometry can mirror the
+   render decision; do_render calls it too. */
+int nav_heading_markers_hang(Line *l) {
+  if (!md_is_heading(l)) return 0;
+  int hcount = md_heading_prefix_len(l) - 1;
+  if (hcount > 23) hcount = 23;
+  char hashes[24];
+  memset(hashes, '#', hcount); hashes[hcount] = '\0';
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_BOLD);
+  int hw = r_get_text_width(hashes, hcount);
+  int gap = r_get_text_width(" ", 1);
+  r_set_font_style(saved);
+  return (nav_page_margin() - gap - hw) >= 2;   /* headings carry no list indent */
+}
+
 /* ---- word wrapping ---- */
 
 int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
@@ -62,11 +81,18 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
   int row_start = 0;
   int i = 0;
 
+  /* available text width shrinks by the row's hanging indent, exactly as the
+     render pass draws each row at nav_page_margin() + md_row_indent(): a list
+     item's continuation rows hang under the item text, so they fit fewer
+     characters. Measuring the full page width here (the old behaviour) put the
+     wrap points past the right edge and out of step with what's drawn. */
+  int avail = nav_page_w() - md_row_indent(l, row_start);
+
   while (i < l->len && count < max_starts) {
     int n = utf8_len(l->text + i, l->len - i);   /* step whole codepoints */
     int cw = r_get_text_width(l->text + i, n);
 
-    if (x + cw > nav_page_w() && i > row_start) {
+    if (x + cw > avail && i > row_start) {
       int brk = i;
       if (last_space > row_start) brk = last_space + 1;
       starts[count] = brk;
@@ -75,6 +101,7 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
       i = brk;
       x = 0;
       last_space = -1;
+      avail = nav_page_w() - md_row_indent(l, row_start);
       continue;
     }
 
@@ -186,6 +213,42 @@ void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs) {
   if (cursor_bot > vs->scroll_y + view_h) vs->scroll_y = cursor_bot - view_h;
 }
 
+/* ---- visual-row geometry (mirrors do_render's per-row layout) ---- */
+
+/* For visual row starting at `row_start` of logical line `ln`, compute the
+   draw origin x0, the first drawable column (a heading's hung "### " prefix
+   sits in the margin, so its body starts after the prefix), and whether the
+   line is a heading. This is exactly the layout do_render uses, so column<->x
+   math agrees with what's on screen. */
+static void nav_row_geom(EditorState *ed, int ln, int row_start,
+                         int *x0, int *draw_start, int *heading) {
+  Line *l = &ed->lines[ln];
+  int h = md_is_heading(l);
+  int indent = md_row_indent(l, row_start);
+  int ds = row_start;
+  if (h && row_start == 0 && nav_heading_markers_hang(l)) {
+    int prefix = md_heading_prefix_len(l);
+    if (prefix <= l->len) ds = prefix;   /* markers hung in the left margin */
+  }
+  *x0 = nav_page_margin() + indent;
+  *draw_start = ds;
+  *heading = h;
+}
+
+int nav_cursor_x(EditorState *ed, int line, int col) {
+  Line *l = &ed->lines[line];
+  int starts[256];
+  int nrows = nav_get_wrap_breaks(l, starts, 256);
+  int row = 0;
+  for (int r = nrows - 1; r >= 0; r--) { if (col >= starts[r]) { row = r; break; } }
+  int row_start = starts[row];
+  int row_end = (row + 1 < nrows) ? starts[row + 1] : l->len;
+  int x0, draw_start, heading;
+  nav_row_geom(ed, line, row_start, &x0, &draw_start, &heading);
+  int ms = draw_start > row_start ? draw_start : row_start;
+  return md_col_x(l, ms, row_end, x0, heading, col);
+}
+
 /* ---- click to cursor ---- */
 
 void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
@@ -205,26 +268,58 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
   int row_start = starts[wrap_offset];
   int row_end = (wrap_offset + 1 < nrows) ? starts[wrap_offset + 1] : ed->lines[ln].len;
 
-  int col = row_start;
-  int pm = nav_page_margin();
-  if (mx > pm) {
-    int px = pm;
-    const char *txt = ed->lines[ln].text;
-    int i = row_start;
-    while (i < row_end) {
-      int n = utf8_len(txt + i, row_end - i);    /* land on codepoint boundaries */
-      int cw = body_width(txt + i, n);
-      if (px + cw / 2 > mx) break;
-      px += cw;
-      i += n;
-      col = i;
-    }
-  }
+  int x0, draw_start, heading;
+  nav_row_geom(ed, ln, row_start, &x0, &draw_start, &heading);
+  if (draw_start > row_start) row_start = draw_start;
+  /* measure with the same per-span / hanging-indent metrics the row is drawn
+     with — body_width(FONT_REGULAR) from the bare page margin used to ignore
+     both, so clicks landed offset on list/heading/bold lines. */
+  int col = md_x_to_col(&ed->lines[ln], row_start, row_end, x0, heading, mx);
 
   ed->cursor_line = ln;
   ed->cursor_col = col;
   nav_cursor_clamp(ed);
   ed->cursor_target_col = ed->cursor_col;
+  vs->goal_line = -1;   /* horizontal motion: drop any vertical goal column */
+}
+
+/* ---- vertical movement by visual row ---- */
+
+void nav_visual_move(EditorState *ed, ViewState *vs, int dir) {
+  int total = nav_total_visual_lines(ed);
+  int cur_vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
+  int target_vis = cur_vis + dir;
+
+  /* (re)establish the goal x unless the caret is still exactly where the last
+     vertical move left it — i.e. this is a run of consecutive C-n/C-p, so the
+     original goal column should persist across short rows. */
+  if (ed->cursor_line != vs->goal_line || ed->cursor_col != vs->goal_col)
+    vs->goal_x = nav_cursor_x(ed, ed->cursor_line, ed->cursor_col);
+
+  if (target_vis < 0) {                       /* above first row → buffer start */
+    ed->cursor_line = 0;
+    ed->cursor_col = 0;
+  } else if (target_vis >= total) {           /* below last row → buffer end */
+    ed->cursor_line = ed->line_count - 1;
+    ed->cursor_col = ed->lines[ed->cursor_line].len;
+  } else {
+    int wrap_off;
+    int ln = nav_visual_to_logical(ed, target_vis, &wrap_off);
+    int starts[256];
+    int nrows = nav_get_wrap_breaks(&ed->lines[ln], starts, 256);
+    int row_start = starts[wrap_off];
+    int row_end = (wrap_off + 1 < nrows) ? starts[wrap_off + 1] : ed->lines[ln].len;
+    int x0, draw_start, heading;
+    nav_row_geom(ed, ln, row_start, &x0, &draw_start, &heading);
+    int ms = draw_start > row_start ? draw_start : row_start;
+    ed->cursor_line = ln;
+    ed->cursor_col = md_x_to_col(&ed->lines[ln], ms, row_end, x0, heading, vs->goal_x);
+  }
+
+  nav_cursor_clamp(ed);
+  ed->cursor_target_col = ed->cursor_col;
+  vs->goal_line = ed->cursor_line;   /* remember where we landed so a follow-up */
+  vs->goal_col = ed->cursor_col;     /* C-n/C-p keeps the same goal_x */
 }
 
 /* ---- search ---- */

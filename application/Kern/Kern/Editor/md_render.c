@@ -337,3 +337,58 @@ int md_col_x(Line *l, int start, int end, int x0, int heading, int col) {
                heading, col, &out, 0 /* measure only */);
   return out;
 }
+
+int md_row_indent(Line *l, int row_start) {
+  int indent = md_list_indent(l);
+  /* continuation rows hang under the item text, not the marker */
+  if (row_start > 0) indent += md_list_marker_width(l);
+  return indent;
+}
+
+/* Inverse of md_col_x: the column in [start,end] whose rendered position is
+   nearest target_x, measured with the same per-span font metrics md_draw_text
+   uses (so bold/italic/mono runs map correctly). x0 is the row's draw origin.
+   Mirrors only the width-affecting subset of md_draw_text's span logic. */
+int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) {
+  const char *text = l->text;
+  int base_style = heading ? FONT_BOLD : FONT_REGULAR;
+  int saved_style = r_get_font_style();
+
+  const struct MdSpan *spans;
+  int span_count = md_line_spans(l, &spans);
+  int si = 0;
+  while (si < span_count && spans[si].end <= start) si++;
+
+  float px = (float)x0;
+  int col = start;
+  for (int i = start; i < end; ) {
+    while (si < span_count && i >= spans[si].end) si++;
+
+    int style = base_style;
+    if (si < span_count && i >= spans[si].open && i < spans[si].end) {
+      const struct MdSpan *s = &spans[si];
+      /* only content of bold/italic/mono shifts width; links and the delimiter
+         characters keep the base style (md_draw_text only recolors those) */
+      if (s->kind != SP_LINK && s->kind != SP_WIKI &&
+          i >= s->content && i < s->close) {
+        switch (s->kind) {
+          case SP_BOLD:   style = FONT_BOLD; break;
+          case SP_ITALIC: style = heading ? FONT_BOLD : FONT_ITALIC; break;
+          case SP_MONO:   style = FONT_MONO; break;
+          default: break;
+        }
+      }
+    }
+
+    int n = utf8_len(text + i, end - i);
+    r_set_font_style(style);
+    int w = r_get_text_width(text + i, n);
+    if (px + w / 2.0f > (float)target_x) { col = i; r_set_font_style(saved_style); return col; }
+    px += w;
+    i += n;
+    col = i;
+  }
+
+  r_set_font_style(saved_style);
+  return col;
+}

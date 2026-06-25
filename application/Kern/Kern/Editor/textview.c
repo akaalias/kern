@@ -293,22 +293,9 @@ void kern_publish_to_x(void) { cmd_publish_to_x(); }
 
 /* ---- undo is now in undo.c (operation-based) ---- */
 
-/* True if a heading's "### " markers fit in the left margin (so they can hang
-   there). False in a narrow window, where they'd overlap the text and should
-   render inline instead. */
-static int heading_markers_hang(Line *l) {
-  if (!md_is_heading(l)) return 0;
-  int hcount = md_heading_prefix_len(l) - 1;
-  if (hcount > 23) hcount = 23;
-  char hashes[24];
-  memset(hashes, '#', hcount); hashes[hcount] = '\0';
-  int saved = r_get_font_style();
-  r_set_font_style(FONT_BOLD);
-  int hw = r_get_text_width(hashes, hcount);
-  int gap = r_get_text_width(" ", 1);
-  r_set_font_style(saved);
-  return (nav_page_margin() - gap - hw) >= 2;   /* headings carry no list indent */
-}
+/* The heading-marker-hang test now lives in navigation.c
+   (nav_heading_markers_hang) so click/movement geometry shares the same render
+   decision; do_render and the selection highlight call it below. */
 
 /* ---- frame ---- */
 
@@ -435,10 +422,10 @@ static void process_frame(void) {
       if (md_is_heading(l) && row_start == 0) {
         int hpre = md_heading_prefix_len(l);
         int reveal = (ln == g_ed.cursor_line && g_ed.cursor_col <= hpre);
-        if (!reveal && heading_markers_hang(l)) dstart = hpre;
+        if (!reveal && nav_heading_markers_hang(l)) dstart = hpre;
       }
       /* match the text's indent so highlights align (incl. list hanging indent) */
-      int row_indent = md_list_indent(l) + (row_start > 0 ? md_list_marker_width(l) : 0);
+      int row_indent = md_row_indent(l, row_start);
 
       /* draw mark region highlight */
       if (g_ed.mark_active && row_end > row_start) {
@@ -940,9 +927,8 @@ static void do_render(void) {
     md_set_text_opacity(g_vs.typewriter_mode
       ? md_focus_opacity(vr->ln, g_vs.focus_cur_line, g_vs.focus_prev_line, g_vs.focus_t)
       : 1.0f);
-    int indent = md_list_indent(L);
-    /* hang wrapped list text under the item text, not the marker */
-    if (vr->row_start > 0) indent += md_list_marker_width(L);
+    /* list hanging indent: continuation rows hang under the item text */
+    int indent = md_row_indent(L, vr->row_start);
     /* track cursor if it's on this row */
     int track = -1;
     if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
@@ -959,7 +945,7 @@ static void do_render(void) {
       /* hang markers in the margin only when there's room; otherwise let the
          "## " render inline (draw_start stays at row_start) so it never
          overlaps the text in a narrow window */
-      if (!reveal && heading_markers_hang(L)) {
+      if (!reveal && nav_heading_markers_hang(L)) {
         int hcount = prefix - 1;
         if (hcount > 23) hcount = 23;
         char hashes[24];
@@ -1437,6 +1423,7 @@ int editor_main(int argc, char **argv) {
   g_vs.search_match_line = -1;
   g_vs.search_match_col = -1;
   g_vs.cursor_x = -1;
+  g_vs.goal_line = -1;
   if (!g_ed.filename) g_ed.filename = "*scratch*";
   r_init();
   pos_tagger_warm();   /* pay the POS model-load cost now, before the first frame */
@@ -1477,6 +1464,7 @@ void tv_test_reset(void) {
   g_vs.search_match_line = -1;
   g_vs.search_match_col = -1;
   g_vs.cursor_x = -1;
+  g_vs.goal_line = -1;   /* no vertical-move goal column yet */
   /* modal file-statics that persist across events */
   minibuf_completing = 0; minibuf_suggest[0] = '\0';
   bufsw_active = bufsw_listing = bufsw_sel = bufsw_count = 0;

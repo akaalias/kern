@@ -49,20 +49,12 @@ void cmd_backward_char(EditorState *ed, ViewState *vs) {
 }
 
 void cmd_next_line(EditorState *ed, ViewState *vs) {
-  if (ed->cursor_line < ed->line_count - 1) {
-    ed->cursor_line++;
-    ed->cursor_col = ed->cursor_target_col;
-    nav_cursor_clamp(ed);
-  }
+  nav_visual_move(ed, vs, +1);   /* by visual row, not logical line */
   nav_ensure_cursor_visible(ed, vs);
 }
 
 void cmd_previous_line(EditorState *ed, ViewState *vs) {
-  if (ed->cursor_line > 0) {
-    ed->cursor_line--;
-    ed->cursor_col = ed->cursor_target_col;
-    nav_cursor_clamp(ed);
-  }
+  nav_visual_move(ed, vs, -1);
   nav_ensure_cursor_visible(ed, vs);
 }
 

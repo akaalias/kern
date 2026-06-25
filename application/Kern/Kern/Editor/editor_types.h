@@ -121,6 +121,13 @@ struct ViewState {
   int    vis_row_count;
   int    cursor_x;   /* computed during markdown draw, -1 if off-screen */
 
+  /* vertical movement goal: C-n/C-p (and arrow up/down) move by *visual* row and
+     keep a pixel goal column so the caret tracks a stable x down/up the page.
+     goal_x is reused only while the caret is still where the last vertical move
+     left it (goal_line/goal_col); any other motion recomputes it. */
+  int    goal_x;
+  int    goal_line, goal_col;
+
   /* syntax highlighting: bit per PosClass to color (0 = off, the default).
      See pos_render.h (SYNTAX_MASK_ALL / POS_BIT). */
   unsigned int syntax_mask;
