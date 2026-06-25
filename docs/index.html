@@ -125,6 +125,11 @@
     font-weight: 700;
     margin: 0 0 0.35rem;
   }
+  .note h3 a {
+    color: inherit;
+    border-bottom: 0;
+  }
+  .note h3 a:hover { color: var(--accent); }
   .note h3 .num {
     font-family: "iA Mono", monospace;
     color: var(--dim);
@@ -180,25 +185,25 @@
 
   <header class="masthead">
     <h1>Kern</h1>
-    <p class="tagline">A macOS text editor with <em>Emacs</em> hands, <em>iA Writer</em> looks, and <em>Obsidian</em> links.</p>
+    <p class="tagline">The beefy love-child of <a href="https://www.gnu.org/software/emacs/">Emacs</a>, <a href="https://ia.net/writer">iA Writer</a> and <a href="https://obsidian.md">Obsidian</a> — <em>the text editor of my dreams</em>.</p>
   </header>
 
-  <p>Three apps, three loves, three lingering frustrations. Kern is the editor that keeps what each does best and drops the rest. It's a small native thing — a SwiftUI shell over an editor written in C, drawing every glyph itself. No Electron, no plugin archaeology, no toolkit.</p>
+  <p>Emacs hands, iA Writer looks, Obsidian links. Three apps, three loves, three lingering frustrations — Kern keeps what each does best and drops the rest. It's a small native thing: a SwiftUI shell over an editor written in C, drawing every glyph itself. No Electron, no plugin archaeology, no toolkit.</p>
 
   <h2>The three apps I couldn't fully quit</h2>
 
   <div class="note">
-    <h3><span class="num">1</span>Emacs</h3>
+    <h3><span class="num">1</span><a href="https://www.gnu.org/software/emacs/">Emacs</a></h3>
     <p>Fully muscle-memorized, blindingly fast text editing — no second-guessing, ever. <span class="but"><b>But</b> markdown rendering needs extra packages, the typography isn't iA Writer, and link-navigation never feels as smooth as Obsidian.</span></p>
   </div>
 
   <div class="note">
-    <h3><span class="num">2</span>iA Writer</h3>
+    <h3><span class="num">2</span><a href="https://ia.net/writer">iA Writer</a></h3>
     <p>Amazingly minimal — I've happily paid for it four times in ten years — with typography I'd defend in a fight. <span class="but"><b>But</b> none of the Emacs keybindings and chords, so editing feels generic, and its wikilinks sit well below the bar Obsidian set. Next to Emacs, it feels bloated.</span></p>
   </div>
 
   <div class="note">
-    <h3><span class="num">3</span>Obsidian</h3>
+    <h3><span class="num">3</span><a href="https://obsidian.md">Obsidian</a></h3>
     <p>Since 1.0, the best on-the-fly linking there is — add a link mid-thought, follow the link under the cursor, jump back, turn a selection into its own linked note. <span class="but"><b>But</b> it's Electron, the Emacs community plugins never quite worked, typography is so-so, and the editing itself is generic and uninspired.</span></p>
   </div>
 
