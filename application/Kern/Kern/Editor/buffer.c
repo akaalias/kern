@@ -200,6 +200,14 @@ int buf_load_file(EditorState *ed, const char *path) {
   buf[nread] = '\0';
   fclose(f);
 
+  /* Drop any buffer already loaded into `ed` before reallocating the line
+     array — otherwise loading a second file into the same EditorState (buffer
+     switch, wikilink follow/back/forward) leaks the previous array.
+     buf_free_all_lines frees the line contents; this frees the array itself.
+     Safe when ed->lines is NULL (a fresh EditorState). */
+  buf_free_all_lines(ed);
+  free(ed->lines);
+
   ed->line_cap = 4096;
   ed->lines = malloc(ed->line_cap * sizeof(Line));
   if (!ed->lines) { free(buf); return -1; }
