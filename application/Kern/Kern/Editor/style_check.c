@@ -136,8 +136,9 @@ static int style_scan(const char *text, int len, StyleSpan *out, int max) {
       out[n].start = toks[from].start;
       out[n].end   = toks[to].end;
       out[n].category = pat->category;
-      out[n].decor = (pat->category == STYLE_CLICHE) ? STYLE_DECOR_UNDERLINE
-                                                     : STYLE_DECOR_STRIKE;
+      out[n].decor = pat->category == STYLE_CLICHE     ? STYLE_DECOR_UNDERLINE_DOTTED
+                   : pat->category == STYLE_REDUNDANCY ? STYLE_DECOR_STRIKE_WAVY
+                                                       : STYLE_DECOR_STRIKE;
       n++;
       s += best_len;          /* advance past the whole match, no overlap */
     } else {

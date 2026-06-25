@@ -9,6 +9,9 @@ extern const char *buf_get_documents_dir(void);
 extern void kern_publish_to_x(void);
 /* from KernApp.swift (@_cdecl) — 1 if an X account is linked */
 extern int kern_x_is_connected(void);
+/* from textview.c — current on/off state of the View-menu toggles */
+extern int kern_syntax_enabled(void);
+extern int kern_style_enabled(void);
 
 #pragma mark - Keyboard-shortcut sheet
 
@@ -521,6 +524,37 @@ static NSButton *kern_titlebar_button(NSString *symbol, NSString *accDesc,
   return btn;
 }
 
+/* Live checkmarks for the View-menu toggles. SwiftUI builds the "Syntax
+   Highlighting" / "Style Check" items (via .commands) but can't update them while
+   the main run loop is parked. So we own the View menu's delegate: AppKit calls
+   menuNeedsUpdate: on the main thread just before the menu opens — we chain to
+   SwiftUI's delegate (so its items still populate), then set each item's checkmark
+   from the live C state. */
+@interface KernViewMenuDelegate : NSObject <NSMenuDelegate>
+@property (nonatomic, weak) id<NSMenuDelegate> next;
+@end
+@implementation KernViewMenuDelegate
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+  if ([self.next respondsToSelector:@selector(menuNeedsUpdate:)])
+    [self.next menuNeedsUpdate:menu];
+  [menu itemWithTitle:@"Syntax Highlighting"].state =
+      kern_syntax_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+  [menu itemWithTitle:@"Style Check"].state =
+      kern_style_enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+}
+@end
+
+static KernViewMenuDelegate *g_view_menu_delegate;  /* strong (ARC) — keep alive */
+
+static void kern_install_view_menu_checkmarks(void) {
+  if (g_view_menu_delegate) return;
+  NSMenu *view = [NSApp.mainMenu itemWithTitle:@"View"].submenu;
+  if (!view) return;
+  g_view_menu_delegate = [KernViewMenuDelegate new];
+  g_view_menu_delegate.next = view.delegate;
+  view.delegate = g_view_menu_delegate;
+}
+
 void macos_style_window(SDL_Window *sdl_window) {
   SDL_SysWMinfo info;
   SDL_VERSION(&info.version);
@@ -595,4 +629,6 @@ void macos_style_window(SDL_Window *sdl_window) {
   acc.layoutAttribute = NSLayoutAttributeRight;
   acc.view = buttons;
   [nswindow addTitlebarAccessoryViewController:acc];
+
+  kern_install_view_menu_checkmarks();   /* live ✓ on the View-menu toggles */
 }

@@ -275,7 +275,7 @@ float md_draw_text(Line *l, int start, int end,
        since it wants rewriting, not deletion. */
     StyleDecor decor = g_style_mask ? style_decor_at(l, g_style_mask, i)
                                     : STYLE_DECOR_NONE;
-    if (decor == STYLE_DECOR_STRIKE) fg = strike_fg;
+    if (decor == STYLE_DECOR_STRIKE) fg = strike_fg;   /* only the filler strike greys */
 
     if (i == track_cursor_col) *out_cursor_x = (int)px;
 
@@ -293,16 +293,31 @@ float md_draw_text(Line *l, int start, int end,
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
       r_draw_text(ch, vec2((int)px, (int)y), md_fade(fg, op));
-      if (decor != STYLE_DECOR_NONE) {
-        /* a lightly scribbled line: short dashes with a ±1px hand-drawn wobble
-           keyed to absolute x, so it wavers as one continuous line across the
-           word. A strike rides the x-height (delete); an underline rides the
-           baseline (rewrite). */
-        int dy = (int)y + (int)(font_h * (decor == STYLE_DECOR_UNDERLINE ? 0.92f : 0.45f));
+      /* Each style category gets its own line texture, keyed to absolute x so
+         the line stays continuous across characters:
+           - filler     STRIKE:           light wobble through the x-height;
+           - redundancy STRIKE_WAVY:       taller wave through the x-height;
+           - cliché     UNDERLINE_DOTTED:  straight dotted line on the baseline. */
+      if (decor == STYLE_DECOR_STRIKE) {
+        int dy = (int)y + (int)(font_h * 0.45f);
         for (int sx = (int)px; sx < (int)px + w; sx += 3) {
           int seg = (int)px + w - sx; if (seg > 3) seg = 3;
           int woff = wave[(sx / 3) & 3] - 1;   /* {0,1,2,1} -> -1,0,1,0 */
           r_draw_rect(rect(sx, dy + woff, seg, strike_thick), md_fade(strike_fg, op));
+        }
+      } else if (decor == STYLE_DECOR_STRIKE_WAVY) {
+        /* the same hand-drawn wavy line, ridden on the baseline as an underline */
+        int dy = (int)y + (int)(font_h * 0.92f);
+        for (int sx = (int)px; sx < (int)px + w; sx += 3) {
+          int seg = (int)px + w - sx; if (seg > 3) seg = 3;
+          int woff = wave[(sx / 3) & 3] - 1;   /* {0,1,2,1} -> -1,0,1,0 */
+          r_draw_rect(rect(sx, dy + woff, seg, strike_thick), md_fade(strike_fg, op));
+        }
+      } else if (decor == STYLE_DECOR_UNDERLINE_DOTTED) {
+        int dy = (int)y + (int)(font_h * 0.92f);
+        for (int sx = (int)px; sx < (int)px + w; sx += 4) {   /* 2px dash, 2px gap */
+          int seg = (int)px + w - sx; if (seg > 2) seg = 2;
+          r_draw_rect(rect(sx, dy, seg, strike_thick), md_fade(strike_fg, op));
         }
       }
     }

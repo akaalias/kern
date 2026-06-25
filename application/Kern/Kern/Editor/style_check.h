@@ -22,14 +22,17 @@ typedef enum {
   STYLE_CATEGORY_COUNT
 } StyleCategory;
 
-/* How a span is drawn, chosen by the action the category implies:
-   - STRIKE: greyed + struck — "delete this" (fillers; the cuttable word of a
-     redundancy, so the kept word stays unmarked);
-   - UNDERLINE: a wavy underline, text kept readable — "rewrite this" (clichés). */
+/* How a span is drawn — a distinct line texture per action:
+   - STRIKE: greyed, light strike through the word — "delete this" (fillers);
+   - STRIKE_WAVY: greyed, a wavy strike through the word — "redundant, trim
+     this" (the cuttable word of a redundancy);
+   - UNDERLINE_DOTTED: a straight dotted underline, text kept readable —
+     "rewrite this" (clichés). */
 typedef enum {
   STYLE_DECOR_NONE = 0,
   STYLE_DECOR_STRIKE,
-  STYLE_DECOR_UNDERLINE
+  STYLE_DECOR_STRIKE_WAVY,
+  STYLE_DECOR_UNDERLINE_DOTTED
 } StyleDecor;
 
 /* A flagged run: the byte range [start,end) to *decorate* (for a redundancy this

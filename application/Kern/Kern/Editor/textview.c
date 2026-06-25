@@ -41,6 +41,22 @@ extern void kern_titlebar_set_x_connected(int connected);
    so no synthetic SDL event is needed. */
 void kern_x_set_status(const char *msg) { nav_status_set(&g_vs, msg); }
 
+/* ---- view-toggle bridges (called from C-x chords and the title-bar menu) ----
+   Both run on the main thread (the menu action fires during the SDL event pump),
+   the same thread as the render loop, so touching g_vs is safe. */
+void kern_toggle_syntax(void) {
+  g_vs.syntax_mask = g_vs.syntax_mask ? 0 : SYNTAX_MASK_ALL;
+  nav_status_set(&g_vs, g_vs.syntax_mask ? "Syntax highlight on"
+                                         : "Syntax highlight off");
+}
+int  kern_syntax_enabled(void) { return g_vs.syntax_mask != 0; }
+
+void kern_toggle_style(void) {
+  g_vs.style_mask = g_vs.style_mask ? 0 : STYLE_MASK_ALL;
+  nav_status_set(&g_vs, g_vs.style_mask ? "Style check on" : "Style check off");
+}
+int  kern_style_enabled(void) { return g_vs.style_mask != 0; }
+
 
 /* ---- minibuffer filename completion ---- */
 
@@ -795,16 +811,12 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     return 1;
   }
   if (!ctrl && sym == SDLK_y) {                                       /* C-x y */
-    g_vs.syntax_mask = g_vs.syntax_mask ? 0 : SYNTAX_MASK_ALL;
-    nav_status_set(&g_vs, g_vs.syntax_mask ? "Syntax highlight on"
-                                           : "Syntax highlight off");
+    kern_toggle_syntax();
     g_vs.suppress_next_text = 1;   /* swallow the "y" text event */
     return 1;
   }
   if (!ctrl && sym == SDLK_s) {                                       /* C-x s */
-    g_vs.style_mask = g_vs.style_mask ? 0 : STYLE_MASK_ALL;
-    nav_status_set(&g_vs, g_vs.style_mask ? "Style check on"
-                                          : "Style check off");
+    kern_toggle_style();
     g_vs.suppress_next_text = 1;   /* swallow the "s" text event */
     return 1;
   }

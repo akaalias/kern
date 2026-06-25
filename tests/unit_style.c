@@ -48,7 +48,7 @@ static void test_redundancy_phrase(void) {
   CHECK_IEQ(n, 1);
   CHECK_IEQ(sp[0].start, 3);   CHECK_IEQ(sp[0].end, 8);   /* just "added" */
   CHECK_IEQ(sp[0].category, STYLE_REDUNDANCY);
-  CHECK_IEQ(sp[0].decor, STYLE_DECOR_STRIKE);
+  CHECK_IEQ(sp[0].decor, STYLE_DECOR_STRIKE_WAVY);   /* redundancy = wavy strike */
   CHECK_IEQ(cat_at(&l, 5), STYLE_REDUNDANCY);    /* inside "added" (struck) */
   CHECK_IEQ(cat_at(&l, 11), STYLE_NONE);         /* "bonus" is kept */
   CHECK_IEQ(cat_at(&l, 16), STYLE_NONE);         /* "here" */
@@ -82,9 +82,9 @@ static void test_cliche(void) {
   CHECK_IEQ(n, 2);
   CHECK_IEQ(sp[0].start, 0);   CHECK_IEQ(sp[0].end, 9);   /* "Obviously" */
   CHECK_IEQ(sp[0].category, STYLE_CLICHE);
-  CHECK_IEQ(sp[0].decor, STYLE_DECOR_UNDERLINE);          /* clichés underline */
+  CHECK_IEQ(sp[0].decor, STYLE_DECOR_UNDERLINE_DOTTED);   /* clichés dotted underline */
   CHECK_IEQ(sp[1].category, STYLE_CLICHE);                /* whole "at the end of the day" */
-  CHECK_IEQ(sp[1].decor, STYLE_DECOR_UNDERLINE);
+  CHECK_IEQ(sp[1].decor, STYLE_DECOR_UNDERLINE_DOTTED);
   CHECK_IEQ(cat_at(&l, 14), STYLE_CLICHE);                /* inside the phrase */
   freeline(&l);
 
@@ -106,8 +106,8 @@ static void test_masking(void) {
   CHECK_IEQ(style_decor_at(&l, fillers, 2), STYLE_DECOR_STRIKE);         /* "really" */
   CHECK_IEQ(style_decor_at(&l, fillers, 9), STYLE_DECOR_NONE);           /* redundancy off */
 
-  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 2), STYLE_DECOR_STRIKE);  /* "really" */
-  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 9), STYLE_DECOR_STRIKE);  /* "added" cut word */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 2), STYLE_DECOR_STRIKE);         /* "really" */
+  CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 9), STYLE_DECOR_STRIKE_WAVY);  /* "added" */
   CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 15), STYLE_DECOR_NONE);   /* "bonus" kept */
   CHECK_IEQ(style_decor_at(&l, STYLE_MASK_ALL, 6), STYLE_DECOR_NONE);    /* the space */
   freeline(&l);

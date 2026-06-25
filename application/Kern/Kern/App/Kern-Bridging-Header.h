@@ -14,4 +14,12 @@ void editor_set_documents_dir(const char *path);
    possibly off the main thread. */
 void kern_x_set_status(const char *msg);
 
+/* View toggles for the menu-bar commands. Implemented in textview.c; selected on
+   the main thread during menu tracking, the same thread as the render loop. The
+   *_enabled() queries report the current on/off state. */
+void kern_toggle_syntax(void);
+int  kern_syntax_enabled(void);
+void kern_toggle_style(void);
+int  kern_style_enabled(void);
+
 #endif /* Kern_Bridging_Header_h */

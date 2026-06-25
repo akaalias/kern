@@ -62,6 +62,18 @@ struct KernApp: App {
         Settings {
             SettingsView()
         }
+        // Menu-bar View toggles for the syntax/style overlays. Defining them
+        // through SwiftUI's `.commands` (rather than poking NSApp.mainMenu, which
+        // SwiftUI rebuilds) is what makes them stick. The actions call straight
+        // into the C editor — menu selection runs synchronously on the main
+        // thread during tracking, so it works despite the parked run loop. They
+        // mirror the C-x y / C-x s chords.
+        .commands {
+            CommandGroup(after: .toolbar) {
+                Button("Syntax Highlighting") { kern_toggle_syntax() }
+                Button("Style Check") { kern_toggle_style() }
+            }
+        }
     }
 }
 
