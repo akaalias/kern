@@ -55,7 +55,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | Keys          | Action                          |
 |---------------|---------------------------------|
 | `C-f` / `C-b` | Forward / backward char         |
-| `C-n` / `C-p` | Next / previous line            |
+| `C-n` / `C-p` | Next / previous line (by visual row) |
 | `C-a` / `C-e` | Start / end of line             |
 | `M-f` / `M-b` | Forward / backward word         |
 | `C-v` / `M-v` | Page down / up                  |
