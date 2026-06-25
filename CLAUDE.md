@@ -1,0 +1,65 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+Kern is a macOS text editor — Emacs keybindings/editing model with an iA Writer look. A thin SwiftUI shell launches an editor written in C (SDL2 + OpenGL, `stb_truetype` for fonts). There is **no UI toolkit**: the editor draws immediately through a 12-function renderer interface. (The repo/folder is named `microui` for historical reasons — that dependency was removed; geometry types now come from `Editor/gfx.h`.)
+
+## Commands
+
+All test/perf/coverage commands run from `tests/` (that's where the Makefile lives).
+
+```sh
+# Headless test suite (ASan + UBSan; LSan on Linux). ~155 tests.
+cd tests && make test
+
+# Coverage report for the testable core (clang llvm-cov)
+cd tests && make coverage
+
+# Performance harness (no sanitizers, -O2). Needs a corpus:
+python3 tools/gen_prose.py 100MB test_100mb.txt   # from repo root; test_100mb.txt is gitignored
+cd tests && make perf CORPUS=../test_100mb.txt    # add PERF_ARGS=--check for CI budgets
+
+# Build the macOS app (fast, ~3s)
+xcodebuild -project application/Kern/Kern.xcodeproj -scheme Kern -configuration Debug build CODE_SIGNING_ALLOWED=NO
+```
+
+- **Running a single test:** the harness has no name filter. To narrow, comment out `RUN(...)` lines or `suite_*()` calls in `tests/test_main.c`.
+- **Snapshot goldens:** after an *intentional* render change, regenerate with `KERN_UPDATE_SNAPSHOTS=1 make test` (goldens live in `tests/snapshots/`).
+- **Run the built app:** `open` the product under `~/Library/Developer/Xcode/DerivedData/Kern-*/Build/Products/Debug/Kern.app`, or ⌘R in Xcode.
+
+## How to verify a change (important)
+
+The test build compiles the **core only** — it does **not** compile `Editor/textview.c`. So:
+- Changes to `buffer/editing/undo/navigation/md_render/recent/commands.c` → verify with `make test` (and `make coverage`).
+- Changes to `textview.c` (the SDL event loop, rendering chrome, prefix/wikilink/minibuffer handling) are **not covered by any test** → verify by building the app with `xcodebuild` and launching it. Confirm the app actually has a live pid before claiming it works.
+
+## Architecture
+
+**The renderer seam.** `Platform/renderer.h` is a 12-function interface (`r_draw_rect`, `r_draw_text`, `r_get_text_width`, `r_set_font_style`, `r_get_size`, …). The app implements it with SDL/GL (`Platform/renderer.c`); the tests implement it with a deterministic capture stub (`tests/stub_renderer.{c,h}`, 10×20px glyphs, 800×600 window, records every draw op). Any `Editor/` code that needs metrics or drawing goes through this seam, which is what makes layout testable headlessly.
+
+**State lives in two structs.** `EditorState` (document model — buffer, cursor, mark, kill ring, undo; no SDL) and `ViewState` (UI — scroll, fonts, search/minibuffer/prefix flags, status). Defined in `Editor/editor_types.h`. **Every core function takes explicit `EditorState*`/`ViewState*` pointers.** The only globals are `g_ed`/`g_vs` singletons inside `textview.c`.
+
+**Two tiers of `Editor/` code:**
+- *Pure core* — `buffer.c` (lines, file I/O, kill buffer, mark/region, sandbox paths), `editing.c` (all `ed_*` ops), `undo.c` (operation-based, grouped). No renderer dependency.
+- *Renderer-dependent but still headless-testable* — `navigation.c` (wrap, cursor/visual mapping, click-to-cursor, search), `md_render.c` (inline markdown spans + drawing), `commands.c` (the command table + `kern_dispatch_key`), `recent.c` (MRU). These depend only on `renderer.h`, so they compile into *both* the app and the test binary.
+- *Untestable shell* — `textview.c` (~1,300 lines): `editor_main` event loop, frame layout/render, minibuffer, wikilinks, buffer-switch, prefix-chord handlers.
+
+**Command dispatch.** `commands.c` owns the single binding table `g_commands[]` + `kern_dispatch_key(ed, vs, kmod, sym)`. `textview.c`'s keydown handler calls `kern_dispatch_key` first; only things needing local UI state are handled outside it: `M-g` (minibuffer), the `C-x …` and `ESC`/meta prefix chords (`handle_*_prefix_key`), and the arrow keys (which delegate to the `commands.c` movement functions, layering shift-select + word-jump). Feature tests drive `kern_dispatch_key` directly in `tests/unit_commands.c`.
+
+**Lazy per-line caches.** `Line` carries `wrap_count` (cached visual-row count, `-1` = dirty) and `md_spans`/`md_span_count` (cached inline-span map, `-1` = not computed). `line_dirty()` invalidates both on edit; `buf_invalidate_all_wraps()` clears wraps on a page-width or font-size change. `nav_maybe_reflow` skips the full re-wrap when a resize doesn't change page width.
+
+**Determinism seams.** Time goes through `Editor/clock.h` (`kern_now_ms()`; app uses `clock_sdl.c`, tests use a settable `clock_fake.c`). Clipboard goes through `Editor/clipboard.h` (app `clipboard_sdl.c`, tests `clipboard_fake.c`). Use these, not SDL directly, in `Editor/` code.
+
+## Conventions / gotchas
+
+- **Always measure wrap and column math in `FONT_REGULAR`.** A frame ends with the status bar's `FONT_MONO` active; if an event-time wrap recompute measures in mono, it caches wrong wrap counts → phantom rows and mis-placed click-to-cursor. `navigation.c`'s `body_width()` and the wrap functions force `FONT_REGULAR` regardless of ambient style — preserve this in any wrap/metric change.
+- **Columns are byte-indexed**, not codepoint-indexed (UTF-8 inserts advance the cursor by byte length).
+- **File paths are sandboxed** via `buf_set_documents_dir()` (set from Swift at launch); when unset (CLI/test builds) paths are used verbatim. User paths resolve under the documents dir via `buf_resolve_path`.
+- **Test layout:** `tests/ed_fixture.h` provides `ed_load`/`ed_teardown`/`LINE()`; `tests/test.h` provides `CHECK`/`CHECK_IEQ`/`CHECK_SEQ` and `RUN`. Each `unit_*.c` exposes one `suite_*()` listed in `test_main.c`. Snapshots prove render parity; they re-implement the text pass, so a `do_render` text-loop refactor won't be caught by goldens.
+- **Coverage reality:** core is ~99% lines / 100% functions; the residual uncovered lines/branches are malloc/IO-failure paths and defensive guards (need fault injection, not more tests). `textview.c` is 0% by design.
+
+## Docs
+
+`docs/TESTING_PLAN.md` (strategy), `docs/TESTING_PROGRESS.md` (living status log — update it as testing/refactor work lands), `docs/REFACTORING.md` (catalogue of candidate refactors with status). Commit messages end with a `Co-Authored-By` trailer; branch only when asked (work happens on `main`).
