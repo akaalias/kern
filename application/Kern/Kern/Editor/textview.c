@@ -1332,9 +1332,10 @@ static void draw_typewriter_fog(void) {
   }
 }
 
-/* Word-wrap `s` into the column [x, x+maxw], drawing each line `fh` apart from y.
-   Returns the pen x after the last glyph; *out_y gets the last line's y. */
-static int draw_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, int *out_y) {
+/* Word-wrap `s` into the column [x, x+maxw], `fh` apart from y. When draw==0 it
+   only measures (no glyphs). Returns the pen x after the last glyph; *out_y gets
+   the last line's y (so height = *out_y - y + fh). */
+static int draw_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, int *out_y, int draw) {
   int penx = x, peny = y;
   int spw = r_get_text_width(" ", 1);
   const char *p = s;
@@ -1348,7 +1349,7 @@ static int draw_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, 
     char buf[512];
     int bl = wlen < (int)sizeof(buf) - 1 ? wlen : (int)sizeof(buf) - 1;
     memcpy(buf, start, bl); buf[bl] = '\0';
-    r_draw_text(buf, vec2(penx, peny), c);
+    if (draw) r_draw_text(buf, vec2(penx, peny), c);
     penx += ww;
   }
   if (out_y) *out_y = peny;
@@ -1389,20 +1390,88 @@ static int caret_row_py(void) {
   return -1;
 }
 
-/* Draw footnote definitions (and the live margin-note input) in the right page
-   margin, each aligned to its reference's row. Typewriter mode only. */
+/* Which margin each footnote sits in, cached by id so notes stay put while
+   scrolling. Recomputed only when a footnote id appears that isn't cached yet
+   (i.e. a new note was written, or a new document loaded) — never per frame. */
+#define FN_SIDE_MAX 256
+static struct { char id[24]; int side; } g_fn_sides[FN_SIDE_MAX];   /* side: 0 right, 1 left */
+static int g_fn_side_count;
+
+static int fn_side(const char *id) {
+  for (int i = 0; i < g_fn_side_count; i++)
+    if (strcmp(g_fn_sides[i].id, id) == 0) return g_fn_sides[i].side;
+  return 0;
+}
+static int fn_side_known(const char *id) {
+  for (int i = 0; i < g_fn_side_count; i++)
+    if (strcmp(g_fn_sides[i].id, id) == 0) return 1;
+  return 0;
+}
+
+/* Lay every footnote out in document space (scroll-independent): flow down the
+   right margin, spilling a note that collides with the one above it to the left.
+   Cache the resulting side per id. */
+static void recompute_footnote_sides(void) {
+  g_fn_side_count = 0;
+  int lh  = nav_line_height();
+  int mw  = (int)(g_vs.font_size * 8) - 14;
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_MONO);
+  Color dummy = color(0, 0, 0, 0);
+  int right_bottom = -1000000;
+  for (int i = 0; i < g_ed.line_count && g_fn_side_count < FN_SIDE_MAX; i++) {
+    Line *l = &g_ed.lines[i];
+    for (int k = 0; k + 2 < l->len; k++) {
+      if (l->text[k] != '[' || l->text[k+1] != '^') continue;
+      int j = k + 2; char id[24]; int n = 0;
+      while (j < l->len && l->text[j] != ']' && n < (int)sizeof(id) - 1) id[n++] = l->text[j++];
+      id[n] = '\0';
+      if (j >= l->len || l->text[j] != ']') continue;
+      if (j + 1 < l->len && l->text[j+1] == ':') { k = j; continue; }   /* definition */
+      const char *def = find_footnote_def(id);
+      if (def) {
+        int docy = nav_cursor_to_visual(&g_ed, i, k) * lh;
+        int ly = docy;
+        draw_wrapped(def, 0, docy, mw, lh, dummy, &ly, 0);
+        int height = ly - docy + lh;
+        int side = 0;
+        if (docy >= right_bottom) { side = 0; right_bottom = docy + height + 14; }
+        else side = 1;
+        snprintf(g_fn_sides[g_fn_side_count].id, sizeof(g_fn_sides[0].id), "%s", id);
+        g_fn_sides[g_fn_side_count].side = side;
+        g_fn_side_count++;
+      }
+      k = j;
+    }
+  }
+  r_set_font_style(saved);
+}
+
+/* Draw the saved footnote definitions in the page margins, each on its cached
+   side and aligned to its reference's visual row. While a new note is being
+   typed, any note within the live input's growing extent spills left early so
+   there's room. Drawn BEFORE the typewriter fog so the frost blurs them along
+   with the page. Typewriter mode only. */
 static void draw_margin_notes(void) {
   int sx  = (int)g_vs.scroll_x;
   int gap = 14;
-  int mx  = nav_page_margin() + nav_page_w() - sx + gap;
-  int mw  = (int)(g_vs.font_size * 8) - gap;   /* the page margin strip */
+  int pad = (int)(g_vs.font_size * 8);
+  int rmx = nav_page_margin() + nav_page_w() - sx + gap;   /* right margin strip */
+  int lmx = nav_page_margin() - pad - sx + gap;            /* left margin strip  */
+  int mw  = pad - gap;
 
-  /* Same font + size as the body (mono in typewriter). NOTE: never call
-     r_set_font_size here — a size change rebuilds every font atlas, and doing it
-     per frame makes the whole app lag. */
-  r_set_font_style(FONT_MONO);
+  r_set_font_style(FONT_MONO);   /* never r_set_font_size here — it rebuilds the atlases (lag) */
   int fh = nav_line_height();
   Color ink = color(150, 150, 155, 255);
+
+  /* the live input's screen extent, so a note below it spills left as it grows */
+  int live_top = -1, live_bottom = -1;
+  if (mn_active) {
+    int py = caret_row_py();
+    if (py < 0) py = row_py_for_line(mn_ref_line);
+    if (py >= 0) { int ly = py; draw_wrapped(mn_text, rmx, py, mw, fh, ink, &ly, 0);
+                   live_top = py; live_bottom = ly + fh + gap; }
+  }
 
   for (int i = 0; i < g_vs.vis_row_count; i++) {
     VisRow *vr = &g_vs.vis_rows[i];
@@ -1415,20 +1484,37 @@ static void draw_margin_notes(void) {
       if (j >= l->len || l->text[j] != ']') continue;
       if (j + 1 < l->len && l->text[j+1] == ':') { k = j; continue; }   /* a definition, not a ref */
       const char *def = find_footnote_def(id);
-      if (def) draw_wrapped(def, mx, vr->py, mw, fh, ink, NULL);
+      if (def) {
+        if (!fn_side_known(id)) recompute_footnote_sides();   /* a new note → regroup once */
+        int side = fn_side(id);
+        int refY = vr->py;
+        if (mn_active && live_top >= 0 && refY > live_top && refY < live_bottom)
+          side = 1;                                           /* pushed left by the live input */
+        draw_wrapped(def, side ? lmx : rmx, refY, mw, fh, ink, NULL, 1);
+      }
       k = j;
     }
   }
 
-  if (mn_active) {     /* live input, aligned to the caret's (marker's) visual row */
-    int py = caret_row_py();
-    if (py < 0) py = row_py_for_line(mn_ref_line);
-    if (py < 0) py = g_vs.content_y + 8;
-    int endy = py;
-    int endx = draw_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy);
-    r_draw_rect(rect(endx + 1, endy, 2, fh - 2), color(90, 200, 250, 255));
-  }
+  r_set_font_style(FONT_REGULAR);
+}
 
+/* The live margin-note input (sharp, in the cleared hitzone). Drawn AFTER the fog
+   so it isn't frosted. */
+static void draw_margin_note_input(void) {
+  if (!mn_active) return;
+  int sx  = (int)g_vs.scroll_x;
+  int gap = 14;
+  int mx  = nav_page_margin() + nav_page_w() - sx + gap;
+  int mw  = (int)(g_vs.font_size * 8) - gap;
+  r_set_font_style(FONT_MONO);
+  int fh = nav_line_height();
+  int py = caret_row_py();
+  if (py < 0) py = row_py_for_line(mn_ref_line);
+  if (py < 0) py = g_vs.content_y + 8;
+  int endy = py;
+  int endx = draw_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy, 1);
+  r_draw_rect(rect(endx + 1, endy, 2, fh - 2), color(90, 200, 250, 255));
   r_set_font_style(FONT_REGULAR);
 }
 
@@ -1506,7 +1592,11 @@ static void do_render(void) {
 
   /* typewriter frosted-plastic fog flanking the center hitzone (over text, under
      the caret); only while horizontally pinning */
-  if (g_vs.typewriter_mode) { draw_typewriter_fog(); draw_margin_notes(); }
+  if (g_vs.typewriter_mode) {
+    draw_margin_notes();        /* saved notes BEFORE the fog so they frost with the page */
+    draw_typewriter_fog();
+    draw_margin_note_input();   /* live input AFTER the fog stays sharp in the hitzone */
+  }
 
   /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
      a caret floating past EOL is shifted right by its virtual columns so it holds
@@ -2255,7 +2345,7 @@ void tv_test_reset(void) {
   minibuf_completing = 0; minibuf_suggest[0] = '\0';
   bufsw_active = bufsw_listing = bufsw_sel = bufsw_count = 0;
   nav_back_count = 0; nav_fwd_count = 0;
-  mn_active = mn_len = 0; mn_text[0] = '\0';
+  mn_active = mn_len = 0; mn_text[0] = '\0'; g_fn_side_count = 0;
   wl_active = wl_count = wl_sel = 0;
   wl_query[0] = wl_last_query[0] = wl_suppressed[0] = '\0';
   wl_has_suppress = 0;
