@@ -136,6 +136,11 @@ struct ViewState {
      left it (goal_line/goal_col); any other motion recomputes it. */
   int    goal_x;
   int    goal_line, goal_col;
+  /* typewriter mode: columns the caret floats *past* end-of-text after a vertical
+     move onto a shorter line (the carriage holds its horizontal strike point).
+     Only meaningful while the caret is still where that vertical move left it
+     (goal_line/goal_col); typing there pads the gap with spaces. */
+  int    virtual_col;
 
   /* syntax highlighting: bit per PosClass to color (0 = off, the default).
      See pos_render.h (SYNTAX_MASK_ALL / POS_BIT). */

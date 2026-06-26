@@ -363,6 +363,17 @@ void nav_visual_move(EditorState *ed, ViewState *vs, int dir) {
 
   nav_cursor_clamp(ed);
   ed->cursor_target_col = ed->cursor_col;
+
+  /* Typewriter carriage: if we landed at the end of a shorter line but the goal
+     column is further right, float the caret that many columns past the text
+     (it holds the strike point; typing there pads the gap with spaces). */
+  vs->virtual_col = 0;
+  if (vs->typewriter_mode && ed->cursor_col == ed->lines[ed->cursor_line].len) {
+    int eol_x = nav_cursor_x(ed, ed->cursor_line, ed->cursor_col);
+    int cw = body_width(" ", 1);
+    if (cw > 0 && vs->goal_x > eol_x) vs->virtual_col = (vs->goal_x - eol_x + cw / 2) / cw;
+  }
+
   vs->goal_line = ed->cursor_line;   /* remember where we landed so a follow-up */
   vs->goal_col = ed->cursor_col;     /* C-n/C-p keeps the same goal_x */
 }

@@ -412,6 +412,63 @@ static void pos_anim_track(void) {
 /* Lay out and immediately draw the frame's chrome: window background, content
    clip, selection/search highlights and the scrollbar. The markdown text is
    drawn afterward in do_render. */
+/* Typewriter carriage: columns the caret currently floats past end-of-text — only
+   while it's still exactly where the last move that set it left it (any other
+   motion invalidates the float). Drives the caret render offset and type-time pad. */
+static int tv_virtual_cols(void) {
+  if (!g_vs.typewriter_mode) return 0;
+  if (g_vs.goal_line == g_ed.cursor_line && g_vs.goal_col == g_ed.cursor_col)
+    return g_vs.virtual_col;
+  return 0;
+}
+
+/* Pixel width of the current float (virtual columns × the mono space advance). */
+static int tv_virtual_px(void) {
+  int vc = tv_virtual_cols();
+  if (vc <= 0) return 0;
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_MONO);
+  int w = r_get_text_width(" ", 1) * vc;
+  r_set_font_style(saved);
+  return w;
+}
+
+/* Set/extend the carriage float to `vcols` past EOL on the caret's line, and feed
+   the goal column so a following vertical move continues from the float. */
+static void tv_set_float(int vcols) {
+  if (vcols < 0) vcols = 0;
+  int eol_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col);
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_MONO);
+  int cw = r_get_text_width(" ", 1);
+  r_set_font_style(saved);
+  int right_edge = nav_page_margin() + nav_page_w();
+  int maxv = cw > 0 ? (right_edge - eol_x) / cw : 0;     /* don't float past the margin */
+  if (vcols > maxv) vcols = maxv;
+  g_vs.virtual_col = vcols;
+  g_vs.goal_x = eol_x + vcols * cw;
+  g_vs.goal_line = g_ed.cursor_line;
+  g_vs.goal_col = g_ed.cursor_col;
+}
+
+/* Typewriter horizontal arrow: stays on one line, moving the page (never jumps
+   lines). Right past EOL floats into the blank page; left retracts the float,
+   then walks back through the text; at BOL it simply stops. */
+static void tv_horizontal_move(int dir) {
+  if (g_vs.typewriter_mode) {
+    Line *l = &g_ed.lines[g_ed.cursor_line];
+    if (dir > 0) {
+      if (g_ed.cursor_col == l->len) { tv_set_float(tv_virtual_cols() + 1); return; }
+    } else {
+      int vc = tv_virtual_cols();
+      if (vc > 0)              { tv_set_float(vc - 1); return; }
+      if (g_ed.cursor_col == 0) return;   /* BOL: don't jump to the previous line */
+    }
+  }
+  if (dir > 0) cmd_forward_char(&g_ed, &g_vs);
+  else         cmd_backward_char(&g_ed, &g_vs);
+}
+
 static void process_frame(void) {
   g_vs.vis_row_count = 0;
   md_set_force_mono(g_vs.typewriter_mode);   /* mono body font in typewriter mode (wrap + render) */
@@ -468,7 +525,11 @@ static void process_frame(void) {
        -scroll_x and click-to-cursor adds it back. Eases with the same glide as
        the vertical scroll (and shares g_scroll_animating). */
     if (g_vs.typewriter_mode) {
-      int caret_natural_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col);
+      /* Pin to the caret's full position including any carriage float past EOL, so
+         the page slides under a fixed strike point. A vertical move onto a shorter
+         line floats the caret so this x ≈ the goal column → the page holds its
+         horizontal place; an arrow float past EOL grows it → the page glides. */
+      int caret_natural_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col) + tv_virtual_px();
       int pin_x = nav_page_margin() + nav_page_w() / 2;   /* center of the text column */
       g_vs.scroll_target_x = (float)(caret_natural_x - pin_x);
       float dx = g_vs.scroll_target_x - g_vs.scroll_x;
@@ -1240,16 +1301,19 @@ static void do_render(void) {
      the caret); only while horizontally pinning */
   if (g_vs.typewriter_mode) draw_typewriter_fog();
 
-  /* draw cursor (post-render, uses markdown-aware x position) */
+  /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
+     a caret floating past EOL is shifted right by its virtual columns so it holds
+     the strike point over the blank page. */
   int cursor_py = -1;
   if (g_vs.cursor_x >= 0) {
     int font_h = r_get_text_height();
+    int caret_x = g_vs.cursor_x + tv_virtual_px();
     /* find the py for the cursor row */
     for (int i = 0; i < g_vs.vis_row_count; i++) {
       VisRow *vr = &g_vs.vis_rows[i];
       if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
           (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
-        r_draw_rect(rect(g_vs.cursor_x, vr->py, 3, font_h),
+        r_draw_rect(rect(caret_x, vr->py, 3, font_h),
                     color(90, 200, 250, 255));
         cursor_py = vr->py;
         break;
@@ -1491,11 +1555,23 @@ void editor_handle_event(const SDL_Event *ev) {
           nav_ensure_cursor_visible(&g_ed, &g_vs);
           break;
         }
+        /* typewriter carriage: when the caret is floating past EOL after a
+           vertical move, pad the gap with spaces so the typed char lands under
+           the strike point (one insert, so it undoes as a unit). */
+        const char *ins = e.text.text;
+        char padded[128];
+        int vcols = tv_virtual_cols();
+        if (vcols > 0) {
+          if (vcols > (int)sizeof(padded) - 8) vcols = (int)sizeof(padded) - 8;
+          memset(padded, ' ', vcols);
+          snprintf(padded + vcols, sizeof(padded) - vcols, "%s", e.text.text);
+          ins = padded;
+        }
         /* typewriter hard right margin: at the writable edge, block further
            typing (the line no longer wraps onto a new visual row) — only Enter
            starts a new line. */
-        if (g_vs.typewriter_mode && nav_at_right_margin(&g_ed, e.text.text)) break;
-        ed_insert_char(&g_ed, e.text.text);
+        if (g_vs.typewriter_mode && nav_at_right_margin(&g_ed, ins)) break;
+        ed_insert_char(&g_ed, ins);
         nav_ensure_cursor_visible(&g_ed, &g_vs);
       }
       break;
@@ -1646,16 +1722,18 @@ void editor_handle_event(const SDL_Event *ev) {
         if (sym == SDLK_LEFT || sym == SDLK_RIGHT ||
             sym == SDLK_UP || sym == SDLK_DOWN) {
           int alt = !!(e.key.keysym.mod & KMOD_ALT);
-          if ((e.key.keysym.mod & KMOD_SHIFT) && !g_ed.mark_active)
-            buf_mark_set(&g_ed);
+          int shift = !!(e.key.keysym.mod & KMOD_SHIFT);
+          if (shift && !g_ed.mark_active) buf_mark_set(&g_ed);
           switch (sym) {
             case SDLK_LEFT:
               if (ctrl || alt) cmd_backward_word(&g_ed, &g_vs);
-              else             cmd_backward_char(&g_ed, &g_vs);
+              else if (shift)  cmd_backward_char(&g_ed, &g_vs);   /* selecting: real text only */
+              else             tv_horizontal_move(-1);            /* carriage: float-aware */
               break;
             case SDLK_RIGHT:
               if (ctrl || alt) cmd_forward_word(&g_ed, &g_vs);
-              else             cmd_forward_char(&g_ed, &g_vs);
+              else if (shift)  cmd_forward_char(&g_ed, &g_vs);
+              else             tv_horizontal_move(+1);
               break;
             case SDLK_UP:   cmd_previous_line(&g_ed, &g_vs); break;
             case SDLK_DOWN: cmd_next_line(&g_ed, &g_vs);     break;
