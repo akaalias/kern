@@ -148,7 +148,7 @@ static void open_or_create_file(const char *path) {
   g_ed.cursor_line = 0;
   g_ed.cursor_col = 0;
   g_ed.cursor_target_col = 0;
-  g_vs.scroll_y = 0;
+  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -(8.0f * g_vs.font_size);  /* rest at the top page margin */
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();              /* drop back to where we last were here */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -355,8 +355,14 @@ static void margin_note_commit(void) {
 
 /* Cmd-Shift-M: write a margin note at the caret (typewriter mode, no selection
    needed). The footnote marker is inserted at the write-head on commit. */
+static int tv_margin_pad(void);   /* defined with the margin renderer */
 static void cmd_margin_note(void) {
-  if (!g_vs.typewriter_mode) { nav_status_set(&g_vs, "Margin notes are for typewriter mode (C-x t)"); return; }
+  /* typewriter mode always has room (the page can slide); normal mode needs the
+     window margin to be wide enough to hold the note strip. */
+  if (!g_vs.typewriter_mode && nav_page_margin() < tv_margin_pad()) {
+    nav_status_set(&g_vs, "Widen the window (or use typewriter mode) for margin notes");
+    return;
+  }
   gen_footnote_id(mn_id, sizeof(mn_id));
   mn_ref_line = g_ed.cursor_line;
   mn_text[0] = '\0'; mn_len = 0;
@@ -573,6 +579,8 @@ static void process_frame(void) {
     g_vs.content_y = TOP_PADDING;
     int status_bar_h = r_get_text_height() + 16;
     g_vs.content_h = nav_win_h() - TOP_PADDING - status_bar_h;
+    if (!g_vs.typewriter_mode)
+      g_vs.content_h -= (int)(2.0f * g_vs.font_size);   /* bottom page margin above the status bar */
 
     /* content area */
     int total_vis = nav_total_visual_lines(&g_ed);
@@ -587,6 +595,8 @@ static void process_frame(void) {
     float min_scroll = 0;
     if (g_vs.typewriter_mode)
       min_scroll = -(int)(TYPEWRITER_FRACTION * (g_vs.content_h - lh));
+    else
+      min_scroll = -(int)(8.0f * g_vs.font_size);   /* normal mode: a top page margin above line 0 */
 
     /* Clamp the ease target first so the glide settles exactly on a valid scroll
        position, then ease scroll_y toward it (typewriter mode only — every other
@@ -1261,37 +1271,41 @@ static void tv_note_col(int side, int *x0, int *w) {
   *x0 = a + tp; *w = (b - a) - 2 * tp;
 }
 
-/* Typewriter "plastic": two translucent guards flanking the center hitzone,
-   pinned at the fixed strike line (where the active line settles) so the text
-   glides under them without the frame moving. Each guard is ~two lines tall, the
-   left spanning from the window's left edge to the band, the right from the band
-   to the window's right edge, white-outlined with the inner top corner rounded.
-   Also draws the writing-area edges (subtle dotted) and the page margins (solid,
-   a little further out), all tracking the horizontal scroll like paper edges.
-   Drawn over the text but under the caret. */
-static void draw_typewriter_fog(void) {
+/* Page furniture: the dotted writing-area edges, the dotted note gutters, the
+   solid page-margin rails, and the page top/bottom edges. Shared by typewriter
+   mode and (when the window is wide enough) normal mode. Tracks scroll_x, which
+   is 0 in normal mode so the guides sit still. */
+static void draw_page_furniture(void) {
   int lh     = nav_line_height();
-  int win_w  = nav_win_w();
   int margin = nav_page_margin();
   int page_w = nav_page_w();
   int sx     = (int)g_vs.scroll_x;
   int cy     = g_vs.content_y, ch = g_vs.content_h;
 
-  /* writing area (dotted, subtle) and page margins (solid, further out) — the
-     vertical guides translate with the horizontal scroll. The page's TOP edge is
-     a fixed margin above the first line (scrolling vertically with the page); the
-     side rails hang from it, and it spans only between them (and vice-versa). */
   Color dotted = color(120, 120, 125, 80);
   Color solid  = color(120, 120, 125, 150);
-  int pad = tv_margin_pad();                           /* page margin (note strip) width */
-  int line0_top = cy - (int)g_vs.scroll_y;
-  int margin_y  = (int)(8.0f * g_vs.font_size);
-  int top_y     = line0_top - margin_y;                                /* above line 0       */
-  int bottom_y  = line0_top + nav_total_visual_lines(&g_ed) * lh + margin_y;  /* below last line */
+  int pad = tv_margin_pad();
+  int top_y, bottom_y;
+  if (g_vs.typewriter_mode) {
+    /* paper edges: a fixed margin above line 0 / below the last line, scrolling
+       with the page (there's virtual whitespace above & below to make room). */
+    int line0_top = cy - (int)g_vs.scroll_y;
+    int margin_y  = (int)(8.0f * g_vs.font_size);
+    top_y    = line0_top - margin_y;
+    bottom_y = line0_top + nav_total_visual_lines(&g_ed) * lh + margin_y;
+  } else {
+    /* normal mode: a fixed page frame filling the writing area (top of content
+       down to just above the status bar), regardless of document length. */
+    top_y    = cy;
+    bottom_y = cy + ch - 1;
+  }
   int vtop = top_y    < cy      ? cy      : top_y;      /* rails clip to the content viewport */
   int vbot = bottom_y > cy + ch ? cy + ch : bottom_y;
-  int left_x  = margin - pad - sx;
-  int right_x = margin + page_w + pad - sx;
+  /* the solid page edge sits npad outside the outer gutter; halve that overhang
+     (pulls the edge in toward the notes, leaving a bit more window margin). */
+  int npad2 = (int)(pad * 0.09f);                      /* half of tv_note_gutter's npad (0.18) */
+  int left_x  = margin - pad + npad2 - sx;
+  int right_x = margin + page_w + pad - npad2 - sx;
   if (vbot > vtop) {
     draw_dotted_vline(margin - sx, vtop, vbot, dotted);               /* writing area left  */
     draw_dotted_vline(margin + page_w - sx, vtop, vbot, dotted);      /* writing area right */
@@ -1309,6 +1323,17 @@ static void draw_typewriter_fog(void) {
     r_draw_rect(rect(left_x, top_y, right_x - left_x + 1, 1), solid);
   if (bottom_y >= cy && bottom_y < cy + ch)                            /* page BOTTOM edge   */
     r_draw_rect(rect(left_x, bottom_y, right_x - left_x + 1, 1), solid);
+}
+
+/* Typewriter frosted guards + hitzone (typewriter mode only): the two rounded
+   plastic guards flanking the centred clear band, plus the bottom frost panel.
+   Drawn over the text + page furniture but under the caret. */
+static void draw_typewriter_fog(void) {
+  int lh     = nav_line_height();
+  int win_w  = nav_win_w();
+  int margin = nav_page_margin();
+  int page_w = nav_page_w();
+  int cy     = g_vs.content_y, ch = g_vs.content_h;
 
   /* the strike line is FIXED at the golden pin height — not the (gliding) caret
      row — so the frame stays put while the page scrolls under it. Guards are two
@@ -1452,7 +1477,7 @@ static void recompute_footnote_sides(void) {
   int lh  = nav_line_height();
   int ncx, mw; tv_note_col(0, &ncx, &mw);   /* note-column width (heights must match the draw) */
   int saved = r_get_font_style();
-  r_set_font_style(FONT_MONO);
+  r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);
   Color dummy = color(0, 0, 0, 0);
   int right_bottom = -1000000;
   for (int i = 0; i < g_ed.line_count && g_fn_side_count < FN_SIDE_MAX; i++) {
@@ -1497,7 +1522,7 @@ static void draw_margin_notes(void) {
   int rx0, mw, lx0, lw; tv_note_col(0, &rx0, &mw); tv_note_col(1, &lx0, &lw);
   int rmx = rx0 - sx, lmx = lx0 - sx;
 
-  r_set_font_style(FONT_MONO);   /* never r_set_font_size here — it rebuilds the atlases (lag) */
+  r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);   /* never r_set_font_size here — it rebuilds the atlases (lag) */
   int lh = nav_line_height(), fh = lh;
   Color ink = color(150, 150, 155, 255);
 
@@ -1557,7 +1582,7 @@ static void draw_margin_note_input(void) {
   int sx  = (int)g_vs.scroll_x;
   int rx0, mw; tv_note_col(0, &rx0, &mw);
   int mx  = rx0 - sx;
-  r_set_font_style(FONT_MONO);
+  r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);
   int fh = nav_line_height();
   int py = caret_row_py();
   if (py < 0) py = row_py_for_line(mn_ref_line);
@@ -1640,12 +1665,19 @@ static void do_render(void) {
   md_set_style_mask(0);
   sub_set_mask(0);             /* status bar / chrome draw literal text */
 
-  /* typewriter frosted-plastic fog flanking the center hitzone (over text, under
-     the caret); only while horizontally pinning */
+  /* page furniture + margin notes. Typewriter mode always draws them (the page
+     slides to make room); normal mode draws them only when the window margin is
+     wide enough to hold the note strip — otherwise notes stay as bottom-of-page
+     footnotes (the plain markdown view). */
   if (g_vs.typewriter_mode) {
-    draw_margin_notes();        /* saved notes BEFORE the fog so they frost with the page */
-    draw_typewriter_fog();
+    draw_page_furniture();      /* furniture + notes BEFORE the fog so they frost with the page */
+    draw_margin_notes();
+    draw_typewriter_fog();      /* frosted guards + hitzone */
     draw_margin_note_input();   /* live input AFTER the fog stays sharp in the hitzone */
+  } else if (nav_page_margin() >= tv_margin_pad()) {
+    draw_page_furniture();
+    draw_margin_notes();
+    draw_margin_note_input();
   }
 
   /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
@@ -1837,7 +1869,7 @@ static void cmd_open_daily_note(void) {
   if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
   filepos_remember_current();   /* remember where we were before jumping away */
   load_daily_note();
-  g_vs.scroll_y = 0;
+  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -(8.0f * g_vs.font_size);
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();    /* an existing daily note reopens where we left it */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -2370,7 +2402,7 @@ int editor_main(int argc, char **argv) {
   recent_push(g_ed.filepath);   /* seed the MRU with the initially-opened file */
 
   SDL_Init(SDL_INIT_EVERYTHING);
-  g_vs.font_size = 26.0f;
+  g_vs.font_size = 24.0f;
   g_vs.sub_mask = SUB_MASK_ALL;   /* symbol substitution on by default */
   g_vs.search_direction = 1;
   g_vs.search_match_line = -1;
@@ -2405,6 +2437,7 @@ int editor_main(int argc, char **argv) {
   }
   nav_ensure_cursor_visible(&g_ed, &g_vs);
   if (g_vs.typewriter_mode) g_vs.scroll_y = g_vs.scroll_target_y;   /* snap, no launch glide */
+  else if (g_vs.scroll_y <= 0) g_vs.scroll_y = -(8.0f * g_vs.font_size);  /* show the top page margin */
 
   SDL_AddEventWatch(resize_event_watcher, NULL);
   for (;;) {
