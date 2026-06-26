@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Direct Distribution (Developer ID), signed but NOT notarized — for local
+       use on this Mac. To notarize later, submit the exported app with notarytool
+       and staple it (see scripts/release.sh). -->
+  <key>method</key>
+  <string>developer-id</string>
+  <key>teamID</key>
+  <string>HKQARCV8QZ</string>
+  <key>signingStyle</key>
+  <string>automatic</string>
+  <key>destination</key>
+  <string>export</string>
+</dict>
+</plist>

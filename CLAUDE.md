@@ -45,7 +45,13 @@ cd tests && make perf CORPUS=../test_100mb.txt    # add PERF_ARGS=--check for CI
 
 # Build the macOS app (fast, ~3s)
 xcodebuild -project application/Kern/Kern.xcodeproj -scheme Kern -configuration Debug build CODE_SIGNING_ALLOWED=NO
+
+# Release a Developer ID-signed Kern.app to ~/Desktop for local use (~15s)
+scripts/release.sh            # bump minor version (.9 rolls to next major .0), build reset to 1
+scripts/release.sh --no-bump  # rebuild the current version without bumping
 ```
+
+- **Release pipeline** (`scripts/release.sh` + `scripts/ExportOptions.plist`): bumps the version, archives the Release config, exports a **Developer ID-signed** (not notarized) `Kern.app`, and copies it to `~/Desktop` (the user drags it into `/Applications` themselves). Version policy: minor +1 rolling at `.9`→next major `.0`, build reset to `1`; the bump is written to `project.pbxproj` **only on a successful build** (passed as `xcodebuild` overrides until then). No notarization — a locally-built app has no quarantine flag so it launches without a Gatekeeper prompt; to distribute to other Macs, add a `notarytool submit --wait` + `stapler staple` step.
 
 - **Pre-push gate:** `.githooks/pre-push` runs all three CI checks locally before a push and aborts on failure. Activate once per clone with `git config core.hooksPath .githooks`; bypass a single push with `git push --no-verify`. It caches a 25MB perf corpus at `tests/perf_corpus.txt` (gitignored; override with `KERN_PERF_CORPUS`).
 - **Running a single test:** the harness has no name filter. To narrow, comment out `RUN(...)` lines or `suite_*()` calls in `tests/test_main.c`.
