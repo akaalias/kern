@@ -1589,7 +1589,7 @@ static void draw_margin_note_input(void) {
   if (py < 0) py = g_vs.content_y + 8;
   int endy = py;
   int endx = draw_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy, 1);
-  r_draw_rect(rect(endx + 1, endy, 2, fh - 2), color(90, 200, 250, 255));
+  r_draw_rect(rect(endx + 1, endy, 3, r_get_text_height()), color(90, 200, 250, 255));  /* same as the body caret */
   r_set_font_style(FONT_REGULAR);
 }
 

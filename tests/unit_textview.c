@@ -15,6 +15,7 @@
 #include "pos_render.h"
 #include "style_check.h"
 #include "renderer.h"
+#include "stub_renderer.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -514,8 +515,10 @@ static void test_margin_note_escape_cancels(void) {
   EXPECT_LINE(0, "Hello world");
 }
 
-/* Outside typewriter mode Cmd-Shift-M does nothing (no footnote created). */
-static void test_margin_note_typewriter_only(void) {
+/* In normal mode on a narrow window there's no room for the note strip, so
+   Cmd-Shift-M is a no-op (notes stay as bottom-of-document footnotes). */
+static void test_margin_note_no_room(void) {
+  stub_set_metrics(10, 20, 800, 600);   /* page margin too small for the strip */
   tv_begin();
   load("Hello world");
   VS->typewriter_mode = 0;
@@ -523,6 +526,22 @@ static void test_margin_note_typewriter_only(void) {
   key(KMOD_GUI | KMOD_SHIFT, SDLK_m);
   key(0, SDLK_RETURN);
   CHECK(strstr(ED->lines[0].text, "[^") == NULL);     /* no footnote marker */
+}
+
+/* In normal mode on a wide-enough window, margin notes work just like in
+   typewriter mode: Cmd-Shift-M inserts a marker + appends a definition. */
+static void test_margin_note_normal_mode_with_room(void) {
+  stub_set_metrics(10, 20, 4000, 600);   /* wide → the note strip fits */
+  tv_begin();
+  load("Hello world");
+  VS->typewriter_mode = 0;
+  put_cursor(0, 11);
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_m);
+  type("normal mode note");
+  key(0, SDLK_RETURN);
+  CHECK(strstr(ED->lines[0].text, "[^") != NULL);                 /* marker */
+  CHECK(strstr(ED->lines[ED->line_count - 1].text, "]: normal mode note") != NULL);
+  stub_set_metrics(10, 20, 800, 600);    /* restore the default window */
 }
 
 /* --------------------------------------------------------------------------- suite */
@@ -568,7 +587,8 @@ void suite_textview(void) {
   /* margin notes */
   RUN(test_margin_note_creates_footnote);
   RUN(test_margin_note_escape_cancels);
-  RUN(test_margin_note_typewriter_only);
+  RUN(test_margin_note_no_room);
+  RUN(test_margin_note_normal_mode_with_room);
 
   /* leave globals clean for any later suite */
   tv_test_reset();
