@@ -197,6 +197,14 @@ void md_set_text_opacity(float o) { g_text_opacity = o; }
 static unsigned int g_syntax_mask = 0;
 void md_set_syntax_mask(unsigned int m) { g_syntax_mask = m; }
 
+/* When set (typewriter mode), every glyph renders and measures in FONT_MONO,
+   overriding the base/markdown styles. Wrap, click and render all read this so
+   the geometry stays in lockstep. md_wrap_font_style() is the body font the
+   measurement helpers (navigation's body_width etc.) should use. */
+static int g_force_mono = 0;
+void md_set_force_mono(int on) { g_force_mono = on; }
+int  md_wrap_font_style(void)  { return g_force_mono ? FONT_MONO : FONT_REGULAR; }
+
 /* Active style-check mask (bit per StyleCategory; 0 = off). Set per frame from
    ViewState.style_mask; cuttable words within it are greyed and struck through. */
 static unsigned int g_style_mask = 0;
@@ -317,6 +325,7 @@ float md_draw_text(Line *l, int start, int end,
       ch[n] = '\0';
       glyph = ch; glyph_n = n;
     }
+    if (g_force_mono) style = FONT_MONO;
     r_set_font_style(style);
     int w = r_get_text_width(glyph, glyph_n);
     if (draw) {
@@ -433,6 +442,7 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
       sub = NULL;   /* revealed: measure the literal, mirroring md_draw_text */
 
     int n = sub ? sub->len : utf8_len(text + i, end - i);
+    if (g_force_mono) style = FONT_MONO;
     r_set_font_style(style);
     int w = sub ? r_get_text_width(sub->glyph, sub->glyph_len)
                 : r_get_text_width(text + i, n);

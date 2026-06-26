@@ -4,6 +4,7 @@
 #include <string.h>
 #include "commands.h"
 #include "navigation.h"
+#include "md_render.h"
 #include "editing.h"
 #include "buffer.h"
 #include "undo.h"
@@ -270,6 +271,10 @@ static void cmd_recenter(EditorState *ed, ViewState *vs) {     /* C-l: center→
 
 void cmd_toggle_typewriter(EditorState *ed, ViewState *vs) {   /* C-x t */
   vs->typewriter_mode = !vs->typewriter_mode;
+  /* typewriter mode renders everything in mono: switch the body font now and
+     drop the cached wraps so the reflow below measures in the new font. */
+  md_set_force_mono(vs->typewriter_mode);
+  buf_invalidate_all_wraps(ed);
   /* start the focus crossfade settled on the current line so toggling doesn't
      flash the previously-focused line */
   vs->focus_cur_line = vs->focus_prev_line = ed->cursor_line;

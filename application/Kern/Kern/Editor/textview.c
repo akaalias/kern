@@ -407,6 +407,7 @@ static void pos_anim_track(void) {
    drawn afterward in do_render. */
 static void process_frame(void) {
   g_vs.vis_row_count = 0;
+  md_set_force_mono(g_vs.typewriter_mode);   /* mono body font in typewriter mode (wrap + render) */
   pos_anim_track();   /* word-in-progress hold + base→POS-color fade bookkeeping */
 
   /* Measure with the body font — the same state the text is drawn in (see the
@@ -598,8 +599,8 @@ static void process_frame(void) {
 
     r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));   /* back to full window */
 
-    /* scrollbar */
-    if (max_scroll > 0) {
+    /* scrollbar (hidden in typewriter mode — the page just glides) */
+    if (max_scroll > 0 && !g_vs.typewriter_mode) {
       int sb_x = nav_win_w() - 8;
       int sb_w = 6;
       int sb_h = g_vs.content_h;
@@ -1143,6 +1144,16 @@ static void draw_typewriter_fog(void) {
     r_blur_rect(gr, 5);
     r_draw_rect(gr, plastic);
     r_clip_mask_end();
+  }
+
+  /* third panel: the whole area below the guards to the bottom of the content,
+     frosting everything past the current line (no rounding — a plain rect). */
+  int below_y = gy + gh;
+  int below_h = (cy + ch) - below_y;
+  if (below_h > 0) {
+    Rect br = rect(0, below_y, win_w, below_h);
+    r_blur_rect(br, 5);
+    r_draw_rect(br, plastic);
   }
 }
 

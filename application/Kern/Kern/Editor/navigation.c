@@ -25,10 +25,11 @@ int nav_win_h(void) { int w, h; r_get_size(&w, &h); return h; }
    disagree with the FONT_REGULAR render pass — producing phantom wrap rows and
    making click-to-cursor land in the wrong place. */
 static int body_width(const char *s, int len) {
+  int body = md_wrap_font_style();   /* FONT_REGULAR, or FONT_MONO in typewriter mode */
   int saved = r_get_font_style();
-  if (saved != FONT_REGULAR) r_set_font_style(FONT_REGULAR);
+  if (saved != body) r_set_font_style(body);
   int w = r_get_text_width(s, len);
-  if (saved != FONT_REGULAR) r_set_font_style(saved);
+  if (saved != body) r_set_font_style(saved);
   return w;
 }
 
@@ -73,8 +74,9 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
   if (l->len == 0) return 1;
 
   /* measure the whole line in the body font (see body_width above) */
+  int body_style = md_wrap_font_style();
   int saved_style = r_get_font_style();
-  if (saved_style != FONT_REGULAR) r_set_font_style(FONT_REGULAR);
+  if (saved_style != body_style) r_set_font_style(body_style);
 
   int count = 1;
   int x = 0;
@@ -116,7 +118,7 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
     i += n;
   }
 
-  if (saved_style != FONT_REGULAR) r_set_font_style(saved_style);
+  if (saved_style != body_style) r_set_font_style(saved_style);
   return count;
 }
 
@@ -317,7 +319,7 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
 int nav_at_right_margin(EditorState *ed, const char *add) {
   Line *l = &ed->lines[ed->cursor_line];
   int saved = r_get_font_style();
-  r_set_font_style(FONT_REGULAR);                  /* measure like the wrap metric */
+  r_set_font_style(md_wrap_font_style());          /* measure like the wrap metric */
   int line_w = r_get_text_width(l->text, l->len);
   int add_w  = add ? r_get_text_width(add, (int)strlen(add)) : 0;
   r_set_font_style(saved);
