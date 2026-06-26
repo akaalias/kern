@@ -96,6 +96,10 @@ void r_draw_rect(Rect rect, Color color) {
 }
 
 /* ---- unused by the headless layout paths: no-ops ---- */
+void r_blur_rect(Rect rect, int radius)     { (void)rect; (void)radius; }
+void r_clip_mask_begin(void)                   {}
+void r_clip_mask_use(void)                     {}
+void r_clip_mask_end(void)                     {}
 void r_init(void)                              {}
 void r_set_clip_rect(Rect rect)             { (void)rect; }
 void r_clear(Color color)                   { (void)color; }

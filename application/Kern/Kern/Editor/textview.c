@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include "renderer.h"
 #include "gfx.h"
@@ -453,6 +454,23 @@ static void process_frame(void) {
       g_scroll_animating = 0;
     }
 
+    /* Horizontal typewriter pin: hold the caret at the page-column center and
+       glide the whole text pane under it. scroll_target_x is the caret's natural
+       x (no shift) minus the pin x; the render/highlight passes draw every row at
+       -scroll_x and click-to-cursor adds it back. Eases with the same glide as
+       the vertical scroll (and shares g_scroll_animating). */
+    if (g_vs.typewriter_mode) {
+      int caret_natural_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col);
+      int pin_x = nav_page_margin() + nav_page_w() / 2;   /* center of the text column */
+      g_vs.scroll_target_x = (float)(caret_natural_x - pin_x);
+      float dx = g_vs.scroll_target_x - g_vs.scroll_x;
+      if (dx > -0.5f && dx < 0.5f) g_vs.scroll_x = g_vs.scroll_target_x;
+      else                         g_vs.scroll_x += dx * HSCROLL_EASE;
+      if (g_vs.scroll_x != g_vs.scroll_target_x) g_scroll_animating = 1;
+    } else {
+      g_vs.scroll_x = g_vs.scroll_target_x = 0;
+    }
+
     if (g_vs.scroll_y < min_scroll) g_vs.scroll_y = min_scroll;
     if (g_vs.scroll_y > max_scroll) g_vs.scroll_y = max_scroll;
 
@@ -534,7 +552,7 @@ static void process_frame(void) {
             int he = hl_end > row_end ? row_end : hl_end;
             if (he > hs) {
               /* measure with the same per-span font metrics the text is drawn in */
-              int x0 = nav_page_margin() + row_indent;
+              int x0 = nav_page_margin() + row_indent - (int)g_vs.scroll_x;
               int hx = md_col_x(l, dstart, row_end, x0, md_is_heading(l), hs);
               int hw = md_col_x(l, dstart, row_end, x0, md_is_heading(l), he) - hx;
               int font_h = r_get_text_height();
@@ -559,7 +577,7 @@ static void process_frame(void) {
       if (g_vs.search_active && g_vs.search_len > 0 && row_end > row_start && (row_end - row_start) >= g_vs.search_len) {
         for (int sc = dstart; sc <= row_end - g_vs.search_len; sc++) {
           if (strncasecmp(l->text + sc, g_vs.search_buf, g_vs.search_len) == 0) {
-            int x0 = nav_page_margin() + row_indent;
+            int x0 = nav_page_margin() + row_indent - (int)g_vs.scroll_x;
             int hx = md_col_x(l, dstart, row_end, x0, md_is_heading(l), sc);
             int hw = md_col_x(l, dstart, row_end, x0, md_is_heading(l), sc + g_vs.search_len) - hx;
             int font_h = r_get_text_height();
@@ -1005,6 +1023,129 @@ static int handle_wikilink_key(int sym, int ctrl) {
   return 0;
 }
 
+/* A quarter-circle arc of `c`, center (cx,cy), radius r, sweeping from the top
+   point to the side: dir=+1 rounds a top-right corner, dir=-1 a top-left one. */
+static void draw_corner_arc(int cx, int cy, int r, int dir, Color c) {
+  int steps = r * 3; if (steps < 8) steps = 8;
+  for (int k = 0; k <= steps; k++) {
+    double a = (3.14159265358979 / 2.0) * k / steps;
+    int px = cx + dir * (int)(r * sin(a));
+    int py = cy - (int)(r * cos(a));
+    r_draw_rect(rect(px, py, 2, 2), c);     /* 2px so the arc stays gap-free */
+  }
+}
+
+/* Stroke a guard's border with ONE rounded top corner (the inner one): the top
+   edge, both verticals and the bottom edge, with the rounded corner's two edges
+   shortened by r and joined by an arc. round_right rounds the top-right corner
+   (left guard), else the top-left (right guard). */
+static void stroke_guard(int x, int y, int w, int h, int r, int round_right, Color c) {
+  if (r > w) r = w;
+  if (r > h) r = h;
+  r_draw_rect(rect(x, y + h - 1, w, 1), c);                         /* bottom */
+  if (round_right) {
+    int corner = x + w - 1;                                         /* inner top corner */
+    r_draw_rect(rect(x, y, w - r, 1), c);                           /* top (stop r short of corner) */
+    r_draw_rect(rect(x, y, 1, h), c);                               /* left (full) */
+    r_draw_rect(rect(corner, y + r, 1, h - r), c);                  /* right (start r down) */
+    draw_corner_arc(corner - r, y + r, r, +1, c);
+  } else {
+    int corner = x;                                                 /* inner top corner */
+    r_draw_rect(rect(x + r, y, w - r, 1), c);                       /* top (start r past corner) */
+    r_draw_rect(rect(x + w - 1, y, 1, h), c);                       /* right (full) */
+    r_draw_rect(rect(corner, y + r, 1, h - r), c);                  /* left (start r down) */
+    draw_corner_arc(corner + r, y + r, r, -1, c);
+  }
+}
+
+/* Fill a guard rect with ONE rounded top corner (the inner one): the body below
+   the corner is a full rect; the top r rows taper in via horizontal strips along
+   a quarter circle. round_right rounds the top-right corner, else the top-left. */
+static void fill_rounded_guard(int x, int y, int w, int h, int r, int round_right, Color c) {
+  if (r > w) r = w;
+  if (r > h) r = h;
+  r_draw_rect(rect(x, y + r, w, h - r), c);            /* body below the rounded rows */
+  for (int i = 0; i < r; i++) {
+    int dy = r - i;                                     /* distance above the arc center */
+    int inset = r - (int)(sqrt((double)(r * r - dy * dy)) + 0.5);
+    if (round_right) r_draw_rect(rect(x, y + i, w - inset, 1), c);          /* taper the right */
+    else             r_draw_rect(rect(x + inset, y + i, w - inset, 1), c);  /* taper the left  */
+  }
+}
+
+/* A dotted vertical line from y0 to y1. */
+static void draw_dotted_vline(int x, int y0, int y1, Color c) {
+  for (int y = y0; y < y1; y += 7) {        /* 3px dash, 4px gap */
+    int dh = 3; if (y + dh > y1) dh = y1 - y;
+    r_draw_rect(rect(x, y, 1, dh), c);
+  }
+}
+
+/* Typewriter "plastic": two translucent guards flanking the center hitzone,
+   pinned at the fixed strike line (where the active line settles) so the text
+   glides under them without the frame moving. Each guard is ~two lines tall, the
+   left spanning from the window's left edge to the band, the right from the band
+   to the window's right edge, white-outlined with the inner top corner rounded.
+   Also draws the writing-area edges (subtle dotted) and the page margins (solid,
+   a little further out), all tracking the horizontal scroll like paper edges.
+   Drawn over the text but under the caret. */
+static void draw_typewriter_fog(void) {
+  int lh     = nav_line_height();
+  int win_w  = nav_win_w();
+  int margin = nav_page_margin();
+  int page_w = nav_page_w();
+  int sx     = (int)g_vs.scroll_x;
+  int cy     = g_vs.content_y, ch = g_vs.content_h;
+
+  /* writing area (dotted, subtle) and page margins (solid, further out) — the
+     vertical guides translate with the horizontal scroll. */
+  Color dotted = color(120, 120, 125, 80);
+  Color solid  = color(120, 120, 125, 150);
+  int pad = (int)(g_vs.font_size * 8);                 /* page margin, proportional to font size */
+  draw_dotted_vline(margin - sx, cy, cy + ch, dotted);                 /* writing area left  */
+  draw_dotted_vline(margin + page_w - sx, cy, cy + ch, dotted);        /* writing area right */
+  r_draw_rect(rect(margin - pad - sx, cy, 1, ch), solid);              /* page margin left   */
+  r_draw_rect(rect(margin + page_w + pad - sx, cy, 1, ch), solid);     /* page margin right  */
+
+  /* the strike line is FIXED at the golden pin height — not the (gliding) caret
+     row — so the frame stays put while the page scrolls under it. Guards are two
+     lines tall with the active line flush at their BOTTOM, so the extra height
+     grows upward (the rounded tops sit above the line, like the reference). */
+  int strike = cy + (int)((ch - lh) * TYPEWRITER_FRACTION);
+  int gh = 2 * lh;
+  int gy = strike + lh - gh;                           /* bottom covers the full line height (descenders) */
+
+  int pin_x = margin + page_w / 2;                     /* the hitzone center */
+  int half  = (int)(page_w * 0.12f);                   /* clear band half-width (hugs the caret) */
+  int left_edge  = pin_x - half;
+  int right_edge = pin_x + half;
+  Color plastic = color(45, 45, 47, 165);              /* darker frosted tint over the blur */
+  int radius = gh / 2;                                 /* ~50% rounded inner top corner */
+  (void)stroke_guard;                                  /* white border removed for now */
+
+  /* Each guard: stencil-mask the rounded shape, then draw the blur + tint clipped
+     to it, so both the blur and the tint share the one rounded corner (no square
+     blur boundary poking past the round). */
+  if (left_edge > 0) {
+    Rect gr = rect(0, gy, left_edge, gh);
+    r_clip_mask_begin();
+    fill_rounded_guard(0, gy, left_edge, gh, radius, 1, plastic);   /* defines the mask */
+    r_clip_mask_use();
+    r_blur_rect(gr, 5);
+    r_draw_rect(gr, plastic);
+    r_clip_mask_end();
+  }
+  if (right_edge < win_w) {
+    Rect gr = rect(right_edge, gy, win_w - right_edge, gh);
+    r_clip_mask_begin();
+    fill_rounded_guard(right_edge, gy, win_w - right_edge, gh, radius, 0, plastic);
+    r_clip_mask_use();
+    r_blur_rect(gr, 5);
+    r_draw_rect(gr, plastic);
+    r_clip_mask_end();
+  }
+}
+
 static void do_render(void) {
   r_clear(color(30, 30, 32, 255));
   /* Set substitution BEFORE process_frame: it draws the selection/search
@@ -1060,7 +1201,7 @@ static void do_render(void) {
         r_set_font_style(FONT_BOLD);
         int hw = r_get_text_width(hashes, hcount);
         int gap = r_get_text_width(" ", 1);
-        int hx = nav_page_margin() + indent - gap - hw;   /* right-aligned in the left margin */
+        int hx = nav_page_margin() + indent - gap - hw - (int)g_vs.scroll_x;   /* right-aligned in the left margin */
         r_draw_text(hashes, vec2(hx, vr->py), color(110, 110, 115, 255));
         r_set_font_style(FONT_REGULAR);
         if (prefix <= vr->row_end) draw_start = prefix;
@@ -1068,7 +1209,7 @@ static void do_render(void) {
     }
 
     md_draw_text(L, draw_start, vr->row_end,
-                 nav_page_margin() + indent, vr->py, text_color, vr->heading, track,
+                 nav_page_margin() + indent - (int)g_vs.scroll_x, vr->py, text_color, vr->heading, track,
                  &g_vs.cursor_x, 1);
     r_set_font_style(FONT_REGULAR);
   }
@@ -1076,6 +1217,10 @@ static void do_render(void) {
   md_set_syntax_mask(0);       /* status bar etc. draw in their own colors */
   md_set_style_mask(0);
   sub_set_mask(0);             /* status bar / chrome draw literal text */
+
+  /* typewriter frosted-plastic fog flanking the center hitzone (over text, under
+     the caret); only while horizontally pinning */
+  if (g_vs.typewriter_mode) draw_typewriter_fog();
 
   /* draw cursor (post-render, uses markdown-aware x position) */
   int cursor_py = -1;
@@ -1321,6 +1466,10 @@ void editor_handle_event(const SDL_Event *ev) {
           nav_ensure_cursor_visible(&g_ed, &g_vs);
           break;
         }
+        /* typewriter hard right margin: at the writable edge, block further
+           typing (the line no longer wraps onto a new visual row) — only Enter
+           starts a new line. */
+        if (g_vs.typewriter_mode && nav_at_right_margin(&g_ed, e.text.text)) break;
         ed_insert_char(&g_ed, e.text.text);
         nav_ensure_cursor_visible(&g_ed, &g_vs);
       }

@@ -15,6 +15,14 @@ enum {
 
 void r_init(void);
 void r_draw_rect(Rect rect, Color color);
+/* Lightly blur whatever is already drawn under `rect` (in place); `radius` is the
+   smear in logical px. App-only effect; the headless stub is a no-op. */
+void r_blur_rect(Rect rect, int radius);
+/* Stencil clip mask: begin → draw mask shape → use → draw clipped content → end.
+   App-only; the headless stubs are no-ops. */
+void r_clip_mask_begin(void);
+void r_clip_mask_use(void);
+void r_clip_mask_end(void);
 void r_draw_text(const char *text, Vec2 pos, Color color);
  int r_get_text_width(const char *text, int len);
  int r_get_text_height(void);

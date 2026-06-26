@@ -61,6 +61,11 @@ void nav_pin_cursor(EditorState *ed, ViewState *vs, float fraction);
 /* click */
 void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my);
 
+/* Typewriter hard right margin: 1 if inserting `add` on the caret's line would
+   push its width past the writable page width, so the insert should be blocked
+   (Enter still starts a new line). Measured in the body font, like the wrap. */
+int nav_at_right_margin(EditorState *ed, const char *add);
+
 /* search */
 void nav_search_find_next(EditorState *ed, ViewState *vs, int from_line, int from_col);
 void nav_search_find_prev(EditorState *ed, ViewState *vs, int from_line, int from_col);

@@ -55,7 +55,7 @@ int pos_color_at(Line *l, unsigned int syntax_mask, int col, Color *out);
  * timing state lives here (a render-module static), not on the Line, because
  * line_dirty rebuilds the per-line span cache on every keystroke. */
 
-#define POS_FADE_MS 1000   /* word base-color → POS-color fade duration */
+#define POS_FADE_MS 5000   /* word base-color → POS-color fade duration ("ink drying") */
 
 /* Byte range [*lo,*hi) of the "word" the caret at `col` sits in or against
    (letters/digits plus ' - _ and any byte ≥0x80, so hyphenated/apostrophe'd and

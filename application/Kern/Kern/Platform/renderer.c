@@ -249,6 +249,7 @@ void r_init(void) {
   int pad = 25;
   width = usable.w - 2 * pad;
   height = usable.h - 2 * pad;
+  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);   /* for rounded-shape clip masks */
   window = SDL_CreateWindow(
     NULL, usable.x + pad, usable.y + pad,
     width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
@@ -300,6 +301,98 @@ void r_init(void) {
 void r_draw_rect(Rect rect, Color color) {
   switch_texture(white_tex);
   push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 0, 1, 1, color);
+}
+
+/* Gaussian-blur whatever is already drawn under `rect`, in place and clipped to
+   the rect. Copies the framebuffer region into a texture, then convolves it with
+   a (2k+1)² gaussian kernel: each tap redraws the captured region offset by the
+   kernel sample, modulated by its normalized weight, accumulated additively so
+   the result is a true weighted average (not stacked ghosts). A scissor keeps the
+   smear inside the rect so it can't bleed past the panel. `radius` = blur extent
+   in logical px. No shaders needed. */
+static GLuint blur_tex;
+void r_blur_rect(Rect rect, int radius) {
+  if (rect.w <= 0 || rect.h <= 0 || radius < 1) return;
+  flush();                                   /* make sure the text underneath is in the buffer */
+
+  /* framebuffer region in pixels, bottom-left origin (mirrors r_set_clip_rect) */
+  int px = (int)(rect.x * dpi_scale);
+  int pw = (int)(rect.w * dpi_scale);
+  int ph = (int)(rect.h * dpi_scale);
+  int py = draw_height - (int)((rect.y + rect.h) * dpi_scale);
+  if (px < 0) { pw += px; px = 0; }
+  if (py < 0) { ph += py; py = 0; }
+  if (px + pw > draw_width)  pw = draw_width  - px;
+  if (py + ph > draw_height) ph = draw_height - py;
+  if (pw <= 0 || ph <= 0) return;
+
+  if (!blur_tex) glGenTextures(1, &blur_tex);
+  glBindTexture(GL_TEXTURE_2D, blur_tex);
+  glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, px, py, pw, ph, 0);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  /* normalized 1D gaussian; the 2D weight of a tap is g[ix]·g[iy] (separable) */
+  const int k = 3;
+  float sigma = radius / 2.0f; if (sigma < 0.5f) sigma = 0.5f;
+  float stepw = (float)radius / k;
+  float g[2 * k + 1]; float gsum = 0;
+  for (int i = -k; i <= k; i++) { float d = i * stepw; g[i + k] = expf(-(d * d) / (2 * sigma * sigma)); gsum += g[i + k]; }
+  for (int i = 0; i < 2 * k + 1; i++) g[i] /= gsum;
+
+  GLint sbox[4]; glGetIntegerv(GL_SCISSOR_BOX, sbox);
+  glScissor(px, py, pw, ph);                 /* contain the blur to the panel */
+  current_tex = blur_tex;                    /* captured region drawn back, v-flipped */
+
+  /* center tap replaces the region; the rest accumulate */
+  glBlendFunc(GL_ONE, GL_ZERO);
+  { GLubyte cw = (GLubyte)(g[k] * g[k] * 255.0f + 0.5f); Color c = { cw, cw, cw, 255 };
+    push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 1, 1, 0, c); }
+  flush();
+  glBlendFunc(GL_ONE, GL_ONE);
+  for (int iy = -k; iy <= k; iy++)
+    for (int ix = -k; ix <= k; ix++) {
+      if (ix == 0 && iy == 0) continue;
+      GLubyte cw = (GLubyte)(g[ix + k] * g[iy + k] * 255.0f + 0.5f);
+      if (cw == 0) continue;
+      Color c = { cw, cw, cw, 255 };
+      push_quad_uv(rect.x + ix * stepw, rect.y + iy * stepw, rect.w, rect.h, 0, 1, 1, 0, c);
+    }
+  flush();
+
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);   /* restore normal blending */
+  glScissor(sbox[0], sbox[1], sbox[2], sbox[3]);       /* restore clip */
+  switch_texture(white_tex);                 /* leave the batcher on the solid texel */
+}
+
+/* Arbitrary-shape clip via the stencil buffer. Bracket drawing like:
+     r_clip_mask_begin();   // start defining the mask
+     ...draw the mask shape (any r_draw_rect calls)...   // color is not written
+     r_clip_mask_use();     // subsequent draws are clipped to that shape
+     ...draw the clipped content...
+     r_clip_mask_end();     // back to normal
+   Used to round off the typewriter guards (blur + tint) to their corner. */
+void r_clip_mask_begin(void) {
+  flush();
+  glClearStencil(0);
+  glClear(GL_STENCIL_BUFFER_BIT);            /* within the active scissor */
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xFF);
+  glStencilFunc(GL_ALWAYS, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE); /* shape pixels → stencil 1 */
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+}
+void r_clip_mask_use(void) {
+  flush();                                   /* commit the mask geometry */
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glStencilFunc(GL_EQUAL, 1, 0xFF);          /* draw only where the mask is set */
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+}
+void r_clip_mask_end(void) {
+  flush();
+  glDisable(GL_STENCIL_TEST);
 }
 
 

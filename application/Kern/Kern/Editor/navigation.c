@@ -302,13 +302,27 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
      with — body_width(FONT_REGULAR) from the bare page margin used to ignore
      both, so clicks landed offset on list/heading/bold lines. */
   nav_sub_reveal_for_line(ed, ln);   /* match the clicked line's collapsed/revealed state */
-  int col = md_x_to_col(&ed->lines[ln], row_start, row_end, x0, heading, mx);
+  /* the text pane is translated by -scroll_x in typewriter mode (caret pinned at
+     page center); x0 is the natural (unshifted) origin, so map against the click
+     x shifted back into natural coords. */
+  int col = md_x_to_col(&ed->lines[ln], row_start, row_end, x0, heading, mx + (int)vs->scroll_x);
 
   ed->cursor_line = ln;
   ed->cursor_col = col;
   nav_cursor_clamp(ed);
   ed->cursor_target_col = ed->cursor_col;
   vs->goal_line = -1;   /* horizontal motion: drop any vertical goal column */
+}
+
+int nav_at_right_margin(EditorState *ed, const char *add) {
+  Line *l = &ed->lines[ed->cursor_line];
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_REGULAR);                  /* measure like the wrap metric */
+  int line_w = r_get_text_width(l->text, l->len);
+  int add_w  = add ? r_get_text_width(add, (int)strlen(add)) : 0;
+  r_set_font_style(saved);
+  int avail = nav_page_w() - md_row_indent(l, 0);
+  return line_w + add_w > avail;
 }
 
 /* ---- vertical movement by visual row ---- */

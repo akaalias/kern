@@ -16,6 +16,7 @@
 #define STATUS_DURATION   3000   /* ms to show a transient status message */
 #define TYPEWRITER_FRACTION 0.382f  /* golden ratio: active line pins this far down the page */
 #define SCROLL_EASE         0.30f   /* per-frame fraction closed toward scroll_target_y (typewriter glide) */
+#define HSCROLL_EASE        0.18f   /* gentler per-frame fraction for the horizontal typewriter pin */
 #define FOCUS_DIM_OPACITY   0.40f   /* opacity of non-focused lines in typewriter mode */
 #define FOCUS_EASE          0.30f   /* per-frame fraction of the focus crossfade closed */
 
@@ -106,6 +107,11 @@ typedef struct ViewState ViewState;
 struct ViewState {
   float  scroll_y;
   float  scroll_target_y;   /* typewriter mode eases scroll_y toward this each frame */
+  /* typewriter mode also pins the caret horizontally (page center): the whole
+     text pane is translated by -scroll_x so the caret holds a fixed screen x,
+     eased toward scroll_target_x. 0 (no horizontal shift) when typewriter is off. */
+  float  scroll_x;
+  float  scroll_target_x;
   float  font_size;
   int    content_y;
   int    content_h;
