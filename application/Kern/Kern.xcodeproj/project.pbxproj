@@ -8,7 +8,7 @@
 
 /* Begin PBXFileReference section */
 		56F7DFB62FE3EFB7004E5404 /* Kern.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kern.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		AA10000000000000000000C1 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
+		AA10000000000000000000C1 /* Config/Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,7 +33,7 @@
 		56F7DFAD2FE3EFB7004E5404 = {
 			isa = PBXGroup;
 			children = (
-				AA10000000000000000000C1 /* Base.xcconfig */,
+				AA10000000000000000000C1 /* Config/Base.xcconfig */,
 				56F7DFB82FE3EFB7004E5404 /* Kern */,
 				56F7DFB72FE3EFB7004E5404 /* Products */,
 			);
@@ -249,28 +249,28 @@
 		};
 		56F7DFC22FE3EFB9004E5404 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA10000000000000000000C1 /* Base.xcconfig */;
+			baseConfigurationReference = AA10000000000000000000C1 /* Config/Base.xcconfig */;
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3.0;
+				CURRENT_PROJECT_VERSION = 4.5;
 				DEVELOPMENT_TEAM = HKQARCV8QZ;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Info.plist;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/Kern/**",
 					"$(SRCROOT)/Vendor/SDL2/include",
 				);
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kern;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Typeset in iA Writer Quattro & Mono (c) Information Architects, under the SIL Open Font License 1.1 (see OFL.txt).";
@@ -279,7 +279,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 3.0;
+				MARKETING_VERSION = 4.5;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/lib/libSDL2.a",
@@ -325,28 +325,28 @@
 		};
 		56F7DFC32FE3EFB9004E5404 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = AA10000000000000000000C1 /* Base.xcconfig */;
+			baseConfigurationReference = AA10000000000000000000C1 /* Config/Base.xcconfig */;
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 3.0;
+				CURRENT_PROJECT_VERSION = 4.5;
 				DEVELOPMENT_TEAM = HKQARCV8QZ;
 				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = Info.plist;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(SRCROOT)/Kern/**",
 					"$(SRCROOT)/Vendor/SDL2/include",
 				);
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kern;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Typeset in iA Writer Quattro & Mono (c) Information Architects, under the SIL Open Font License 1.1 (see OFL.txt).";
@@ -355,7 +355,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 3.0;
+				MARKETING_VERSION = 4.5;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/lib/libSDL2.a",
