@@ -1422,13 +1422,17 @@ static void cmd_open_daily_note(void) {
    them between headless tests (behaviour-neutral for the app). */
 static Uint32 g_last_autosave = 0;
 static int    g_last_x_conn = -1;
+static void session_save(void);   /* defined below editor_handle_event */
 
 /* ---- pumpable main-loop pieces (see editor_loop.h) ---- */
 
 void editor_handle_event(const SDL_Event *ev) {
   SDL_Event e = *ev;
   switch (e.type) {
-    case SDL_QUIT: exit(EXIT_SUCCESS); break;
+    case SDL_QUIT:
+      if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+      session_save();
+      exit(EXIT_SUCCESS); break;
     case SDL_WINDOWEVENT:
       if (e.window.event == SDL_WINDOWEVENT_RESIZED ||
           e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -1654,6 +1658,24 @@ void editor_handle_event(const SDL_Event *ev) {
   }
 }
 
+/* Persist the session — open file, cursor, and view toggles — to ".kern_session"
+   in the documents dir, so a relaunch can resume where we left off. App-only
+   (no-op headless); written on each autosave tick and on quit. */
+static void session_save(void) {
+#ifndef KERN_HEADLESS_TEST
+  if (!buf_get_documents_dir()[0]) return;          /* only when sandboxed */
+  if (!g_ed.filepath[0]) return;                    /* nothing meaningful yet */
+  char path[1024];
+  buf_resolve_path(".kern_session", path, sizeof(path));
+  char out[2048];
+  int n = snprintf(out, sizeof(out),
+    "file %s\ncursor %d %d\ntypewriter %d\nsyntax %u\nstyle %u\n",
+    g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col,
+    g_vs.typewriter_mode, g_vs.syntax_mask, g_vs.style_mask);
+  if (n > 0) buf_save_text(path, out, n);
+#endif
+}
+
 void editor_tick(void) {
   /* periodic auto-save: write the current file if it changed since the last
      save. Cheap (just a dirty flag); skipped for the unsaved *scratch*
@@ -1667,6 +1689,7 @@ void editor_tick(void) {
       if (g_ed.dirty && g_ed.filepath[0] && buf_save(&g_ed, g_ed.filepath) == 0) {
         nav_status_set(&g_vs, "Auto-saved");
       }
+      session_save();   /* remember file + cursor + toggles for next launch */
     }
   }
 
@@ -1682,7 +1705,66 @@ void editor_tick(void) {
 }
 
 #ifndef KERN_HEADLESS_TEST
+/* ---- launch: resume the last session or start today's daily note ---- */
+
+typedef struct {
+  char file[1024];
+  int  cursor_line, cursor_col;
+  int  typewriter;
+  unsigned int syntax_mask, style_mask;
+  int  loaded;
+} SessionState;
+
+static SessionState session_load(void) {
+  SessionState s; memset(&s, 0, sizeof(s));
+  if (!buf_get_documents_dir()[0]) return s;
+  char path[1024];
+  buf_resolve_path(".kern_session", path, sizeof(path));
+  FILE *f = fopen(path, "rb");
+  if (!f) return s;
+  char line[1200];
+  while (fgets(line, sizeof(line), f)) {
+    if      (strncmp(line, "file ", 5) == 0)        sscanf(line + 5, "%1023[^\n]", s.file);
+    else if (strncmp(line, "cursor ", 7) == 0)      sscanf(line + 7, "%d %d", &s.cursor_line, &s.cursor_col);
+    else if (strncmp(line, "typewriter ", 11) == 0) s.typewriter  = atoi(line + 11);
+    else if (strncmp(line, "syntax ", 7) == 0)      s.syntax_mask = (unsigned int)strtoul(line + 7, NULL, 10);
+    else if (strncmp(line, "style ", 6) == 0)       s.style_mask  = (unsigned int)strtoul(line + 6, NULL, 10);
+  }
+  fclose(f);
+  s.loaded = 1;
+  return s;
+}
+
+/* Absolute path of today's daily note (whether or not it exists). */
+static void today_note_path(char *out, int outsz) {
+  time_t t = time(NULL);
+  struct tm lt; localtime_r(&t, &lt);
+  char fname[32];
+  strftime(fname, sizeof(fname), "%Y-%m-%d.md", &lt);
+  buf_resolve_path(fname, out, outsz);
+}
+
+static int file_exists(const char *p) {
+  FILE *f = fopen(p, "rb");
+  if (f) { fclose(f); return 1; }
+  return 0;
+}
+
+/* Drop a wikilink back to `filepath` into a freshly-created daily note (below the
+   date heading), then park the cursor on the blank line under it and save. */
+static void daily_add_backlink(EditorState *ed, const char *filepath) {
+  /* keep the basename verbatim incl. its extension — wikilink follow resolves the
+     bracket text as-is (open_or_create_file appends nothing). */
+  char link[300];
+  snprintf(link, sizeof(link), "[[%s]]", path_base(filepath));
+  buf_insert_line_at(ed, 1, link, (int)strlen(link));    /* line 1, just under the heading */
+  ed->cursor_line = 2; ed->cursor_col = 0; ed->cursor_target_col = 0;
+  buf_save(ed, ed->filepath);
+}
+
 int editor_main(int argc, char **argv) {
+  SessionState ss = session_load();
+
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
     g_ed.filename = argv[1];
@@ -1690,8 +1772,24 @@ int editor_main(int argc, char **argv) {
     if (slash) g_ed.filename = slash + 1;
     printf("loaded %d lines\n", g_ed.line_count);
   } else {
-    /* no file given: open today's daily note instead of an empty scratch buffer */
-    load_daily_note();
+    char today[1024];
+    today_note_path(today, sizeof(today));
+    if (!file_exists(today)) {
+      /* new day: create today's note and, if we had a file open last time, link
+         back to it from the fresh note */
+      load_daily_note();
+      if (ss.loaded && ss.file[0]) daily_add_backlink(&g_ed, ss.file);
+    } else if (ss.loaded && ss.file[0] && buf_load_file(&g_ed, ss.file) == 0) {
+      /* today's note already exists → resume the file + cursor from last session */
+      snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", ss.file);
+      const char *slash = strrchr(g_ed.filepath, '/');
+      g_ed.filename = slash ? slash + 1 : g_ed.filepath;
+      g_ed.cursor_line = ss.cursor_line; g_ed.cursor_col = ss.cursor_col;
+      nav_cursor_clamp(&g_ed);
+      g_ed.cursor_target_col = g_ed.cursor_col;
+    } else {
+      load_daily_note();   /* no usable session → just open today's note */
+    }
   }
   recent_push(g_ed.filepath);   /* seed the MRU with the initially-opened file */
 
@@ -1703,12 +1801,34 @@ int editor_main(int argc, char **argv) {
   g_vs.search_match_col = -1;
   g_vs.cursor_x = -1;
   g_vs.goal_line = -1;
+  /* restore the view toggles saved last session (settle the focus crossfade on
+     the restored line so it doesn't flash on the first frame) */
+  if (ss.loaded) {
+    g_vs.typewriter_mode = ss.typewriter;
+    g_vs.syntax_mask     = ss.syntax_mask;
+    g_vs.style_mask      = ss.style_mask;
+    g_vs.focus_cur_line  = g_vs.focus_prev_line = g_ed.cursor_line;
+    g_vs.focus_t = 1.0f;
+  }
   if (!g_ed.filename) g_ed.filename = "*scratch*";
   r_init();
   pos_tagger_warm();   /* pay the POS model-load cost now, before the first frame */
   r_set_font_size(g_vs.font_size);
   r_set_title(g_ed.filename);
   macos_style_window(r_get_window());
+
+  /* Scroll the restored cursor into view on the very first frame. The pin/wrap
+     math needs the real content height and the mono flag set first (process_frame
+     does both each frame, but it hasn't run yet) — otherwise the caret lands a
+     line off. */
+  md_set_force_mono(g_vs.typewriter_mode);
+  {
+    int status_bar_h = r_get_text_height() + 16;
+    g_vs.content_y = TOP_PADDING;
+    g_vs.content_h = nav_win_h() - TOP_PADDING - status_bar_h;
+  }
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
+  if (g_vs.typewriter_mode) g_vs.scroll_y = g_vs.scroll_target_y;   /* snap, no launch glide */
 
   SDL_AddEventWatch(resize_event_watcher, NULL);
   for (;;) {
