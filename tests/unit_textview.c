@@ -480,6 +480,51 @@ static void test_autosave_skips_clean_and_scratch(void) {
   buf_set_documents_dir("");
 }
 
+/* ---- margin notes (Cmd-Shift-M -> markdown footnote) ---- */
+
+/* Cmd-Shift-M in typewriter mode opens the margin-note input; typed text goes to
+   the note (not the buffer); Enter inserts a [^id] marker at the caret and
+   appends a "[^id]: <note>" definition at the bottom — no == highlighting. */
+static void test_margin_note_creates_footnote(void) {
+  tv_begin();
+  load("Hello world");
+  VS->typewriter_mode = 1;
+  put_cursor(0, 11);                          /* end of the line */
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_m);         /* Cmd-Shift-M */
+  type("a side note");                        /* goes to the note, not the doc */
+  key(0, SDLK_RETURN);                        /* commit */
+
+  CHECK(strstr(ED->lines[0].text, "[^") != NULL);     /* marker on the caret line */
+  CHECK(strstr(ED->lines[0].text, "==") == NULL);     /* no highlight wrapping */
+  const char *last = ED->lines[ED->line_count - 1].text;
+  CHECK(last[0] == '[' && last[1] == '^');             /* definition appended */
+  CHECK(strstr(last, "]: a side note") != NULL);
+}
+
+/* Esc cancels the input: no marker, no definition, buffer untouched. */
+static void test_margin_note_escape_cancels(void) {
+  tv_begin();
+  load("Hello world");
+  VS->typewriter_mode = 1;
+  put_cursor(0, 11);
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_m);
+  type("discard me");
+  key(0, SDLK_ESCAPE);
+  CHECK_IEQ(ED->line_count, 1);
+  EXPECT_LINE(0, "Hello world");
+}
+
+/* Outside typewriter mode Cmd-Shift-M does nothing (no footnote created). */
+static void test_margin_note_typewriter_only(void) {
+  tv_begin();
+  load("Hello world");
+  VS->typewriter_mode = 0;
+  put_cursor(0, 11);
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_m);
+  key(0, SDLK_RETURN);
+  CHECK(strstr(ED->lines[0].text, "[^") == NULL);     /* no footnote marker */
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -520,6 +565,10 @@ void suite_textview(void) {
   /* autosave */
   RUN(test_autosave_fires_after_interval);
   RUN(test_autosave_skips_clean_and_scratch);
+  /* margin notes */
+  RUN(test_margin_note_creates_footnote);
+  RUN(test_margin_note_escape_cancels);
+  RUN(test_margin_note_typewriter_only);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

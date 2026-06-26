@@ -495,6 +495,8 @@ static void pos_anim_track(void) {
 /* Typewriter carriage: columns the caret currently floats past end-of-text — only
    while it's still exactly where the last move that set it left it (any other
    motion invalidates the float). Drives the caret render offset and type-time pad. */
+static void tv_note_col(int side, int *x0, int *w);   /* defined with the margin renderer */
+
 static int tv_virtual_cols(void) {
   if (!g_vs.typewriter_mode) return 0;
   if (g_vs.goal_line == g_ed.cursor_line && g_vs.goal_col == g_ed.cursor_col)
@@ -609,9 +611,17 @@ static void process_frame(void) {
          the page slides under a fixed strike point. A vertical move onto a shorter
          line floats the caret so this x ≈ the goal column → the page holds its
          horizontal place; an arrow float past EOL grows it → the page glides. */
-      int caret_natural_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col) + tv_virtual_px();
       int pin_x = nav_page_margin() + nav_page_w() / 2;   /* center of the text column */
-      g_vs.scroll_target_x = (float)(caret_natural_x - pin_x);
+      int target_x;
+      if (mn_active) {
+        /* writing a margin note: slide the page so the right note column lands in
+           the (fixed, centered) hitzone — the page comes to the note, not vice versa. */
+        int rx0, mw; tv_note_col(0, &rx0, &mw);
+        target_x = rx0 + mw / 2;
+      } else {
+        target_x = nav_cursor_x(&g_ed, g_ed.cursor_line, g_ed.cursor_col) + tv_virtual_px();
+      }
+      g_vs.scroll_target_x = (float)(target_x - pin_x);
       float dx = g_vs.scroll_target_x - g_vs.scroll_x;
       if (dx > -0.5f && dx < 0.5f) g_vs.scroll_x = g_vs.scroll_target_x;
       else                         g_vs.scroll_x += dx * HSCROLL_EASE;
@@ -1230,6 +1240,26 @@ static void draw_dotted_vline(int x, int y0, int y1, Color c) {
   }
 }
 
+/* Width of each page margin strip (where notes live). */
+static int tv_margin_pad(void) { return (int)(g_vs.font_size * 12.5f); }   /* note-strip width */
+
+/* The two dotted "gutter" lines that hug a note column (side 0 = right, 1 = left),
+   in natural/unshifted coords (*a < *b). Each is inset by the same `npad` — the
+   outer line that far from the page border, the inner line that far from the
+   page's dotted writing edge — so the note sits in a symmetric gutter. */
+static void tv_note_gutter(int side, int *a, int *b) {
+  int margin = nav_page_margin(), page_w = nav_page_w(), pad = tv_margin_pad();
+  int npad = (int)(pad * 0.18f);
+  if (side == 0) { *a = margin + page_w + npad; *b = margin + page_w + pad - npad; }
+  else           { *a = margin - pad + npad;    *b = margin - npad; }
+}
+/* Note-text column for a side, padded inside the gutter. */
+static void tv_note_col(int side, int *x0, int *w) {
+  int a, b, tp = 8;
+  tv_note_gutter(side, &a, &b);
+  *x0 = a + tp; *w = (b - a) - 2 * tp;
+}
+
 /* Typewriter "plastic": two translucent guards flanking the center hitzone,
    pinned at the fixed strike line (where the active line settles) so the text
    glides under them without the frame moving. Each guard is ~two lines tall, the
@@ -1252,7 +1282,7 @@ static void draw_typewriter_fog(void) {
      side rails hang from it, and it spans only between them (and vice-versa). */
   Color dotted = color(120, 120, 125, 80);
   Color solid  = color(120, 120, 125, 150);
-  int pad = (int)(g_vs.font_size * 8);                 /* page margin, proportional to font size */
+  int pad = tv_margin_pad();                           /* page margin (note strip) width */
   int line0_top = cy - (int)g_vs.scroll_y;
   int margin_y  = (int)(8.0f * g_vs.font_size);
   int top_y     = line0_top - margin_y;                                /* above line 0       */
@@ -1264,6 +1294,13 @@ static void draw_typewriter_fog(void) {
   if (vbot > vtop) {
     draw_dotted_vline(margin - sx, vtop, vbot, dotted);               /* writing area left  */
     draw_dotted_vline(margin + page_w - sx, vtop, vbot, dotted);      /* writing area right */
+    int ga, gb;                                                       /* note gutter (two lines per side) */
+    tv_note_gutter(0, &ga, &gb);
+    draw_dotted_vline(ga - sx, vtop, vbot, dotted);
+    draw_dotted_vline(gb - sx, vtop, vbot, dotted);
+    tv_note_gutter(1, &ga, &gb);
+    draw_dotted_vline(ga - sx, vtop, vbot, dotted);
+    draw_dotted_vline(gb - sx, vtop, vbot, dotted);
     r_draw_rect(rect(left_x,  vtop, 1, vbot - vtop), solid);          /* page margin left   */
     r_draw_rect(rect(right_x, vtop, 1, vbot - vtop), solid);          /* page margin right  */
   }
@@ -1280,18 +1317,16 @@ static void draw_typewriter_fog(void) {
   int gh = 2 * lh;
   int gy = strike + lh - gh;                           /* bottom covers the full line height (descenders) */
 
-  /* The clear "hitzone" normally hugs the caret at the page center; while writing
-     a margin note it slides over to the right margin so the note sits in the
-     clear band (and the whole document frosts behind it). */
-  int pin_x, half;
+  /* The clear "hitzone" stays centered on the page; the page scrolls the note
+     column into it (see process_frame). While writing a note the band just widens
+     to fit the note column. */
+  int pin_x = margin + page_w / 2;
+  int half;
   if (mn_active) {
-    int n0 = margin + page_w - sx + 14;                /* matches draw_margin_notes' x */
-    int n1 = margin + page_w + pad - sx;
-    pin_x = (n0 + n1) / 2;
-    half  = (n1 - n0) / 2 + 30;
+    int rx0, mw; tv_note_col(0, &rx0, &mw);
+    half = mw / 2 + 24;
   } else {
-    pin_x = margin + page_w / 2;                       /* the hitzone center */
-    half  = (int)(page_w * 0.12f);                     /* clear band half-width (hugs the caret) */
+    half = (int)(page_w * 0.12f);                      /* clear band half-width (hugs the caret) */
   }
   int left_edge  = pin_x - half;
   int right_edge = pin_x + half;
@@ -1414,7 +1449,7 @@ static int fn_side_known(const char *id) {
 static void recompute_footnote_sides(void) {
   g_fn_side_count = 0;
   int lh  = nav_line_height();
-  int mw  = (int)(g_vs.font_size * 8) - 14;
+  int ncx, mw; tv_note_col(0, &ncx, &mw);   /* note-column width (heights must match the draw) */
   int saved = r_get_font_style();
   r_set_font_style(FONT_MONO);
   Color dummy = color(0, 0, 0, 0);
@@ -1448,20 +1483,21 @@ static void recompute_footnote_sides(void) {
 }
 
 /* Draw the saved footnote definitions in the page margins, each on its cached
-   side and aligned to its reference's visual row. While a new note is being
-   typed, any note within the live input's growing extent spills left early so
-   there's room. Drawn BEFORE the typewriter fog so the frost blurs them along
-   with the page. Typewriter mode only. */
+   side. A note is drawn whenever ANY part of it is on screen (computed from the
+   reference's own row position, not whether that row is in the visible set) — so
+   a note doesn't vanish when its marker scrolls off the top while its body is
+   still visible. While a new note is being typed, any note within the live
+   input's growing extent spills left early. Drawn BEFORE the typewriter fog so
+   the frost blurs them with the page. Typewriter mode only. */
 static void draw_margin_notes(void) {
-  int sx  = (int)g_vs.scroll_x;
+  int cy = g_vs.content_y, ch = g_vs.content_h;
+  int sx = (int)g_vs.scroll_x, sy = (int)g_vs.scroll_y;
   int gap = 14;
-  int pad = (int)(g_vs.font_size * 8);
-  int rmx = nav_page_margin() + nav_page_w() - sx + gap;   /* right margin strip */
-  int lmx = nav_page_margin() - pad - sx + gap;            /* left margin strip  */
-  int mw  = pad - gap;
+  int rx0, mw, lx0, lw; tv_note_col(0, &rx0, &mw); tv_note_col(1, &lx0, &lw);
+  int rmx = rx0 - sx, lmx = lx0 - sx;
 
   r_set_font_style(FONT_MONO);   /* never r_set_font_size here — it rebuilds the atlases (lag) */
-  int fh = nav_line_height();
+  int lh = nav_line_height(), fh = lh;
   Color ink = color(150, 150, 155, 255);
 
   /* the live input's screen extent, so a note below it spills left as it grows */
@@ -1473,27 +1509,41 @@ static void draw_margin_notes(void) {
                    live_top = py; live_bottom = ly + fh + gap; }
   }
 
-  for (int i = 0; i < g_vs.vis_row_count; i++) {
-    VisRow *vr = &g_vs.vis_rows[i];
-    Line *l = &g_ed.lines[vr->ln];
-    for (int k = vr->row_start; k + 2 < vr->row_end; k++) {
+  /* one pass over the buffer, tracking the running visual-row index so each
+     reference's screen y is known even when its row is above the viewport. */
+  int visual = 0;
+  for (int i = 0; i < g_ed.line_count; i++) {
+    Line *l = &g_ed.lines[i];
+    int wc = l->wrap_count > 0 ? l->wrap_count : 1;
+    for (int k = 0; k + 2 < l->len; k++) {
       if (l->text[k] != '[' || l->text[k+1] != '^') continue;
       int j = k + 2; char id[24]; int n = 0;
       while (j < l->len && l->text[j] != ']' && n < (int)sizeof(id) - 1) id[n++] = l->text[j++];
       id[n] = '\0';
-      if (j >= l->len || l->text[j] != ']') continue;
-      if (j + 1 < l->len && l->text[j+1] == ':') { k = j; continue; }   /* a definition, not a ref */
+      if (j >= l->len || l->text[j] != ']') { k = j > k ? j : k; continue; }
+      if (j + 1 < l->len && l->text[j+1] == ':') { k = j; continue; }   /* a definition */
       const char *def = find_footnote_def(id);
       if (def) {
-        if (!fn_side_known(id)) recompute_footnote_sides();   /* a new note → regroup once */
-        int side = fn_side(id);
-        int refY = vr->py;
-        if (mn_active && live_top >= 0 && refY > live_top && refY < live_bottom)
-          side = 1;                                           /* pushed left by the live input */
-        draw_wrapped(def, side ? lmx : rmx, refY, mw, fh, ink, NULL, 1);
+        int row = 0;
+        if (wc > 1) {   /* which wrapped row holds column k */
+          int starts[256], nrows = nav_get_wrap_breaks(l, starts, 256);
+          for (int r = nrows - 1; r >= 0; r--) if (k >= starts[r]) { row = r; break; }
+        }
+        int refY = cy + (visual + row) * lh - sy;
+        if (refY <= cy + ch && refY >= cy - 80 * lh) {        /* in range to possibly show */
+          int ely = refY; draw_wrapped(def, rmx, refY, mw, fh, ink, &ely, 0);
+          int height = ely - refY + fh;
+          if (refY + height >= cy && refY < cy + ch) {        /* any part on screen */
+            if (!fn_side_known(id)) recompute_footnote_sides();
+            int side = fn_side(id);
+            if (mn_active && live_top >= 0 && refY > live_top && refY < live_bottom) side = 1;
+            draw_wrapped(def, side ? lmx : rmx, refY, mw, fh, ink, NULL, 1);
+          }
+        }
       }
       k = j;
     }
+    visual += wc;
   }
 
   r_set_font_style(FONT_REGULAR);
@@ -1504,9 +1554,8 @@ static void draw_margin_notes(void) {
 static void draw_margin_note_input(void) {
   if (!mn_active) return;
   int sx  = (int)g_vs.scroll_x;
-  int gap = 14;
-  int mx  = nav_page_margin() + nav_page_w() - sx + gap;
-  int mw  = (int)(g_vs.font_size * 8) - gap;
+  int rx0, mw; tv_note_col(0, &rx0, &mw);
+  int mx  = rx0 - sx;
   r_set_font_style(FONT_MONO);
   int fh = nav_line_height();
   int py = caret_row_py();
