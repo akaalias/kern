@@ -1167,14 +1167,30 @@ static void draw_typewriter_fog(void) {
   int cy     = g_vs.content_y, ch = g_vs.content_h;
 
   /* writing area (dotted, subtle) and page margins (solid, further out) — the
-     vertical guides translate with the horizontal scroll. */
+     vertical guides translate with the horizontal scroll. The page's TOP edge is
+     a fixed margin above the first line (scrolling vertically with the page); the
+     side rails hang from it, and it spans only between them (and vice-versa). */
   Color dotted = color(120, 120, 125, 80);
   Color solid  = color(120, 120, 125, 150);
   int pad = (int)(g_vs.font_size * 8);                 /* page margin, proportional to font size */
-  draw_dotted_vline(margin - sx, cy, cy + ch, dotted);                 /* writing area left  */
-  draw_dotted_vline(margin + page_w - sx, cy, cy + ch, dotted);        /* writing area right */
-  r_draw_rect(rect(margin - pad - sx, cy, 1, ch), solid);              /* page margin left   */
-  r_draw_rect(rect(margin + page_w + pad - sx, cy, 1, ch), solid);     /* page margin right  */
+  int line0_top = cy - (int)g_vs.scroll_y;
+  int margin_y  = (int)(8.0f * g_vs.font_size);
+  int top_y     = line0_top - margin_y;                                /* above line 0       */
+  int bottom_y  = line0_top + nav_total_visual_lines(&g_ed) * lh + margin_y;  /* below last line */
+  int vtop = top_y    < cy      ? cy      : top_y;      /* rails clip to the content viewport */
+  int vbot = bottom_y > cy + ch ? cy + ch : bottom_y;
+  int left_x  = margin - pad - sx;
+  int right_x = margin + page_w + pad - sx;
+  if (vbot > vtop) {
+    draw_dotted_vline(margin - sx, vtop, vbot, dotted);               /* writing area left  */
+    draw_dotted_vline(margin + page_w - sx, vtop, vbot, dotted);      /* writing area right */
+    r_draw_rect(rect(left_x,  vtop, 1, vbot - vtop), solid);          /* page margin left   */
+    r_draw_rect(rect(right_x, vtop, 1, vbot - vtop), solid);          /* page margin right  */
+  }
+  if (top_y >= cy && top_y < cy + ch)                                  /* page TOP edge      */
+    r_draw_rect(rect(left_x, top_y, right_x - left_x + 1, 1), solid);
+  if (bottom_y >= cy && bottom_y < cy + ch)                            /* page BOTTOM edge   */
+    r_draw_rect(rect(left_x, bottom_y, right_x - left_x + 1, 1), solid);
 
   /* the strike line is FIXED at the golden pin height — not the (gliding) caret
      row — so the frame stays put while the page scrolls under it. Guards are two
