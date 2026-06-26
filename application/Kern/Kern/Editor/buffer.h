@@ -8,6 +8,10 @@
 void line_ensure_cap(Line *l, int need);
 void line_init(Line *l, const char *s, int len);
 void line_dirty(Line *l);
+/* Monotonic counter bumped by every line_dirty (i.e. every edit). The render
+   loop reads it to tell "the buffer changed this frame" from "the caret merely
+   moved" — used by the POS word-in-progress tracker (see pos_render.h). */
+unsigned long buf_edit_seq(void);
 void buf_ensure_lines_cap(EditorState *ed, int need);
 void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len);
 void buf_delete_line_at(EditorState *ed, int idx);

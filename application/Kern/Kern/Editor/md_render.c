@@ -278,8 +278,9 @@ float md_draw_text(Line *l, int start, int end,
     if (g_syntax_mask &&
         fg.r == base_color.r && fg.g == base_color.g &&
         fg.b == base_color.b && fg.a == base_color.a) {
-      Color pc;
-      fg = pos_color_at(l, g_syntax_mask, i, &pc) ? pc : pos_mute_color();
+      /* pos_resolve_color also holds the word being typed at base_color and
+         fades a just-finished word from base_color up to its POS color. */
+      fg = pos_resolve_color(l, g_syntax_mask, i, base_color);
     }
 
     /* Style check: cuttable text (fillers, the redundant word) is greyed and

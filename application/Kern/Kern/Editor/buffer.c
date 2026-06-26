@@ -167,10 +167,14 @@ void line_init(Line *l, const char *s, int len) {
 
 /* any edit invalidates this line's cached wraps, inline spans, POS tags,
    style-check spans, and symbol-substitution spans */
+static unsigned long g_edit_seq;
+unsigned long buf_edit_seq(void) { return g_edit_seq; }
+
 void line_dirty(Line *l) {
   l->wrap_count = -1; l->md_span_count = -1;
   l->pos_span_count = -1; l->style_span_count = -1;
   l->sub_span_count = -1;
+  g_edit_seq++;
 }
 
 void buf_ensure_lines_cap(EditorState *ed, int need) {

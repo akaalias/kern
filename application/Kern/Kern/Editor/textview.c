@@ -356,12 +356,57 @@ static int g_mouse_x, g_mouse_y, g_mouse_down, g_mouse_pressed;
    poll faster (≈60fps) so the animation runs. */
 static int g_scroll_animating;
 static int g_dim_animating;
+/* Set while a POS word-color fade-in is still running (see pos_render.h); also
+   makes the loop poll at ~60fps so the fade animates. */
+static int g_pos_animating;
+
+/* Hold the word being typed at the base color and fade a just-finished word up
+   to its POS color. Runs each frame: an edit (buf_edit_seq changed) establishes
+   the caret's word as "in progress"; once the caret leaves that word — a space,
+   punctuation, an arrow, a click — the word starts its base→POS-color fade.
+   Pure caret/edit bookkeeping, so navigating onto already-colored text (no edit)
+   never disturbs its color. */
+static const Line *g_wip_line;       /* word being typed (pointer-compared only) */
+static int g_wip_lo, g_wip_hi;
+static unsigned long g_pos_prev_seq;
+static void pos_anim_track(void) {
+  unsigned int now = kern_now_ms();
+  unsigned long seq = buf_edit_seq();
+  int edited = (seq != g_pos_prev_seq);
+  g_pos_prev_seq = seq;
+
+  Line *cur = &g_ed.lines[g_ed.cursor_line];
+  int col = g_ed.cursor_col;
+
+  if (edited) {
+    int lo, hi;
+    if (pos_word_bounds(cur, col, &lo, &hi)) {
+      /* a different word than the one in progress → finish the old one first */
+      if (g_wip_line && (g_wip_line != cur || hi <= g_wip_lo || lo >= g_wip_hi))
+        pos_fade_begin(g_wip_line, g_wip_lo, g_wip_hi, now);
+      g_wip_line = cur; g_wip_lo = lo; g_wip_hi = hi;
+    }
+    /* an edit that left the caret on no word (a space/punctuation) is handled by
+       the completion check below, which sees the caret outside the old word. */
+  }
+
+  /* finished: caret no longer within the in-progress word → start its fade */
+  if (g_wip_line && !(g_wip_line == cur && col >= g_wip_lo && col <= g_wip_hi)) {
+    pos_fade_begin(g_wip_line, g_wip_lo, g_wip_hi, now);
+    g_wip_line = NULL;
+  }
+
+  pos_set_wip(g_wip_line, g_wip_lo, g_wip_hi);
+  pos_set_now(now);
+  g_pos_animating = pos_fades_active(now);
+}
 
 /* Lay out and immediately draw the frame's chrome: window background, content
    clip, selection/search highlights and the scrollbar. The markdown text is
    drawn afterward in do_render. */
 static void process_frame(void) {
   g_vs.vis_row_count = 0;
+  pos_anim_track();   /* word-in-progress hold + base→POS-color fade bookkeeping */
 
   /* Measure with the body font — the same state the text is drawn in (see the
      r_set_font_* calls in do_render below). The previous frame ended with the
@@ -1511,7 +1556,7 @@ int editor_main(int argc, char **argv) {
     /* Block until input arrives (NULL leaves events queued for the drain loop
        below) instead of busy-spinning. The timeout wakes us periodically so
        transient status-bar messages can still clear without input. */
-    SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating) ? 16 : 250);
+    SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating || g_pos_animating) ? 16 : 250);
     while (SDL_PollEvent(&e)) editor_handle_event(&e);
     editor_tick();
   }
@@ -1547,7 +1592,9 @@ void tv_test_reset(void) {
   wl_query[0] = wl_last_query[0] = wl_suppressed[0] = '\0';
   wl_has_suppress = 0;
   g_mouse_x = g_mouse_y = g_mouse_down = g_mouse_pressed = 0;
-  g_scroll_animating = g_dim_animating = 0;
+  g_scroll_animating = g_dim_animating = g_pos_animating = 0;
+  g_wip_line = NULL; g_wip_lo = g_wip_hi = 0; g_pos_prev_seq = 0;
+  pos_anim_reset();
   g_last_autosave = 0;
   g_last_x_conn = -1;
 }

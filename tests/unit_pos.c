@@ -140,6 +140,85 @@ static void test_empty_line(void) {
   freeline(&l);
 }
 
+/* The word-in-progress bounds: the run of word bytes the caret sits in or
+   against, including in-word ' - _ so hyphenated/apostrophe'd words stay whole. */
+static void test_word_bounds(void) {
+  /*            0123456789012345 */
+  Line l = mkline("hello world");
+  int lo, hi;
+  CHECK(pos_word_bounds(&l, 3, &lo, &hi));   /* inside "hello" */
+  CHECK_IEQ(lo, 0); CHECK_IEQ(hi, 5);
+  CHECK(pos_word_bounds(&l, 5, &lo, &hi));   /* caret just after "hello" */
+  CHECK_IEQ(lo, 0); CHECK_IEQ(hi, 5);
+  CHECK(pos_word_bounds(&l, 6, &lo, &hi));   /* start of "world" */
+  CHECK_IEQ(lo, 6); CHECK_IEQ(hi, 11);
+  freeline(&l);
+
+  /* caret between two spaces touches no word */
+  Line l2 = mkline("a  b");
+  CHECK(!pos_word_bounds(&l2, 2, &lo, &hi));
+  CHECK_IEQ(lo, 2); CHECK_IEQ(hi, 2);
+  freeline(&l2);
+
+  /* apostrophe + hyphen are in-word */
+  Line l3 = mkline("don't-stop now");
+  CHECK(pos_word_bounds(&l3, 4, &lo, &hi));   /* inside "don't-stop" */
+  CHECK_IEQ(lo, 0); CHECK_IEQ(hi, 10);
+  freeline(&l3);
+}
+
+/* A glyph in the published in-progress word stays at the base color instead of
+   taking its POS color (no mid-typing flicker); neighbors are unaffected. */
+static void test_wip_holds_base_color(void) {
+  pos_anim_reset();
+  Color base = color(204, 200, 195, 255);
+  Line l = mkline("the cat runs");          /* fake: det / noun / verb */
+  unsigned int mask = POS_BIT(POS_VERB);    /* isolate verbs */
+
+  /* baseline: "runs" colors as a verb, "cat" mutes (off class) */
+  Color c = pos_resolve_color(&l, mask, 8, base);   /* 'r' in runs */
+  CHECK_IEQ(c.r, 254);
+  Color m = pos_resolve_color(&l, mask, 4, base);   /* 'c' in cat */
+  CHECK_IEQ(m.r, pos_mute_color().r);
+
+  /* mark "runs" in progress → it holds the base color; "cat" still mutes */
+  pos_set_wip(&l, 8, 12);
+  c = pos_resolve_color(&l, mask, 8, base);
+  CHECK_IEQ(c.r, base.r); CHECK_IEQ(c.g, base.g); CHECK_IEQ(c.b, base.b);
+  m = pos_resolve_color(&l, mask, 4, base);
+  CHECK_IEQ(m.r, pos_mute_color().r);
+
+  pos_set_wip(NULL, 0, 0);
+  pos_anim_reset();
+  freeline(&l);
+}
+
+/* A finished word fades from the base color up to its POS color over POS_FADE_MS,
+   then rests there; pos_fades_active reports the in-flight window. */
+static void test_fade_lerp_over_time(void) {
+  pos_anim_reset();
+  Color base = color(204, 200, 195, 255);
+  Line l = mkline("the cat runs");
+  unsigned int mask = POS_BIT(POS_VERB);
+
+  pos_fade_begin(&l, 8, 12, 1000);          /* "runs" starts fading at t=1000 */
+
+  pos_set_now(1000);                        /* f=0 → base */
+  CHECK_IEQ(pos_resolve_color(&l, mask, 8, base).r, 204);
+  pos_set_now(1000 + POS_FADE_MS / 2);      /* f=0.5 (smoothstep 0.5) → midpoint */
+  CHECK_IEQ(pos_resolve_color(&l, mask, 8, base).r, 229);   /* 204 + (254-204)/2 */
+  pos_set_now(1000 + POS_FADE_MS);          /* settled → full verb color */
+  CHECK_IEQ(pos_resolve_color(&l, mask, 8, base).r, 254);
+  pos_set_now(1000 + POS_FADE_MS * 2);      /* stays settled */
+  CHECK_IEQ(pos_resolve_color(&l, mask, 8, base).r, 254);
+
+  CHECK(pos_fades_active(1000 + POS_FADE_MS / 2));   /* still animating */
+  CHECK(!pos_fades_active(1000 + POS_FADE_MS));      /* done at the boundary */
+
+  pos_anim_reset();
+  freeline(&l);
+}
+
 void suite_pos(void) {
   RUN(test_tag_basic);
   RUN(test_cache_and_invalidate);
@@ -147,4 +226,7 @@ void suite_pos(void) {
   RUN(test_value_ordering);
   RUN(test_determiner_fixes_gerund);
   RUN(test_empty_line);
+  RUN(test_word_bounds);
+  RUN(test_wip_holds_base_color);
+  RUN(test_fade_lerp_over_time);
 }
