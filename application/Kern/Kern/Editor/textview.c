@@ -7,6 +7,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <pthread.h>
 #include "renderer.h"
 #include "gfx.h"
 #include "macos_style.h"
@@ -2163,6 +2164,54 @@ static void filepos_save(void) {
 #endif
 }
 
+/* ---- non-blocking autosave: the disk write runs on a background thread so a
+   large save doesn't stall typing. The buffer is snapshotted on the main thread
+   (fast memcpy) and handed to the worker, which owns and frees it. ---- */
+#ifndef KERN_HEADLESS_TEST
+typedef struct { char path[1024]; char *text; int len; } SaveJob;
+static volatile int g_saving;   /* 1 while a background save is in flight */
+static void *save_worker(void *arg) {
+  SaveJob *job = arg;
+  buf_save_text(job->path, job->text, job->len);
+  free(job->text); free(job);
+  g_saving = 0;
+  return NULL;
+}
+#endif
+
+static void autosave_async(void) {
+  if (!g_ed.filepath[0]) return;
+#ifdef KERN_HEADLESS_TEST
+  buf_save(&g_ed, g_ed.filepath);          /* synchronous + deterministic for tests */
+#else
+  if (g_saving) return;                    /* a previous save still running; retry next tick */
+  int total = 0;
+  for (int i = 0; i < g_ed.line_count; i++) total += g_ed.lines[i].len + 1;
+  char *text = malloc(total > 0 ? total : 1);
+  if (!text) { buf_save(&g_ed, g_ed.filepath); return; }   /* OOM: fall back to sync */
+  int off = 0;
+  for (int i = 0; i < g_ed.line_count; i++) {
+    memcpy(text + off, g_ed.lines[i].text, g_ed.lines[i].len);
+    off += g_ed.lines[i].len;
+    if (i < g_ed.line_count - 1) text[off++] = '\n';
+  }
+  SaveJob *job = malloc(sizeof *job);
+  if (!job) { free(text); buf_save(&g_ed, g_ed.filepath); return; }
+  snprintf(job->path, sizeof job->path, "%s", g_ed.filepath);
+  job->text = text; job->len = off;
+  g_ed.dirty = 0;                          /* optimistic; a later edit re-dirties */
+  g_saving = 1;
+  pthread_t th;
+  if (pthread_create(&th, NULL, save_worker, job) != 0) {   /* couldn't spawn → sync */
+    g_saving = 0;
+    buf_save_text(job->path, job->text, job->len);
+    free(job->text); free(job);
+  } else {
+    pthread_detach(th);
+  }
+#endif
+}
+
 /* Persist the session — open file, cursor, and view toggles — to ".kern_session"
    in the documents dir, so a relaunch can resume where we left off. App-only
    (no-op headless); written on each autosave tick and on quit. */
@@ -2193,7 +2242,8 @@ void editor_tick(void) {
     if (g_last_autosave == 0) g_last_autosave = now;
     if (now - g_last_autosave >= AUTOSAVE_INTERVAL_MS) {
       g_last_autosave = now;
-      if (g_ed.dirty && g_ed.filepath[0] && buf_save(&g_ed, g_ed.filepath) == 0) {
+      if (g_ed.dirty && g_ed.filepath[0]) {
+        autosave_async();               /* write off the main thread — no typing hitch */
         nav_status_set(&g_vs, "Auto-saved");
       }
       session_save();   /* remember file + cursor + toggles for next launch */
