@@ -21,6 +21,16 @@ extern int kern_fillers_enabled(void);
 extern int kern_cliches_enabled(void);
 extern int kern_redundancies_enabled(void);
 
+/* CFBundleShortVersionString (the marketing version), for the dev-build label. */
+const char *kern_app_version(void) {
+  static char buf[32];
+  if (buf[0] == '\0') {
+    NSString *v = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    snprintf(buf, sizeof(buf), "%s", v ? v.UTF8String : "?");
+  }
+  return buf;
+}
+
 #pragma mark - Keyboard-shortcut sheet
 
 /* A small rounded "key-cap" view that draws one key (e.g. ⌃ or "X"). */

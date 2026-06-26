@@ -38,6 +38,9 @@ extern int  kern_x_is_connected(void);          /* Swift @_cdecl: 1 if linked */
 /* show/hide the title-bar "Publish to X" button (macos_style.m) */
 extern void kern_titlebar_set_x_connected(int connected);
 
+/* marketing version string (macos_style.m) — used only for the dev-build label */
+extern const char *kern_app_version(void);
+
 /* Swift calls this (possibly off the main thread) to report a publish result.
    We only stash a string + timestamp; the 250ms event-loop tick repaints it,
    so no synthetic SDL event is needed. */
@@ -301,6 +304,83 @@ static void cmd_extract_region_to_note(void) {
   char msg[256];
   snprintf(msg, sizeof(msg), "Created %s", fname);
   nav_status_set(&g_vs, msg);
+}
+
+/* ---- margin notes (typewriter) / footnotes (normal) ---------------------- *
+ * A margin note is stored as a standard markdown footnote: the marked region is
+ * wrapped in ==…== with a [^id] marker before the closing ==, and a "[^id]: text"
+ * definition is appended at the document bottom. In typewriter mode the
+ * definitions render in the right margin aligned to their reference's row; in
+ * normal mode they're just footnote lines at the bottom. Authored keyboard-first
+ * via Cmd-Shift-M on a marked region. */
+static int  mn_active;          /* margin-note input modal is open */
+static char mn_text[1024];      /* the note being typed */
+static int  mn_len;
+static int  mn_ref_line;        /* logical line of the mark start (where the note aligns) */
+static char mn_id[24];          /* this note's footnote id */
+static unsigned int mn_seq;     /* disambiguates ids generated in the same ms */
+
+/* Short, readable-ish footnote id from the clock + a sequence (base36). */
+static void gen_footnote_id(char *out, int outsz) {
+  unsigned int t = kern_now_ms() + (mn_seq++ * 2654435761u);
+  static const char *d36 = "0123456789abcdefghijklmnopqrstuvwxyz";
+  char tmp[16]; int n = 0;
+  do { tmp[n++] = d36[t % 36]; t /= 36; } while (t && n < 8);
+  int i = 0;
+  if (outsz > 1) out[i++] = 'n';          /* a letter lead so it reads as a name */
+  while (n > 0 && i < outsz - 1) out[i++] = tmp[--n];
+  out[i] = '\0';
+}
+
+static void margin_note_commit(void) {
+  if (mn_len == 0) { mn_active = 0; nav_status_set(&g_vs, "Empty note — cancelled"); return; }
+
+  /* insert just the footnote marker at the write-head (no selection, no ==) */
+  g_ed.mark_active = 0;
+  char marker[40];
+  snprintf(marker, sizeof(marker), "[^%s]", mn_id);
+  ed_insert_char(&g_ed, marker);
+
+  /* append the footnote definition at the document bottom */
+  char def[1100];
+  snprintf(def, sizeof(def), "[^%s]: %s", mn_id, mn_text);
+  buf_insert_line_at(&g_ed, g_ed.line_count, def, (int)strlen(def));
+  buf_invalidate_all_wraps(&g_ed);
+
+  mn_active = 0; mn_text[0] = '\0'; mn_len = 0;
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
+  nav_status_set(&g_vs, "Margin note saved");
+}
+
+/* Cmd-Shift-M: write a margin note at the caret (typewriter mode, no selection
+   needed). The footnote marker is inserted at the write-head on commit. */
+static void cmd_margin_note(void) {
+  if (!g_vs.typewriter_mode) { nav_status_set(&g_vs, "Margin notes are for typewriter mode (C-x t)"); return; }
+  gen_footnote_id(mn_id, sizeof(mn_id));
+  mn_ref_line = g_ed.cursor_line;
+  mn_text[0] = '\0'; mn_len = 0;
+  mn_active = 1;
+  SDL_StartTextInput();
+  nav_status_set(&g_vs, "Margin note — type, Enter to save, Esc to cancel");
+}
+
+/* Modal key handling while the margin-note input is open. Consumes all keys. */
+static int handle_marginnote_key(int sym) {
+  if (sym == SDLK_ESCAPE) {
+    mn_active = 0; mn_text[0] = '\0'; mn_len = 0;
+    nav_status_set(&g_vs, "Margin note cancelled");
+    return 1;
+  }
+  if (sym == SDLK_RETURN) { margin_note_commit(); return 1; }
+  if (sym == SDLK_BACKSPACE) {
+    if (mn_len > 0) {
+      int i = mn_len - 1;
+      while (i > 0 && ((unsigned char)mn_text[i] & 0xC0) == 0x80) i--;   /* whole UTF-8 char */
+      mn_text[i] = '\0'; mn_len = i;
+    }
+    return 1;
+  }
+  return 1;   /* swallow everything else while modal */
 }
 
 /* Join the whole buffer into one malloc'd, NUL-terminated string, lines
@@ -1200,8 +1280,19 @@ static void draw_typewriter_fog(void) {
   int gh = 2 * lh;
   int gy = strike + lh - gh;                           /* bottom covers the full line height (descenders) */
 
-  int pin_x = margin + page_w / 2;                     /* the hitzone center */
-  int half  = (int)(page_w * 0.12f);                   /* clear band half-width (hugs the caret) */
+  /* The clear "hitzone" normally hugs the caret at the page center; while writing
+     a margin note it slides over to the right margin so the note sits in the
+     clear band (and the whole document frosts behind it). */
+  int pin_x, half;
+  if (mn_active) {
+    int n0 = margin + page_w - sx + 14;                /* matches draw_margin_notes' x */
+    int n1 = margin + page_w + pad - sx;
+    pin_x = (n0 + n1) / 2;
+    half  = (n1 - n0) / 2 + 30;
+  } else {
+    pin_x = margin + page_w / 2;                       /* the hitzone center */
+    half  = (int)(page_w * 0.12f);                     /* clear band half-width (hugs the caret) */
+  }
   int left_edge  = pin_x - half;
   int right_edge = pin_x + half;
   Color plastic = color(45, 45, 47, 165);              /* darker frosted tint over the blur */
@@ -1239,6 +1330,106 @@ static void draw_typewriter_fog(void) {
     r_blur_rect(br, 5);
     r_draw_rect(br, plastic);
   }
+}
+
+/* Word-wrap `s` into the column [x, x+maxw], drawing each line `fh` apart from y.
+   Returns the pen x after the last glyph; *out_y gets the last line's y. */
+static int draw_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, int *out_y) {
+  int penx = x, peny = y;
+  int spw = r_get_text_width(" ", 1);
+  const char *p = s;
+  while (*p) {
+    if (*p == ' ') { penx += spw; p++; continue; }
+    const char *start = p;
+    while (*p && *p != ' ') p++;
+    int wlen = (int)(p - start);
+    int ww = r_get_text_width(start, wlen);
+    if (penx > x && penx + ww > x + maxw) { penx = x; peny += fh; }
+    char buf[512];
+    int bl = wlen < (int)sizeof(buf) - 1 ? wlen : (int)sizeof(buf) - 1;
+    memcpy(buf, start, bl); buf[bl] = '\0';
+    r_draw_text(buf, vec2(penx, peny), c);
+    penx += ww;
+  }
+  if (out_y) *out_y = peny;
+  return penx;
+}
+
+/* Footnote definition text for `id` (into the NUL-terminated def line), or NULL. */
+static const char *find_footnote_def(const char *id) {
+  char pat[40];
+  int pl = snprintf(pat, sizeof(pat), "[^%s]:", id);
+  for (int i = 0; i < g_ed.line_count; i++) {
+    Line *l = &g_ed.lines[i];
+    if (l->len >= pl && strncmp(l->text, pat, pl) == 0) {
+      const char *t = l->text + pl;
+      while (*t == ' ') t++;
+      return t;
+    }
+  }
+  return NULL;
+}
+
+static int row_py_for_line(int ln) {
+  for (int i = 0; i < g_vs.vis_row_count; i++)
+    if (g_vs.vis_rows[i].ln == ln) return g_vs.vis_rows[i].py;
+  return -1;
+}
+
+/* py of the visual row the caret sits on (matches the cursor-draw row test) —
+   the wrapped-line-aware row, so the margin input lines up with the marker. */
+static int caret_row_py(void) {
+  for (int i = 0; i < g_vs.vis_row_count; i++) {
+    VisRow *vr = &g_vs.vis_rows[i];
+    if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
+        (g_ed.cursor_col < vr->row_end ||
+         (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln)))
+      return vr->py;
+  }
+  return -1;
+}
+
+/* Draw footnote definitions (and the live margin-note input) in the right page
+   margin, each aligned to its reference's row. Typewriter mode only. */
+static void draw_margin_notes(void) {
+  int sx  = (int)g_vs.scroll_x;
+  int gap = 14;
+  int mx  = nav_page_margin() + nav_page_w() - sx + gap;
+  int mw  = (int)(g_vs.font_size * 8) - gap;   /* the page margin strip */
+
+  /* Same font + size as the body (mono in typewriter). NOTE: never call
+     r_set_font_size here — a size change rebuilds every font atlas, and doing it
+     per frame makes the whole app lag. */
+  r_set_font_style(FONT_MONO);
+  int fh = nav_line_height();
+  Color ink = color(150, 150, 155, 255);
+
+  for (int i = 0; i < g_vs.vis_row_count; i++) {
+    VisRow *vr = &g_vs.vis_rows[i];
+    Line *l = &g_ed.lines[vr->ln];
+    for (int k = vr->row_start; k + 2 < vr->row_end; k++) {
+      if (l->text[k] != '[' || l->text[k+1] != '^') continue;
+      int j = k + 2; char id[24]; int n = 0;
+      while (j < l->len && l->text[j] != ']' && n < (int)sizeof(id) - 1) id[n++] = l->text[j++];
+      id[n] = '\0';
+      if (j >= l->len || l->text[j] != ']') continue;
+      if (j + 1 < l->len && l->text[j+1] == ':') { k = j; continue; }   /* a definition, not a ref */
+      const char *def = find_footnote_def(id);
+      if (def) draw_wrapped(def, mx, vr->py, mw, fh, ink, NULL);
+      k = j;
+    }
+  }
+
+  if (mn_active) {     /* live input, aligned to the caret's (marker's) visual row */
+    int py = caret_row_py();
+    if (py < 0) py = row_py_for_line(mn_ref_line);
+    if (py < 0) py = g_vs.content_y + 8;
+    int endy = py;
+    int endx = draw_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy);
+    r_draw_rect(rect(endx + 1, endy, 2, fh - 2), color(90, 200, 250, 255));
+  }
+
+  r_set_font_style(FONT_REGULAR);
 }
 
 static void do_render(void) {
@@ -1315,13 +1506,13 @@ static void do_render(void) {
 
   /* typewriter frosted-plastic fog flanking the center hitzone (over text, under
      the caret); only while horizontally pinning */
-  if (g_vs.typewriter_mode) draw_typewriter_fog();
+  if (g_vs.typewriter_mode) { draw_typewriter_fog(); draw_margin_notes(); }
 
   /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
      a caret floating past EOL is shifted right by its virtual columns so it holds
      the strike point over the blank page. */
   int cursor_py = -1;
-  if (g_vs.cursor_x >= 0) {
+  if (g_vs.cursor_x >= 0 && !mn_active) {   /* while writing a margin note the only caret is in the margin */
     int font_h = r_get_text_height();
     int caret_x = g_vs.cursor_x + tv_virtual_px();
     /* find the py for the cursor row */
@@ -1441,6 +1632,15 @@ static void do_render(void) {
   snprintf(info, sizeof(info), "(%d,%d)  %.0fpt", g_ed.cursor_line + 1, g_ed.cursor_col + 1, g_vs.font_size);
   int info_w = r_get_text_width(info, strlen(info));
   r_draw_text(info, vec2(nav_win_w() - info_w - 10, bar_y + 5), color(120, 120, 120, 255));
+#ifdef DEBUG
+  /* dev-build marker (Debug config only; never in a shipped Release build) */
+  {
+    char dev[48];
+    snprintf(dev, sizeof(dev), "Dev v%s", kern_app_version());
+    int dw = r_get_text_width(dev, strlen(dev));
+    r_draw_text(dev, vec2(nav_win_w() - info_w - 10 - dw - 16, bar_y + 5), color(190, 140, 90, 220));
+  }
+#endif
   r_set_font_size(g_vs.font_size);
 
   r_present();
@@ -1541,6 +1741,15 @@ void editor_handle_event(const SDL_Event *ev) {
     case SDL_TEXTINPUT:
       if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
       if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
+      if (mn_active) {                       /* typing a margin note */
+        int tlen = strlen(e.text.text);
+        if (mn_len + tlen < (int)sizeof(mn_text) - 1) {
+          memcpy(mn_text + mn_len, e.text.text, tlen);
+          mn_len += tlen;
+          mn_text[mn_len] = '\0';
+        }
+        break;
+      }
       if (g_vs.minibuf_active) {
         int tlen = strlen(e.text.text);
         if (g_vs.minibuf_len + tlen < (int)sizeof(g_vs.minibuf_text) - 1) {
@@ -1621,6 +1830,7 @@ void editor_handle_event(const SDL_Event *ev) {
         int sym = e.key.keysym.sym;
 
         /* 1. Modal handlers (consume and break) */
+        if (mn_active && handle_marginnote_key(sym)) break;
         if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
         if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
         if (g_vs.ctrl_x_prefix && handle_cx_prefix_key(sym, ctrl)) break;
@@ -1647,6 +1857,11 @@ void editor_handle_event(const SDL_Event *ev) {
         if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
             sym == SDLK_n) {
           cmd_extract_region_to_note(); break;
+        }
+        /* Cmd-Shift-M: margin note (footnote) for the marked region */
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_m) {
+          cmd_margin_note(); break;
         }
         /* Cmd-Shift-T: open (or create) today's daily note */
         if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
@@ -2040,6 +2255,7 @@ void tv_test_reset(void) {
   minibuf_completing = 0; minibuf_suggest[0] = '\0';
   bufsw_active = bufsw_listing = bufsw_sel = bufsw_count = 0;
   nav_back_count = 0; nav_fwd_count = 0;
+  mn_active = mn_len = 0; mn_text[0] = '\0';
   wl_active = wl_count = wl_sel = 0;
   wl_query[0] = wl_last_query[0] = wl_suppressed[0] = '\0';
   wl_has_suppress = 0;
