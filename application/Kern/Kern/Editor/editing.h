@@ -22,6 +22,7 @@ void ed_emacs_copy_region(EditorState *ed);
 void ed_emacs_kill_region(EditorState *ed);
 char *ed_region_dup(EditorState *ed, int *len_out);
 void ed_replace_region(EditorState *ed, const char *replacement);
+int ed_wrap_region(EditorState *ed, const char *open, const char *close);
 void ed_emacs_kill_word_forward(EditorState *ed);
 void ed_emacs_kill_word_backward(EditorState *ed);
 void ed_emacs_case_word(EditorState *ed, int mode);

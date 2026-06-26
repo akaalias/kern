@@ -291,6 +291,94 @@ static void test_replace_region_multiline_is_one_undo(void) {
   ed_teardown(&ed);
 }
 
+static void test_wrap_region_single_line(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "make me bold here");
+  ed.cursor_col = 8;
+  buf_mark_set(&ed);                 /* mark before "bold" */
+  ed.cursor_col = 12;                /* point after "bold" */
+  CHECK_IEQ(ed_wrap_region(&ed, "*", "*"), 1);
+  CHECK_SEQ(LINE(ed, 0), "make me *bold* here");
+  CHECK_IEQ(ed.mark_active, 1);      /* region stays active... */
+  /* ...over the inner text, so a second wrap stacks → **bold** */
+  CHECK_IEQ(ed_wrap_region(&ed, "*", "*"), 1);
+  CHECK_SEQ(LINE(ed, 0), "make me **bold** here");
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_preserves_inner_selection(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab cd ef");
+  ed.cursor_col = 3;
+  buf_mark_set(&ed);
+  ed.cursor_col = 5;                 /* region = "cd", caret at end */
+  ed_wrap_region(&ed, "*", "*");
+  /* the selection now covers just the inner "cd", caret still at its end */
+  int sl, sc, el, ec;
+  buf_region_ordered(&ed, &sl, &sc, &el, &ec);
+  CHECK_IEQ(sc, 4); CHECK_IEQ(ec, 6);
+  CHECK_SEQ(LINE(ed, 0), "ab *cd* ef");
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_cursor_at_start_orientation(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "ab cd ef");
+  ed.cursor_col = 5;
+  buf_mark_set(&ed);                 /* mark at end of "cd" */
+  ed.cursor_col = 3;                 /* caret at start of "cd" */
+  ed_wrap_region(&ed, "*", "*");
+  CHECK_SEQ(LINE(ed, 0), "ab *cd* ef");
+  CHECK_IEQ(ed.cursor_col, 4);       /* caret stays on the start endpoint */
+  CHECK_IEQ(ed.mark_col, 6);
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_is_one_undo(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "x bold y");
+  ed.cursor_col = 2;
+  buf_mark_set(&ed);
+  ed.cursor_col = 6;                 /* region = "bold" */
+  ed_wrap_region(&ed, "**", "**");
+  CHECK_SEQ(LINE(ed, 0), "x **bold** y");
+  undo_perform(&ed);                 /* one step removes both markers */
+  CHECK_SEQ(LINE(ed, 0), "x bold y");
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_multiline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  buf_insert_line_at(&ed, 1, "def", 3);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);
+  ed.cursor_line = 1; ed.cursor_col = 2;   /* region "bc\nde" */
+  ed_wrap_region(&ed, "*", "*");
+  CHECK_SEQ(LINE(ed, 0), "a*bc");
+  CHECK_SEQ(LINE(ed, 1), "de*f");
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_without_mark_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello");
+  ed.cursor_col = 5;
+  CHECK_IEQ(ed_wrap_region(&ed, "*", "*"), 0);
+  CHECK_SEQ(LINE(ed, 0), "hello");
+  ed_teardown(&ed);
+}
+
+static void test_wrap_region_empty_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello");
+  ed.cursor_col = 3;
+  buf_mark_set(&ed);                 /* mark == point: empty region */
+  CHECK_IEQ(ed_wrap_region(&ed, "*", "*"), 0);
+  CHECK_SEQ(LINE(ed, 0), "hello");
+  ed_teardown(&ed);
+}
+
 /* ---- delete joins next line ---- */
 
 static void test_delete_at_eol_joins_next(void) {
@@ -521,6 +609,13 @@ void suite_editing(void) {
   RUN(test_region_dup_returns_marked_text);
   RUN(test_replace_region_swaps_in_text);
   RUN(test_replace_region_multiline_is_one_undo);
+  RUN(test_wrap_region_single_line);
+  RUN(test_wrap_region_preserves_inner_selection);
+  RUN(test_wrap_region_cursor_at_start_orientation);
+  RUN(test_wrap_region_is_one_undo);
+  RUN(test_wrap_region_multiline);
+  RUN(test_wrap_region_without_mark_is_noop);
+  RUN(test_wrap_region_empty_is_noop);
   RUN(test_delete_at_eol_joins_next);
   RUN(test_kill_line_appends_when_consecutive);
   RUN(test_kill_line_at_eol_sets_newline);

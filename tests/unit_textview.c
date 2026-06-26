@@ -245,6 +245,40 @@ static void test_shift_arrow_sets_mark_once(void) {
   CHECK_IEQ(ED->cursor_col, 2);
 }
 
+static void test_type_star_wraps_region_to_bold(void) {
+  /* select "world", type "**" → it surrounds the region (region stays active) */
+  tv_begin(); load("hello world");
+  put_cursor(0, 6);
+  buf_mark_set(ED);
+  put_cursor(0, 11);                  /* region = "world" */
+  type("*");
+  EXPECT_LINE(0, "hello *world*");
+  CHECK_IEQ(ED->mark_active, 1);      /* mark survives so the next * stacks */
+  type("*");
+  EXPECT_LINE(0, "hello **world**");
+}
+
+static void test_type_eq_wraps_region_to_highlight(void) {
+  /* select "world", type "==" → highlight markup (region stays active) */
+  tv_begin(); load("hello world");
+  put_cursor(0, 6);
+  buf_mark_set(ED);
+  put_cursor(0, 11);                  /* region = "world" */
+  type("=");
+  EXPECT_LINE(0, "hello =world=");
+  CHECK_IEQ(ED->mark_active, 1);
+  type("=");
+  EXPECT_LINE(0, "hello ==world==");
+}
+
+static void test_type_char_without_region_inserts_normally(void) {
+  tv_begin(); load("hi");
+  put_cursor(0, 2);
+  type("*");                          /* no mark: plain insert at the caret */
+  EXPECT_LINE(0, "hi*");
+  CHECK_IEQ(ED->mark_active, 0);
+}
+
 static void test_alt_arrow_word_jump(void) {
   tv_begin(); load("hello world");
   put_cursor(0, 0);
@@ -466,6 +500,9 @@ void suite_textview(void) {
   RUN(test_literal_tab_dropped);
   /* arrow keys */
   RUN(test_shift_arrow_sets_mark_once);
+  RUN(test_type_star_wraps_region_to_bold);
+  RUN(test_type_eq_wraps_region_to_highlight);
+  RUN(test_type_char_without_region_inserts_normally);
   RUN(test_alt_arrow_word_jump);
   RUN(test_vertical_keeps_target_column);
   /* isearch */

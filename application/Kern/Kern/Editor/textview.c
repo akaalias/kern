@@ -1266,6 +1266,16 @@ void editor_handle_event(const SDL_Event *ev) {
       } else {
         /* a literal Tab is indentation (handled on keydown), never inserted */
         if (e.text.text[0] == '\t' && e.text.text[1] == '\0') break;
+        /* With a region marked, a markdown emphasis/code char surrounds the
+           region instead of being inserted at the caret; the region stays
+           active so typing '*' twice turns a selection into **bold**. */
+        int is_wrap_char = g_ed.mark_active && e.text.text[1] == '\0' &&
+          (e.text.text[0] == '*' || e.text.text[0] == '_' ||
+           e.text.text[0] == '`' || e.text.text[0] == '=');
+        if (is_wrap_char && ed_wrap_region(&g_ed, e.text.text, e.text.text)) {
+          nav_ensure_cursor_visible(&g_ed, &g_vs);
+          break;
+        }
         ed_insert_char(&g_ed, e.text.text);
         nav_ensure_cursor_visible(&g_ed, &g_vs);
       }

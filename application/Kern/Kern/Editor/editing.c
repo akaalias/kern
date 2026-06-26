@@ -282,6 +282,46 @@ void ed_replace_region(EditorState *ed, const char *replacement) {
   buf_mark_clear(ed);
 }
 
+/* Surround the marked region with `open`/`close` markers as one undoable action
+   — e.g. wrap a selection in "**" to make it bold. The markers are inserted
+   (close first so the start offsets stay valid), and the region is left active
+   over the *inner* text so repeated wraps stack: typing '*' twice turns a
+   selection into **bold**. `open`/`close` must be single-line (no '\n').
+   Returns 1 if it wrapped, 0 when there's no non-empty region (the caller
+   should then fall back to a normal insert). */
+int ed_wrap_region(EditorState *ed, const char *open, const char *close) {
+  if (!ed->mark_active) return 0;
+  int sl, sc, el, ec;
+  buf_region_ordered(ed, &sl, &sc, &el, &ec);
+  if (sl == el && sc == ec) return 0;   /* empty region: nothing to wrap */
+
+  int olen = (int)strlen(open);
+  /* Remember which endpoint the caret is on so we can restore orientation. */
+  int cursor_at_start = (ed->cursor_line == sl && ed->cursor_col == sc);
+
+  undo_begin_group(ed);
+  ed->cursor_line = el; ed->cursor_col = ec;
+  ed_insert_char(ed, close);            /* append the closer first */
+  ed->cursor_line = sl; ed->cursor_col = sc;
+  ed_insert_char(ed, open);             /* then the opener, shifting line sl */
+  undo_end_group(ed);
+
+  /* After inserting `open` at the start, the start endpoint shifts right by
+     olen; the end endpoint shifts too only when it shares the start line. */
+  int new_sc = sc + olen;
+  int new_ec = (el == sl) ? ec + olen : ec;
+  if (cursor_at_start) {
+    ed->cursor_line = sl; ed->cursor_col = new_sc;
+    ed->mark_line   = el; ed->mark_col   = new_ec;
+  } else {
+    ed->mark_line   = sl; ed->mark_col   = new_sc;
+    ed->cursor_line = el; ed->cursor_col = new_ec;
+  }
+  ed->cursor_target_col = ed->cursor_col;
+  ed->mark_active = 1;
+  return 1;
+}
+
 /* Kill (cut to kill buffer, with undo) the ordered range [sl,sc] .. [el,ec].
    Leaves the cursor at the start of the range. Mark is left untouched. Records
    one UNDO_DELETE op (ungrouped), so a caller can wrap several edits in its own
