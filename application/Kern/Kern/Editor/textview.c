@@ -126,7 +126,12 @@ static void minibuf_refresh_completion(void) {
 
 /* recent-files MRU (for C-x b buffer switching) lives in recent.c */
 
+/* per-file cursor memory (defined below, near session persistence) */
+static void filepos_remember_current(void);
+static void filepos_restore_current(void);
+
 static void open_or_create_file(const char *path) {
+  filepos_remember_current();   /* stash where we were in the file we're leaving */
   /* resolve the typed name to a path inside the sandbox documents dir */
   buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
   const char *slash = strrchr(g_ed.filepath, '/');
@@ -141,6 +146,8 @@ static void open_or_create_file(const char *path) {
   g_ed.cursor_target_col = 0;
   g_vs.scroll_y = 0;
   buf_invalidate_all_wraps(&g_ed);
+  filepos_restore_current();              /* drop back to where we last were here */
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
   r_set_title(g_ed.filename);
   char msg[256];
   snprintf(msg, sizeof(msg), existed ? "Opened %s" : "New file %s", g_ed.filename);
@@ -1408,9 +1415,12 @@ static void load_daily_note(void) {
    loads (or seeds) today's note and refreshes the view like any buffer switch. */
 static void cmd_open_daily_note(void) {
   if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  filepos_remember_current();   /* remember where we were before jumping away */
   load_daily_note();
   g_vs.scroll_y = 0;
   buf_invalidate_all_wraps(&g_ed);
+  filepos_restore_current();    /* an existing daily note reopens where we left it */
+  nav_ensure_cursor_visible(&g_ed, &g_vs);
   r_set_title(g_ed.filename);
   recent_push(g_ed.filepath);
   char msg[256];
@@ -1658,6 +1668,53 @@ void editor_handle_event(const SDL_Event *ev) {
   }
 }
 
+/* ---- per-file cursor memory: remember the caret position in each file so
+   reopening it later (wikilink, buffer switch, next launch) drops you back where
+   you were. Persisted to ".kern_positions" alongside the session. ---- */
+#define FILEPOS_MAX 256
+typedef struct { char path[1024]; int line, col; } FilePos;
+static FilePos g_filepos[FILEPOS_MAX];
+static int     g_filepos_count;
+
+static void filepos_remember(const char *path, int line, int col) {
+  if (!path || !path[0]) return;
+  for (int i = 0; i < g_filepos_count; i++)
+    if (strcmp(g_filepos[i].path, path) == 0) { g_filepos[i].line = line; g_filepos[i].col = col; return; }
+  int i = g_filepos_count < FILEPOS_MAX ? g_filepos_count++ : FILEPOS_MAX - 1;
+  snprintf(g_filepos[i].path, sizeof(g_filepos[i].path), "%s", path);
+  g_filepos[i].line = line; g_filepos[i].col = col;
+}
+static int filepos_lookup(const char *path, int *line, int *col) {
+  if (!path) return 0;
+  for (int i = 0; i < g_filepos_count; i++)
+    if (strcmp(g_filepos[i].path, path) == 0) { *line = g_filepos[i].line; *col = g_filepos[i].col; return 1; }
+  return 0;
+}
+static void filepos_remember_current(void) {
+  filepos_remember(g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
+}
+/* Move the caret to the current file's remembered position (clamped), if any. */
+static void filepos_restore_current(void) {
+  int ln, col;
+  if (filepos_lookup(g_ed.filepath, &ln, &col)) {
+    g_ed.cursor_line = ln; g_ed.cursor_col = col;
+    nav_cursor_clamp(&g_ed);
+    g_ed.cursor_target_col = g_ed.cursor_col;
+  }
+}
+static void filepos_save(void) {
+#ifndef KERN_HEADLESS_TEST
+  if (!buf_get_documents_dir()[0]) return;
+  char path[1024];
+  buf_resolve_path(".kern_positions", path, sizeof(path));
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  for (int i = 0; i < g_filepos_count; i++)   /* path last: it may contain spaces */
+    fprintf(f, "%d %d %s\n", g_filepos[i].line, g_filepos[i].col, g_filepos[i].path);
+  fclose(f);
+#endif
+}
+
 /* Persist the session — open file, cursor, and view toggles — to ".kern_session"
    in the documents dir, so a relaunch can resume where we left off. App-only
    (no-op headless); written on each autosave tick and on quit. */
@@ -1673,6 +1730,8 @@ static void session_save(void) {
     g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col,
     g_vs.typewriter_mode, g_vs.syntax_mask, g_vs.style_mask);
   if (n > 0) buf_save_text(path, out, n);
+  filepos_remember_current();   /* keep the open file's position fresh, then persist */
+  filepos_save();
 #endif
 }
 
@@ -1750,13 +1809,27 @@ static int file_exists(const char *p) {
   return 0;
 }
 
+/* Load the per-file cursor table written by filepos_save (lines "<line> <col>
+   <path>", path last since it may contain spaces). */
+static void filepos_load(void) {
+  if (!buf_get_documents_dir()[0]) return;
+  char path[1024];
+  buf_resolve_path(".kern_positions", path, sizeof(path));
+  FILE *f = fopen(path, "rb");
+  if (!f) return;
+  char line[1200]; int ln, col; char p[1024];
+  while (fgets(line, sizeof(line), f))
+    if (sscanf(line, "%d %d %1023[^\n]", &ln, &col, p) == 3) filepos_remember(p, ln, col);
+  fclose(f);
+}
+
 /* Drop a wikilink back to `filepath` into a freshly-created daily note (below the
    date heading), then park the cursor on the blank line under it and save. */
 static void daily_add_backlink(EditorState *ed, const char *filepath) {
   /* keep the basename verbatim incl. its extension — wikilink follow resolves the
      bracket text as-is (open_or_create_file appends nothing). */
-  char link[300];
-  snprintf(link, sizeof(link), "[[%s]]", path_base(filepath));
+  char link[400];
+  snprintf(link, sizeof(link), "Previously open file: [[%s]]", path_base(filepath));
   buf_insert_line_at(ed, 1, link, (int)strlen(link));    /* line 1, just under the heading */
   ed->cursor_line = 2; ed->cursor_col = 0; ed->cursor_target_col = 0;
   buf_save(ed, ed->filepath);
@@ -1764,6 +1837,7 @@ static void daily_add_backlink(EditorState *ed, const char *filepath) {
 
 int editor_main(int argc, char **argv) {
   SessionState ss = session_load();
+  filepos_load();   /* per-file cursor table, consulted below + by open_or_create_file */
 
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
@@ -1771,6 +1845,7 @@ int editor_main(int argc, char **argv) {
     const char *slash = strrchr(argv[1], '/');
     if (slash) g_ed.filename = slash + 1;
     printf("loaded %d lines\n", g_ed.line_count);
+    filepos_restore_current();   /* drop to where we last were in this file */
   } else {
     char today[1024];
     today_note_path(today, sizeof(today));
@@ -1780,15 +1855,18 @@ int editor_main(int argc, char **argv) {
       load_daily_note();
       if (ss.loaded && ss.file[0]) daily_add_backlink(&g_ed, ss.file);
     } else if (ss.loaded && ss.file[0] && buf_load_file(&g_ed, ss.file) == 0) {
-      /* today's note already exists → resume the file + cursor from last session */
+      /* today's note already exists → resume the last session's file, dropping to
+         its remembered cursor (session cursor as a fallback) */
       snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", ss.file);
       const char *slash = strrchr(g_ed.filepath, '/');
       g_ed.filename = slash ? slash + 1 : g_ed.filepath;
       g_ed.cursor_line = ss.cursor_line; g_ed.cursor_col = ss.cursor_col;
       nav_cursor_clamp(&g_ed);
       g_ed.cursor_target_col = g_ed.cursor_col;
+      filepos_restore_current();
     } else {
       load_daily_note();   /* no usable session → just open today's note */
+      filepos_restore_current();
     }
   }
   recent_push(g_ed.filepath);   /* seed the MRU with the initially-opened file */
