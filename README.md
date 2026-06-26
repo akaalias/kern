@@ -96,7 +96,6 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | Keys          | Action                          |
 |---------------|---------------------------------|
 | `C-s` / `C-r` | Incremental search fwd / back   |
-| `⌘F`          | Search with match highlights    |
 | `⌘=` / `⌘-`   | Increase / decrease font size   |
 | `Esc`         | Cancel / clear mark             |
 

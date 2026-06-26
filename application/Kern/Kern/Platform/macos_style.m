@@ -322,39 +322,56 @@ static NSView *kern_legend_card(void) {
        @[@"Swap the two characters around the cursor", @"C-t"], @[@"Undo", @"C-/"],
        @[@"UPPERCASE word", @"M-u"], @[@"lowercase word", @"M-l"],
        @[@"Capitalize Word", @"M-c"],
+       @[@"Indent list item", @"Tab"], @[@"Outdent list item", @"S-Tab"],
     ],
     @[ @"Selecting & the clipboard",
-       @[@"Start selecting (set mark)", @"C-Space"], @[@"Copy selection", @"M-w"],
-       @[@"Cut selection", @"C-w"], @[@"Paste", @"C-y"],
+       @[@"Start selecting (set mark)", @"C-Space"],
+       @[@"Extend selection while moving", @"S-Arrows"],
+       @[@"Copy selection", @"M-w / Cmd-C"],
+       @[@"Cut selection", @"C-w"], @[@"Paste", @"C-y / Cmd-V"],
        @[@"Select the whole document", @"C-x h"],
        @[@"Jump between selection ends", @"C-x C-x"],
        @[@"Cancel / clear selection", @"C-g"],
     ],
+    @[ @"Formatting the selection",
+       @[@"Bold", @"**"], @[@"Italic", @"*"],
+       @[@"Highlight", @"=="], @[@"Inline code", @"`"],
+    ],
     @[ @"Searching",
        @[@"Search forward", @"C-s"], @[@"Search backward", @"C-r"],
-       @[@"While searching: next match", @"C-s"],
-       @[@"While searching: previous match", @"C-r"],
-       @[@"Finish searching", @"Return"],
+       @[@"Next match (while searching)", @"C-s"],
+       @[@"Previous match (while searching)", @"C-r"],
+       @[@"Finish searching", @"Return / Esc"],
+       @[@"Cancel searching", @"C-g"],
     ],
     @[ @"Files",
        @[@"Save", @"C-x C-s"], @[@"Save as…", @"C-x C-w"],
        @[@"Open a file", @"C-x C-f"], @[@"Switch to a recent file", @"C-x b"],
        @[@"Quit", @"C-x C-c"],
     ],
-    @[ @"Links & navigation",
+    @[ @"Notes & links",
        @[@"Follow link under cursor", @"Cmd-Return"],
+       @[@"Autocomplete a link", @"[["],
+       @[@"Extract selection to a new note", @"Cmd-S-N"],
+       @[@"Today's note", @"Cmd-S-T"],
        @[@"Go back", @"Cmd-S-Left"], @[@"Go forward", @"Cmd-S-Right"],
     ],
-    @[ @"View",
+    @[ @"Display",
        @[@"Bigger text", @"Cmd-="], @[@"Smaller text", @"Cmd--"],
+       @[@"Typewriter mode", @"C-x t"],
+       @[@"Syntax highlighting", @"C-x y"],
+       @[@"Style check", @"C-x s"],
+       @[@"Symbols (ligatures)", @"C-x l"],
     ],
   ];
 
   NSColor *bg = [NSColor colorWithRed:30.0/255.0 green:30.0/255.0
                                  blue:32.0/255.0 alpha:1.0];
 
-  /* groups balanced across three bento columns (indices into `sections`) */
-  NSArray *columnPlan = @[ @[@0, @5], @[@2, @4], @[@3, @1, @6, @7] ];
+  /* groups balanced across three bento columns (indices into `sections`)
+     0 Moving · 1 Scrolling · 2 Editing · 3 Selecting · 4 Formatting
+     5 Searching · 6 Files · 7 Notes & links · 8 Display */
+  NSArray *columnPlan = @[ @[@2, @3], @[@0, @5, @4], @[@7, @8, @6, @1] ];
 
   NSStackView *columns = [[NSStackView alloc] init];
   columns.orientation = NSUserInterfaceLayoutOrientationHorizontal;
