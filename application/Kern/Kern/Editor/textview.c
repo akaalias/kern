@@ -234,12 +234,14 @@ static void context_refresh(void) {
   if (n_same == 0 && n_back == 0) return;   /* nothing related → no section */
 
   int start = g_ed.line_count;
-  /* Three blank lines open the section: spacing above, the divider line itself
-     (do_render draws a dotted rule + a centered "Context" label across it, at
-     readonly_from + 1), and spacing below. start is the save cut-point. */
-  ctx_append("");
-  ctx_append("");   /* CONTEXT_DIVIDER_OFFSET = 1 — keep in sync with do_render */
-  ctx_append("");
+  /* The section opens with the divider line itself (readonly_from — do_render
+     draws a dotted rule + centered "Context" label across it; the ~1.5 lines of
+     natural gap above it is the spacing), then a blank line for spacing below.
+     start is the save cut-point, and the first read-only line, so the caret only
+     turns amber once it's actually on the divider or below — not on a blank line
+     that still looks like editable page. */
+  ctx_append("");   /* divider line (readonly_from) */
+  ctx_append("");   /* spacing below the divider */
   int first = 1;
   if (n_back > 0) {
     ctx_append("Backlinks");
@@ -1767,10 +1769,10 @@ static void do_render(void) {
     }
 
     /* Divider between the editable page and the read-only Context section: a
-       light dotted rule with a centered "Context" label, drawn on the dedicated
-       divider line (readonly_from + 1; a blank line sits above and below it for
-       breathing room). */
-    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from + 1 && vr->row_start == 0) {
+       light dotted rule with a centered "Context" label, drawn on the first
+       section line (readonly_from), which is also where the caret first turns
+       amber. */
+    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from && vr->row_start == 0) {
       int sepy = vr->py + nav_line_height() / 2;
       int x0 = nav_page_margin() - (int)g_vs.scroll_x;
       int x1 = x0 + nav_page_w();
