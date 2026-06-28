@@ -148,7 +148,7 @@ static void open_or_create_file(const char *path) {
   g_ed.cursor_line = 0;
   g_ed.cursor_col = 0;
   g_ed.cursor_target_col = 0;
-  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -(8.0f * g_vs.font_size);  /* rest at the top page margin */
+  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);  /* rest at the top page margin */
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();              /* drop back to where we last were here */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -596,7 +596,7 @@ static void process_frame(void) {
     if (g_vs.typewriter_mode)
       min_scroll = -(int)(TYPEWRITER_FRACTION * (g_vs.content_h - lh));
     else
-      min_scroll = -(int)(8.0f * g_vs.font_size);   /* normal mode: a top page margin above line 0 */
+      min_scroll = -nav_top_margin(&g_vs);          /* normal mode: a top page margin above line 0 */
 
     /* Clamp the ease target first so the glide settles exactly on a valid scroll
        position, then ease scroll_y toward it (typewriter mode only — every other
@@ -1869,7 +1869,7 @@ static void cmd_open_daily_note(void) {
   if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
   filepos_remember_current();   /* remember where we were before jumping away */
   load_daily_note();
-  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -(8.0f * g_vs.font_size);
+  g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();    /* an existing daily note reopens where we left it */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -2437,7 +2437,7 @@ int editor_main(int argc, char **argv) {
   }
   nav_ensure_cursor_visible(&g_ed, &g_vs);
   if (g_vs.typewriter_mode) g_vs.scroll_y = g_vs.scroll_target_y;   /* snap, no launch glide */
-  else if (g_vs.scroll_y <= 0) g_vs.scroll_y = -(8.0f * g_vs.font_size);  /* show the top page margin */
+  else if (g_vs.scroll_y <= 0) g_vs.scroll_y = -nav_top_margin(&g_vs);  /* show the top page margin */
 
   SDL_AddEventWatch(resize_event_watcher, NULL);
   for (;;) {

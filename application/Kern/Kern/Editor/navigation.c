@@ -45,6 +45,10 @@ int nav_page_margin(void) {
   return m > MIN_MARGIN ? m : MIN_MARGIN;
 }
 
+int nav_top_margin(const ViewState *vs) {
+  return (int)(8.0f * vs->font_size);
+}
+
 int nav_line_height(void) {
   return (int)(r_get_text_height() * LINE_HEIGHT_MULT + 0.5f);
 }
@@ -219,6 +223,11 @@ void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs) {
   int view_h = vs->content_h > 0 ? vs->content_h : nav_win_h();
   if (cursor_top < vs->scroll_y) vs->scroll_y = cursor_top;
   if (cursor_bot > vs->scroll_y + view_h) vs->scroll_y = cursor_bot - view_h;
+  /* When the first visual row is the topmost shown, rest at the top page margin
+     (negative scroll_y = virtual whitespace above line 0) rather than flush at 0,
+     so scrolling back up restores the margin — process_frame draws it the same as
+     on launch. */
+  if (cursor_top <= 0) vs->scroll_y = -nav_top_margin(vs);
 }
 
 /* ---- visual-row geometry (mirrors do_render's per-row layout) ---- */

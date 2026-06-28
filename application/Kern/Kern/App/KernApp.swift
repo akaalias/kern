@@ -97,7 +97,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             XSettingsView()
-                .tabItem { Label("X", systemImage: "bird") }
+                .tabItem { Text("X (Twitter)") }
         }
         .frame(width: 460)
         .padding(20)

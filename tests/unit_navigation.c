@@ -201,6 +201,23 @@ static void test_ensure_visible_without_content_h(void) {
   ed_teardown(&ed);
 }
 
+/* Normal mode: after scrolling down then moving the caret back to the first
+   line, scroll_y must rest at the top page margin (negative) so the margin
+   reappears — not snap flush to 0. Regression for the vanishing top margin. */
+static void test_ensure_visible_restores_top_margin(void) {
+  stub_set_metrics(10, 20, 800, 600);            /* line height 30 */
+  EditorState ed = {0}; ed_load(&ed, "line 0");
+  for (int i = 1; i < 40; i++) buf_insert_line_at(&ed, i, "x", 1);
+  ViewState vs = {0};
+  vs.content_h = 600; vs.font_size = 24.0f;       /* top margin = 8 * 24 = 192 */
+  vs.scroll_y = 300;                              /* scrolled well down */
+  ed.cursor_line = 0; ed.cursor_col = 0;          /* caret back at the top */
+  nav_ensure_cursor_visible(&ed, &vs);
+  CHECK(vs.scroll_y < 0);                          /* margin shown, not flush at 0 */
+  CHECK_IEQ((int)vs.scroll_y, -nav_top_margin(&vs));
+  ed_teardown(&ed);
+}
+
 /* Click on the first row of a wrapped line takes the "more rows follow" branch. */
 static void test_click_on_wrapped_line(void) {
   stub_set_metrics(10, 20, 800, 600);          /* 70 glyphs per row */
@@ -316,6 +333,7 @@ void suite_navigation(void) {
   RUN(test_click_to_cursor);
   RUN(test_cursor_clamp_all_directions);
   RUN(test_ensure_visible_without_content_h);
+  RUN(test_ensure_visible_restores_top_margin);
   RUN(test_click_on_wrapped_line);
   RUN(test_click_on_list_line_accounts_for_indent);
   RUN(test_visual_move_stays_in_wrapped_line);

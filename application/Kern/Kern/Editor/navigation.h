@@ -11,6 +11,10 @@ int nav_page_w(void);
 int nav_page_margin(void);
 int nav_line_height(void);
 
+/* Normal-mode top page margin in pixels: virtual whitespace above line 0 so the
+   first line rests below the window top (negate for the min scroll_y). */
+int nav_top_margin(const ViewState *vs);
+
 /* word wrapping */
 int nav_count_wraps(Line *l);
 int nav_get_wrap_breaks(Line *l, int *starts, int max_starts);
