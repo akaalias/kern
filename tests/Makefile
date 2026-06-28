@@ -104,7 +104,7 @@ PERF_BIN := kern_perf
 # widths), so it links against md_render.c and its span providers (pos/style +
 # the fake tagger) — the same minimal graph the test binary uses.
 PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c pos_tagger_fake.c \
-            $(APP)/Editor/buffer.c $(APP)/Editor/navigation.c \
+            $(APP)/Editor/buffer.c $(APP)/Editor/undo.c $(APP)/Editor/navigation.c \
             $(APP)/Editor/md_render.c $(APP)/Editor/pos_render.c \
             $(APP)/Editor/style_check.c $(APP)/Editor/sub_render.c
 

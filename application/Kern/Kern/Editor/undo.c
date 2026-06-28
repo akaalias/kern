@@ -14,6 +14,16 @@ static void undo_op_free(UndoOp *op) {
   op->type = UNDO_NONE;
 }
 
+/* Drop the entire undo history: free every op's text and reset the stack.
+   Must be called whenever the buffer is replaced wholesale (file load / new
+   buffer) — otherwise leftover ops reference the previous file's line/col
+   geometry, and undoing them runs an out-of-bounds memmove. */
+void undo_clear(EditorState *ed) {
+  for (int i = 0; i < MAX_UNDO; i++) undo_op_free(&ed->undo_stack[i]);
+  ed->undo_top = 0;
+  ed->undo_count = 0;
+}
+
 void undo_push_op(EditorState *ed, UndoOpType type, int line, int col,
                    const char *text, int text_len)
 {
@@ -67,8 +77,22 @@ void undo_end_group(EditorState *ed) {
   undo_push_op(ed, UNDO_GROUP_END, 0, 0, NULL, 0);
 }
 
+/* Reject an op whose (line, col, text_len) no longer fit the live buffer.
+   With the undo stack cleared on every file load this should never trigger,
+   but applying a stale op runs an out-of-bounds memmove, so guard against it
+   rather than corrupt memory. */
+static int undo_op_in_bounds(EditorState *ed, UndoOp *op) {
+  if (op->line < 0 || op->line >= ed->line_count) return 0;
+  int len = ed->lines[op->line].len;
+  if (op->col < 0 || op->col > len) return 0;
+  /* an insert is undone by deleting [col, col+text_len) — it must be present */
+  if (op->type == UNDO_INSERT && op->col + op->text_len > len) return 0;
+  return 1;
+}
+
 /* undo a single (non-group) operation, directly manipulating the buffer */
 static void undo_apply_one(EditorState *ed, UndoOp *op) {
+  if (!undo_op_in_bounds(ed, op)) return;
   switch (op->type) {
     case UNDO_INSERT: {
       /* undo an insert: delete the inserted text */

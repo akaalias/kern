@@ -131,7 +131,42 @@ static void test_undo_empty_is_noop(void) {
   ed_teardown(&ed);
 }
 
+/* Loading a new buffer (buf_init_empty / buf_load_file) must drop the old
+   file's undo history — otherwise undoing applies ops that reference a buffer
+   that no longer exists. Regression for the C-/ -after-buffer-switch crash. */
+static void test_undo_cleared_on_buffer_reset(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abcdef");
+  ed_insert_char(&ed, "g");          /* push an insert op at col 6 */
+  CHECK(ed.undo_count > 0);
+  buf_init_empty(&ed);               /* simulates opening another file */
+  CHECK_IEQ(ed.undo_count, 0);
+  CHECK_IEQ(ed.undo_top, 0);
+  undo_perform(&ed);                 /* must be a no-op, not a stale-op replay */
+  CHECK_SEQ(LINE(ed, 0), "");
+  ed_teardown(&ed);
+}
+
+/* Defense in depth: an op whose (line,col,text_len) overran the live buffer
+   used to drive an out-of-bounds memmove (negative length -> giant size_t).
+   undo_apply_one now rejects it instead of corrupting memory. */
+static void test_undo_stale_op_is_safe(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abcdef");
+  ed_insert_char(&ed, "g");          /* insert op: line 0, col 6, len 1 */
+  /* Shrink the line behind undo's back, as a smaller file in the same slot
+     would — col+text_len (7) now exceeds len (2). */
+  ed.lines[0].len = 2;
+  ed.lines[0].text[2] = '\0';
+  ed.cursor_col = 2;
+  undo_perform(&ed);                 /* must not crash; op rejected as OOB */
+  CHECK_SEQ(LINE(ed, 0), "ab");      /* buffer left intact */
+  ed_teardown(&ed);
+}
+
 void suite_undo(void) {
+  RUN(test_undo_cleared_on_buffer_reset);
+  RUN(test_undo_stale_op_is_safe);
   RUN(test_undo_insert);
   RUN(test_undo_backspace_restores_char);
   RUN(test_undo_enter_rejoins);

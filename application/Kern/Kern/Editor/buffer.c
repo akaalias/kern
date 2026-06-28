@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <strings.h>
 #include "buffer.h"
+#include "undo.h"
 
 /* ---- sandboxed document location ---- */
 
@@ -263,6 +264,7 @@ int buf_load_file(EditorState *ed, const char *path) {
 
   free(buf);
   ed->dirty = 0;   /* freshly loaded == matches disk */
+  undo_clear(ed);  /* old file's undo ops reference a buffer that no longer exists */
   return 0;
 }
 
@@ -287,6 +289,7 @@ void buf_init_empty(EditorState *ed) {
   ed->cursor_col = 0;
   ed->cursor_target_col = 0;
   ed->dirty = 0;   /* a fresh empty buffer has nothing to save */
+  undo_clear(ed);  /* no history carries across a buffer reset */
 }
 
 int buf_save(EditorState *ed, const char *path) {
