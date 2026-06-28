@@ -20,9 +20,9 @@ A living catalogue of candidate refactors toward the project's north star: **rea
 |---|-----------|--------|--------|------|------------|--------|
 | 1 | Remove/shrink vestigial microui usage | High (−~3k LOC, big clarity) | Med–High | Med | Snapshot + GUI smoke | **Done** |
 | 2 | Replace `#define` global aliases with explicit `EditorState*`/`ViewState*` | High (testability, readability) | Med | Med | Unit + characterization | **Done** |
-| 3 | Split `textview.c` (~1,330 LOC) into modules | High (readability) | Med | Low–Med | Feature + snapshot | Proposed |
+| 3 | Split `textview.c` (~1,330 LOC) into modules | High (readability) | Med | Low–Med | Feature + snapshot | **Partial** (do_render split into named passes; full TU extraction deferred) |
 | 4 | Cache per-line markdown span map (kill O(n²) re-parse) | High (perf + clarity) | Med | Med | Snapshot + perf | **Done** |
-| 5 | Factor one `md_scan_list_marker` helper | Med (DRY) | Low | Low | Integration | Proposed |
+| 5 | Factor one `md_scan_list_marker` helper | Med (DRY) | Low | Low | Integration | **Done** (`md_list_marker_end`) |
 | 6 | Incremental wrap invalidation + run-based metrics | High (perf at scale) | Med–High | Med | Perf + snapshot | **Partial** (resize-skip done; per-word deferred) |
 | 7 | Smarter autosave for huge files | Med (perf/UX) | Low–Med | Low | Perf + unit | Proposed |
 | 8 | Extract theme/palette + layout-metrics | Med (clarity) | Low | Low | Snapshot | Proposed |
@@ -57,6 +57,7 @@ A living catalogue of candidate refactors toward the project's north star: **rea
 **Where:** `Editor/textview.c` (e.g. `editor_main`, `process_frame`, `do_render`, `handle_*_key`, `minibuf_*`, `wl_*`).
 **Parity-risk:** Low–Medium now that #2 is done (moving functions, not changing them).
 **Guarded by:** feature + snapshot (Phase B/D). **Best done after the keydown test seam exists** so the moved input logic is covered.
+**Status:** **Partial.** `do_render`'s self-contained draw blocks were extracted into named passes — `draw_context_divider`, `draw_wikilink_dropdown`, `draw_status_bar` — so it reads as a short sequence. The `process_frame` scroll-math split was **not** done: the row-layout below shares the `total_vis`/`max_scroll` locals, so extracting would force a recompute of `nav_total_visual_lines` (walks every line) — a perf regression. Full cross-TU extraction (Context / page-furniture / margin-notes / session into their own `.c`) is still deferred — it needs `project.pbxproj` surgery for render-only code the headless suite can't cover.
 
 ### 9. Unify prefix chords into the binding table
 **What:** Extend `normal_bindings[]` to express prefixed chords (`C-x …`, ESC/meta …) so dispatch is one declarative table instead of `normal_bindings[]` + `handle_cx_prefix_key` + `handle_esc_prefix_key` + inline `section 5` special-cases.
@@ -106,6 +107,7 @@ A living catalogue of candidate refactors toward the project's north star: **rea
 **Where:** `Editor/md_render.c:9-48`.
 **Parity-risk:** Low.
 **Guarded by:** integration tests (Phase B).
+**Status:** **Done.** `md_list_marker_end(l)` returns the byte index past a `- `/`N. ` marker (0 if not a list item); `md_list_indent`/`md_list_marker_width`/`md_is_list_item` are now one-liners over it.
 
 ### 8. Extract a theme/palette and layout-metrics
 **What:** Centralise the inline color literals (`color(80,80,80,…)`, link/code/highlight colors) and layout constants (`TOP_PADDING 82`, `status_bar_h = text_height + 16`, etc.) into a named palette + metrics struct.
@@ -132,6 +134,15 @@ A living catalogue of candidate refactors toward the project's north star: **rea
 **Guarded by:** ASan + libFuzzer (`buf_load_file`, `md_detect_span`) (Phase A/E).
 
 ---
+
+## Landed (dedup pass, not previously catalogued)
+
+A behavior-preserving cleanup sweep (each guarded by `make test` + the app build):
+
+- **Per-line span cache unified.** The md/pos/style/sub layers shared an identical lazy `(spans,count)` compute body; collapsed into one `KERN_DEFINE_SPAN_CACHE` macro (`Editor/span_cache.h`), with pos's determiner→noun correction moved into a `pos_scan` wrapper. The four span fields are freed via one `line_free_spans()` (was hand-listed at two free sites + init + dirty), so a future 5th layer can't leak by omission.
+- **Core dedup helpers.** `region_flatten` (copy/cut range flatten), `buf_join_line_with_next` (line join in backspace/delete/kill-line/undo), `buf_clamp_cursor` (clamp duplicated in `ed_kill_range` + `undo_perform`), `ed_insert_byte`, `kill_ensure_cap`; `md_detect_pair` (the `**`/`==`/`++` scans); `nav_record_match` + `nav_row_bounds` + `NAV_MAX_WRAP_ROWS`; `cmd_page_move`/`cmd_font_step`.
+- **textview.c.** Removed dead `stroke_guard`/`draw_corner_arc`; `save_if_dirty`, `minibuf_open`, `is_caret_row`, `path_base` reuse, `buffer_dup_all` reuse in autosave. (Footnote-scanner and dropdown-box merges deliberately skipped — their control flow has diverged, so unifying would change behavior in render-only code.)
+- **The md draw/measure lockstep (the geometry-critical hazard).** `md_draw_text` and `md_x_to_col` now share `md_span_style` + `md_token_advance` for the width-determining steps, so the render walk and the click walk can't drift. Guarded by `unit_sub.c`'s draw↔click parity tests.
 
 ## Ideas parking lot (unprioritised)
 
