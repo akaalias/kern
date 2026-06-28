@@ -271,8 +271,7 @@ static void open_or_create_file(const char *path) {
   filepos_remember_current();   /* stash where we were in the file we're leaving */
   /* resolve the typed name to a path inside the sandbox documents dir */
   buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
-  const char *slash = strrchr(g_ed.filepath, '/');
-  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
+  g_ed.filename = path_base(g_ed.filepath);
 
   buf_free_all_lines(&g_ed);
   int existed = (buf_load_file(&g_ed, g_ed.filepath) == 0);
@@ -295,8 +294,7 @@ static void open_or_create_file(const char *path) {
 
 static void save_to_path(const char *path) {
   buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
-  const char *slash = strrchr(g_ed.filepath, '/');
-  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
+  g_ed.filename = path_base(g_ed.filepath);
   char msg[256];
   if (buf_save(&g_ed, g_ed.filepath) == 0) {
     snprintf(msg, sizeof(msg), "Wrote %s", g_ed.filename);
@@ -362,13 +360,20 @@ static int wikilink_at_cursor(char *out, int outsz) {
   return 0;
 }
 
+/* Flush the open buffer to disk if it has unsaved changes and a real path —
+   the guard run before leaving the current file (wikilink jump, buffer switch,
+   daily-note, quit). */
+static void save_if_dirty(void) {
+  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+}
+
 static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
   char target[1024];
   if (!wikilink_at_cursor(target, sizeof(target))) {
     nav_status_set(&g_vs, "No wikilink at cursor");
     return;
   }
-  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  save_if_dirty();
   nav_stack_push(nav_back, &nav_back_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   nav_fwd_count = 0;   /* a new jump starts a fresh branch — drop forward history */
   open_or_create_file(target);
@@ -376,7 +381,7 @@ static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
 
 static void cmd_nav_back(void) {          /* Cmd-Shift-Left */
   if (nav_back_count == 0) { nav_status_set(&g_vs, "No previous note"); return; }
-  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  save_if_dirty();
   nav_stack_push(nav_fwd, &nav_fwd_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   NavEntry e = nav_back[--nav_back_count];
   nav_goto(&e);
@@ -384,7 +389,7 @@ static void cmd_nav_back(void) {          /* Cmd-Shift-Left */
 
 static void cmd_nav_forward(void) {       /* Cmd-Shift-Right */
   if (nav_fwd_count == 0) { nav_status_set(&g_vs, "No next note"); return; }
-  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  save_if_dirty();
   nav_stack_push(nav_back, &nav_back_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
   NavEntry e = nav_fwd[--nav_fwd_count];
   nav_goto(&e);
@@ -971,10 +976,20 @@ static void goto_line_cb(const char *text) {
   nav_ensure_cursor_visible(&g_ed, &g_vs);
   char msg[64]; snprintf(msg, sizeof(msg), "Line %d", n); nav_status_set(&g_vs, msg);
 }
+/* Open the minibuffer with `prompt`, an empty input, and `cb` invoked on Enter.
+   `completing` enables ghost filename completion (Tab to accept). */
+static void minibuf_open(const char *prompt, int completing, void (*cb)(const char *)) {
+  g_vs.minibuf_active = 1;
+  minibuf_completing = completing;
+  minibuf_suggest[0] = '\0';
+  snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "%s", prompt);
+  g_vs.minibuf_text[0] = '\0';
+  g_vs.minibuf_len = 0;
+  g_vs.minibuf_callback = cb;
+}
+
 static void cmd_goto_line(void) {       /* M-g */
-  g_vs.minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
-  snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Goto line: ");
-  g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0; g_vs.minibuf_callback = goto_line_cb;
+  minibuf_open("Goto line: ", 0, goto_line_cb);
 }
 
 /* ---- modal key handlers ---- */
@@ -1002,7 +1017,7 @@ static void bufsw_filter(void) {
 
 static void bufsw_switch(const char *path) {
   if (!path || !path[0]) { nav_status_set(&g_vs, "No other buffer"); return; }
-  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);   /* save current */
+  save_if_dirty();   /* save current */
   open_or_create_file(path);
 }
 
@@ -1038,14 +1053,13 @@ static void cmd_switch_buffer(void) {   /* C-x b */
   bufsw_default[0] = '\0';
   if (recent_count() >= 2) snprintf(bufsw_default, sizeof(bufsw_default), "%s", recent_get(1));
   g_vs.suppress_next_text = 1;   /* swallow the "b" text event that triggered this */
-  g_vs.minibuf_active = 1; minibuf_completing = 0; minibuf_suggest[0] = '\0';
-  g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0; g_vs.minibuf_callback = NULL;
-  bufsw_active = 1; bufsw_listing = 0; bufsw_sel = 0; bufsw_count = 0;
+  char prompt[128];
   if (bufsw_default[0])
-    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt),
-             "Switch to buffer (default %s): ", path_base(bufsw_default));
+    snprintf(prompt, sizeof(prompt), "Switch to buffer (default %s): ", path_base(bufsw_default));
   else
-    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Switch to buffer: ");
+    snprintf(prompt, sizeof(prompt), "Switch to buffer: ");
+  minibuf_open(prompt, 0, NULL);
+  bufsw_active = 1; bufsw_listing = 0; bufsw_sel = 0; bufsw_count = 0;
 }
 
 static int handle_minibuf_key(int sym, int ctrl) {
@@ -1177,13 +1191,7 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     if (g_ed.filepath[0]) {
       save_to_path(g_ed.filepath);
     } else {
-      g_vs.minibuf_active = 1;
-      minibuf_completing = 1;       /* hint existing filenames (Tab to accept) */
-      minibuf_suggest[0] = '\0';
-      snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Write file (Documents): ");
-      g_vs.minibuf_text[0] = '\0';
-      g_vs.minibuf_len = 0;
-      g_vs.minibuf_callback = save_to_path;
+      minibuf_open("Write file (Documents): ", 1, save_to_path);
     }
     return 1;
   }
@@ -1191,21 +1199,12 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     exit(EXIT_SUCCESS);
     return 1;
   }
-  if (ctrl && sym == SDLK_f) {
-    g_vs.minibuf_active = 1;
-    minibuf_completing = 1;       /* enable ghost filename completion */
-    minibuf_suggest[0] = '\0';
-    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Find file (Documents): ");
-    g_vs.minibuf_text[0] = '\0';
-    g_vs.minibuf_len = 0;
-    g_vs.minibuf_callback = open_or_create_file;
+  if (ctrl && sym == SDLK_f) {   /* C-x C-f: find file */
+    minibuf_open("Find file (Documents): ", 1, open_or_create_file);
     return 1;
   }
   if (ctrl && sym == SDLK_w) {   /* C-x C-w: write-file (save as) */
-    g_vs.minibuf_active = 1; minibuf_completing = 1; minibuf_suggest[0] = '\0';
-    snprintf(g_vs.minibuf_prompt, sizeof(g_vs.minibuf_prompt), "Write file (Documents): ");
-    g_vs.minibuf_text[0] = '\0'; g_vs.minibuf_len = 0;
-    g_vs.minibuf_callback = save_to_path;
+    minibuf_open("Write file (Documents): ", 1, save_to_path);
     return 1;
   }
   if (!ctrl && sym == SDLK_h) { cmd_mark_whole_buffer(&g_ed, &g_vs); return 1; }   /* C-x h */
@@ -1328,41 +1327,6 @@ static int handle_wikilink_key(int sym, int ctrl) {
     return 1;
   }
   return 0;
-}
-
-/* A quarter-circle arc of `c`, center (cx,cy), radius r, sweeping from the top
-   point to the side: dir=+1 rounds a top-right corner, dir=-1 a top-left one. */
-static void draw_corner_arc(int cx, int cy, int r, int dir, Color c) {
-  int steps = r * 3; if (steps < 8) steps = 8;
-  for (int k = 0; k <= steps; k++) {
-    double a = (3.14159265358979 / 2.0) * k / steps;
-    int px = cx + dir * (int)(r * sin(a));
-    int py = cy - (int)(r * cos(a));
-    r_draw_rect(rect(px, py, 2, 2), c);     /* 2px so the arc stays gap-free */
-  }
-}
-
-/* Stroke a guard's border with ONE rounded top corner (the inner one): the top
-   edge, both verticals and the bottom edge, with the rounded corner's two edges
-   shortened by r and joined by an arc. round_right rounds the top-right corner
-   (left guard), else the top-left (right guard). */
-static void stroke_guard(int x, int y, int w, int h, int r, int round_right, Color c) {
-  if (r > w) r = w;
-  if (r > h) r = h;
-  r_draw_rect(rect(x, y + h - 1, w, 1), c);                         /* bottom */
-  if (round_right) {
-    int corner = x + w - 1;                                         /* inner top corner */
-    r_draw_rect(rect(x, y, w - r, 1), c);                           /* top (stop r short of corner) */
-    r_draw_rect(rect(x, y, 1, h), c);                               /* left (full) */
-    r_draw_rect(rect(corner, y + r, 1, h - r), c);                  /* right (start r down) */
-    draw_corner_arc(corner - r, y + r, r, +1, c);
-  } else {
-    int corner = x;                                                 /* inner top corner */
-    r_draw_rect(rect(x + r, y, w - r, 1), c);                       /* top (start r past corner) */
-    r_draw_rect(rect(x + w - 1, y, 1, h), c);                       /* right (full) */
-    r_draw_rect(rect(corner, y + r, 1, h - r), c);                  /* left (start r down) */
-    draw_corner_arc(corner + r, y + r, r, -1, c);
-  }
 }
 
 /* Fill a guard rect with ONE rounded top corner (the inner one): the body below
@@ -1495,7 +1459,6 @@ static void draw_typewriter_fog(void) {
   int right_edge = pin_x + half;
   Color plastic = color(45, 45, 47, 165);              /* darker frosted tint over the blur */
   int radius = gh / 2;                                 /* ~50% rounded inner top corner */
-  (void)stroke_guard;                                  /* white border removed for now */
 
   /* Each guard: stencil-mask the rounded shape, then draw the blur + tint clipped
      to it, so both the blur and the tint share the one rounded corner (no square
@@ -1575,16 +1538,22 @@ static int row_py_for_line(int ln) {
   return -1;
 }
 
+/* True if visual row `i` is the one the caret sits on: same logical line, with
+   the caret column inside [row_start,row_end) — or at end-of-line on the line's
+   last visual row. The single row test shared by the caret-py lookup and both
+   do_render caret passes. */
+static int is_caret_row(int i) {
+  VisRow *vr = &g_vs.vis_rows[i];
+  return vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
+         (g_ed.cursor_col < vr->row_end ||
+          (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln));
+}
+
 /* py of the visual row the caret sits on (matches the cursor-draw row test) —
    the wrapped-line-aware row, so the margin input lines up with the marker. */
 static int caret_row_py(void) {
-  for (int i = 0; i < g_vs.vis_row_count; i++) {
-    VisRow *vr = &g_vs.vis_rows[i];
-    if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
-        (g_ed.cursor_col < vr->row_end ||
-         (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln)))
-      return vr->py;
-  }
+  for (int i = 0; i < g_vs.vis_row_count; i++)
+    if (is_caret_row(i)) return g_vs.vis_rows[i].py;
   return -1;
 }
 
@@ -1762,11 +1731,7 @@ static void do_render(void) {
     /* list hanging indent: continuation rows hang under the item text */
     int indent = md_row_indent(L, vr->row_start);
     /* track cursor if it's on this row */
-    int track = -1;
-    if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
-        (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
-      track = g_ed.cursor_col;
-    }
+    int track = is_caret_row(i) ? g_ed.cursor_col : -1;
 
     /* Divider between the editable page and the read-only Context section: a
        light dotted rule with a centered "Context" label, drawn on the first
@@ -1848,8 +1813,7 @@ static void do_render(void) {
     /* find the py for the cursor row */
     for (int i = 0; i < g_vs.vis_row_count; i++) {
       VisRow *vr = &g_vs.vis_rows[i];
-      if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
-          (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
+      if (is_caret_row(i)) {
         /* The caret turns warm amber — the complement of its default cyan — when
            it's inside the read-only Context section, signalling that text there
            can't be edited (only navigated / link-followed). */
@@ -2012,8 +1976,7 @@ static void load_daily_note(void) {
   char fname[32];
   strftime(fname, sizeof(fname), "%Y-%m-%d.md", &lt);
   buf_resolve_path(fname, g_ed.filepath, sizeof(g_ed.filepath));
-  const char *slash = strrchr(g_ed.filepath, '/');
-  g_ed.filename = slash ? slash + 1 : g_ed.filepath;
+  g_ed.filename = path_base(g_ed.filepath);
 
   if (buf_load_file(&g_ed, g_ed.filepath) != 0) {
     /* new note: seed a date heading + blank line, then create it on disk */
@@ -2029,7 +1992,7 @@ static void load_daily_note(void) {
 /* Cmd-Shift-T: jump to today's daily note. Saves the current buffer first, then
    loads (or seeds) today's note and refreshes the view like any buffer switch. */
 static void cmd_open_daily_note(void) {
-  if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+  save_if_dirty();
   filepos_remember_current();   /* remember where we were before jumping away */
   load_daily_note();
   g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);
@@ -2056,7 +2019,7 @@ void editor_handle_event(const SDL_Event *ev) {
   SDL_Event e = *ev;
   switch (e.type) {
     case SDL_QUIT:
-      if (g_ed.dirty && g_ed.filepath[0]) buf_save(&g_ed, g_ed.filepath);
+      save_if_dirty();
       session_save();
       exit(EXIT_SUCCESS); break;
     case SDL_WINDOWEVENT:
@@ -2382,17 +2345,9 @@ static void autosave_async(void) {
   buf_save(&g_ed, g_ed.filepath);          /* synchronous + deterministic for tests */
 #else
   if (g_saving) return;                    /* a previous save still running; retry next tick */
-  int nlines = buf_content_line_count(&g_ed);   /* exclude the read-only Context section */
-  int total = 0;
-  for (int i = 0; i < nlines; i++) total += g_ed.lines[i].len + 1;
-  char *text = malloc(total > 0 ? total : 1);
-  if (!text) { buf_save(&g_ed, g_ed.filepath); return; }   /* OOM: fall back to sync */
   int off = 0;
-  for (int i = 0; i < nlines; i++) {
-    memcpy(text + off, g_ed.lines[i].text, g_ed.lines[i].len);
-    off += g_ed.lines[i].len;
-    if (i < nlines - 1) text[off++] = '\n';
-  }
+  char *text = buffer_dup_all(&g_ed, &off);   /* note text, Context section excluded */
+  if (!text) { buf_save(&g_ed, g_ed.filepath); return; }   /* OOM: fall back to sync */
   SaveJob *job = malloc(sizeof *job);
   if (!job) { free(text); buf_save(&g_ed, g_ed.filepath); return; }
   snprintf(job->path, sizeof job->path, "%s", g_ed.filepath);
@@ -2537,9 +2492,7 @@ int editor_main(int argc, char **argv) {
 
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
-    g_ed.filename = argv[1];
-    const char *slash = strrchr(argv[1], '/');
-    if (slash) g_ed.filename = slash + 1;
+    g_ed.filename = path_base(argv[1]);
     printf("loaded %d lines\n", g_ed.line_count);
     filepos_restore_current();   /* drop to where we last were in this file */
   } else {
