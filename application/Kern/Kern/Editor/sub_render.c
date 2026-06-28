@@ -59,6 +59,15 @@ static const struct Fixed k_fixed[] = {
   { "nabla",    "∇", SUB_MATH, 1 },
   { "infinity", "∞", SUB_MATH, 1 },
   { "sqrt",     "√", SUB_MATH, 1 },
+  /* typographic f-ligatures — mid-word, NOT whole-word (they sit inside "offer",
+     "file", "flow"). Longest-match-first handles ffi/ffl before ff. The font may
+     lack some of these glyphs; emit() skips any the font can't draw, so the
+     source renders literally instead of as a tofu box. */
+  { "ffi", "ﬃ", SUB_LIGATURE, 0 },
+  { "ffl", "ﬄ", SUB_LIGATURE, 0 },
+  { "ff",  "ﬀ", SUB_LIGATURE, 0 },
+  { "fi",  "ﬁ", SUB_LIGATURE, 0 },
+  { "fl",  "ﬂ", SUB_LIGATURE, 0 },
 };
 #define N_FIXED ((int)(sizeof k_fixed / sizeof k_fixed[0]))
 

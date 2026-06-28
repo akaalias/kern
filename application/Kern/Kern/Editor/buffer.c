@@ -110,33 +110,75 @@ int buf_complete_filename(const char *prefix, char *out, int outsz) {
   return 1;
 }
 
-/* Collect up to `max` existing filenames in the documents dir whose names start
-   with `prefix` (case-insensitive), alphabetically. Returns the count. Used for
-   the wikilink autocomplete dropdown. */
+/* Fuzzy subsequence score of `q` against `name` (case-insensitive): every char
+   of `q` must appear in `name` in order, else -1. Higher is a better match —
+   bonuses for matching at the very start, right after a word separator, and
+   contiguously with the previous matched char. An empty query scores 0 (all
+   names match), so just-typed "[[" lists everything. */
+static int fuzzy_score(const char *name, const char *q) {
+  if (!*q) return 0;
+  int score = 0, ni = 0, last = -2;
+  for (int qi = 0; q[qi]; qi++) {
+    int qc = tolower((unsigned char)q[qi]);
+    int found = -1;
+    for (; name[ni]; ni++)
+      if (tolower((unsigned char)name[ni]) == qc) { found = ni; break; }
+    if (found < 0) return -1;                  /* q is not a subsequence */
+    score += 1;
+    if (found == 0) score += 10;               /* anchored at the start */
+    else {
+      unsigned char p = (unsigned char)name[found - 1];
+      if (p==' '||p=='-'||p=='_'||p=='.'||p=='/') score += 5;   /* word start */
+    }
+    if (found == last + 1) score += 5;         /* contiguous run */
+    last = found;
+    ni = found + 1;
+  }
+  return score;
+}
+
+/* Collect up to `max` existing filenames in the documents dir that fuzzy-match
+   `prefix` (subsequence, case-insensitive), best match first (ties broken
+   alphabetically). Returns the count. Used for the wikilink autocomplete. */
 int buf_list_matches(const char *prefix, char out[][256], int max) {
   if (g_documents_dir[0] == '\0' || max <= 0) return 0;
   DIR *d = opendir(g_documents_dir);
   if (!d) return 0;
 
-  size_t plen = strlen(prefix);
-  int count = 0;
+  enum { CAND_MAX = 1024 };
+  static char names[CAND_MAX][256];
+  static int  scores[CAND_MAX];
+  int ncand = 0;
   struct dirent *e;
-  while ((e = readdir(d)) != NULL) {
+  while ((e = readdir(d)) != NULL && ncand < CAND_MAX) {
     const char *name = e->d_name;
     if (name[0] == '.') continue;                       /* skip ., .., hidden */
     if (strlen(name) >= 256) continue;
-    if (plen > 0 && strncasecmp(name, prefix, plen) != 0) continue;
-
-    /* insert into out[] keeping it alphabetical, capped at max */
-    int idx = 0;
-    while (idx < count && strcasecmp(out[idx], name) < 0) idx++;
-    if (idx >= max) continue;                           /* sorts after a full list */
-    int end = (count < max) ? count : max - 1;          /* last slot to shift into */
-    for (int j = end; j > idx; j--) memcpy(out[j], out[j-1], 256);
-    snprintf(out[idx], 256, "%s", name);
-    if (count < max) count++;
+    int sc = fuzzy_score(name, prefix);
+    if (sc < 0) continue;                               /* not a fuzzy match */
+    snprintf(names[ncand], 256, "%s", name);
+    scores[ncand] = sc;
+    ncand++;
   }
   closedir(d);
+
+  /* selection-sort the top `max` out of `ncand` by score desc, then name asc */
+  int count = ncand < max ? ncand : max;
+  for (int i = 0; i < count; i++) {
+    int best = i;
+    for (int j = i + 1; j < ncand; j++)
+      if (scores[j] > scores[best] ||
+          (scores[j] == scores[best] && strcasecmp(names[j], names[best]) < 0))
+        best = j;
+    if (best != i) {
+      int ts = scores[i]; scores[i] = scores[best]; scores[best] = ts;
+      char tn[256];
+      memcpy(tn, names[i], 256);
+      memcpy(names[i], names[best], 256);
+      memcpy(names[best], tn, 256);
+    }
+    memcpy(out[i], names[i], 256);
+  }
   return count;
 }
 
@@ -192,6 +234,9 @@ void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len) {
   memmove(&ed->lines[idx + 1], &ed->lines[idx], (ed->line_count - idx) * sizeof(Line));
   line_init(&ed->lines[idx], s, len);
   ed->line_count++;
+  /* keep the read-only Context boundary tracking the section as content above it
+     grows (a line added at or before the boundary pushes the section down) */
+  if (ed->readonly_from > 0 && idx <= ed->readonly_from) ed->readonly_from++;
 }
 
 void buf_delete_line_at(EditorState *ed, int idx) {
@@ -202,6 +247,14 @@ void buf_delete_line_at(EditorState *ed, int idx) {
   free(ed->lines[idx].sub_spans);
   memmove(&ed->lines[idx], &ed->lines[idx + 1], (ed->line_count - idx - 1) * sizeof(Line));
   ed->line_count--;
+  if (ed->readonly_from > 0 && idx < ed->readonly_from) ed->readonly_from--;
+}
+
+/* Number of lines that belong to the document proper (excludes the auto-generated
+   read-only Context section). Save/serialize use this so the section never hits
+   disk or the clipboard/publish payload. */
+int buf_content_line_count(const EditorState *ed) {
+  return ed->readonly_from > 0 ? ed->readonly_from : ed->line_count;
 }
 
 /* ---- file I/O ---- */
@@ -263,8 +316,9 @@ int buf_load_file(EditorState *ed, const char *path) {
   }
 
   free(buf);
-  ed->dirty = 0;   /* freshly loaded == matches disk */
-  undo_clear(ed);  /* old file's undo ops reference a buffer that no longer exists */
+  ed->dirty = 0;        /* freshly loaded == matches disk */
+  ed->readonly_from = 0;/* no Context section yet; caller regenerates one */
+  undo_clear(ed);       /* old file's undo ops reference a buffer that no longer exists */
   return 0;
 }
 
@@ -289,6 +343,7 @@ void buf_init_empty(EditorState *ed) {
   ed->cursor_col = 0;
   ed->cursor_target_col = 0;
   ed->dirty = 0;   /* a fresh empty buffer has nothing to save */
+  ed->readonly_from = 0;
   undo_clear(ed);  /* no history carries across a buffer reset */
 }
 
@@ -296,9 +351,10 @@ int buf_save(EditorState *ed, const char *path) {
   mkdir_parents(path);
   FILE *f = fopen(path, "wb");
   if (!f) return -1;
-  for (int i = 0; i < ed->line_count; i++) {
+  int n = buf_content_line_count(ed);   /* never write the read-only Context section */
+  for (int i = 0; i < n; i++) {
     fwrite(ed->lines[i].text, 1, ed->lines[i].len, f);
-    if (i < ed->line_count - 1) fwrite("\n", 1, 1, f);
+    if (i < n - 1) fwrite("\n", 1, 1, f);
   }
   /* surface write/flush errors so the UI can report failure honestly */
   int ok = (ferror(f) == 0);

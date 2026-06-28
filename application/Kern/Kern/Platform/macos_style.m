@@ -21,6 +21,15 @@ extern int kern_fillers_enabled(void);
 extern int kern_cliches_enabled(void);
 extern int kern_redundancies_enabled(void);
 
+/* Open the sandbox-container Documents folder in Finder. Bridged to the Window
+   menu item (App/KernApp.swift); runs on the main thread during menu tracking. */
+void kern_open_documents_folder(void) {
+  const char *p = buf_get_documents_dir();
+  if (!p || !*p) return;
+  NSString *path = [NSString stringWithUTF8String:p];
+  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
+}
+
 /* CFBundleShortVersionString (the marketing version), for the dev-build label. */
 const char *kern_app_version(void) {
   static char buf[32];
@@ -83,25 +92,12 @@ const char *kern_app_version(void) {
 - (BOOL)isFlipped { return YES; }
 @end
 
-/* Target for the title-bar buttons. Retained for the app's lifetime. */
-@interface KernTitlebarActions : NSObject <NSWindowDelegate>
-- (void)openDocsFolder:(id)sender;
-- (void)showShortcuts:(id)sender;
-- (void)closeShortcuts:(id)sender;
+/* Target for the title-bar publish button. Retained for the app's lifetime. */
+@interface KernTitlebarActions : NSObject
 - (void)publishToX:(id)sender;
 @end
 
-static NSPanel *g_shortcuts_panel;  /* strong while the panel is up */
-
 @implementation KernTitlebarActions
-
-- (void)openDocsFolder:(id)sender {
-  (void)sender;
-  const char *p = buf_get_documents_dir();
-  if (!p || !*p) return;
-  NSString *path = [NSString stringWithUTF8String:p];
-  [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
-}
 
 - (void)publishToX:(id)sender {
   (void)sender;
@@ -302,14 +298,14 @@ static NSView *kern_legend_card(void) {
   return kern_card_wrap(inner);
 }
 
-- (void)showShortcuts:(id)sender {
-  NSWindow *parent = [sender isKindOfClass:[NSView class]] ? [sender window] : nil;
-  if (!parent) return;
-  if (g_shortcuts_panel) {  /* already open — just bring it forward */
-    [g_shortcuts_panel makeKeyAndOrderFront:nil];
-    return;
-  }
+@end
 
+/* Build the keyboard-shortcuts reference as a standalone, scrollable view for the
+   Settings window's "Keyboard Shortcuts" tab (replaces the old floating panel and
+   its title-bar button). Returns a retained NSScrollView* as an opaque pointer;
+   the Swift NSViewRepresentable takes ownership (takeRetainedValue) to balance
+   the +1. Must be called on the main thread. */
+void *kern_make_shortcuts_view(void) {
   /* ---- content data: section title, then {desc, chord-spec} pairs ---- */
   NSArray *sections = @[
     @[ @"Moving the cursor",
@@ -345,7 +341,8 @@ static NSView *kern_legend_card(void) {
     ],
     @[ @"Formatting the selection",
        @[@"Bold", @"**"], @[@"Italic", @"*"],
-       @[@"Highlight", @"=="], @[@"Inline code", @"`"],
+       @[@"Highlight", @"=="], @[@"Underline", @"++"],
+       @[@"Inline code", @"`"],
     ],
     @[ @"Searching",
        @[@"Search forward", @"C-s"], @[@"Search backward", @"C-r"],
@@ -446,92 +443,11 @@ static NSView *kern_legend_card(void) {
   scroll.drawsBackground = YES;
   scroll.backgroundColor = bg;
   scroll.documentView = container;
+  /* vertical-only scroll: the content tracks the scroll view's width */
   [container.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor].active = YES;
 
-  /* Done button row at the bottom */
-  NSButton *done = [NSButton buttonWithTitle:@"Done"
-                                      target:self
-                                      action:@selector(closeShortcuts:)];
-  done.keyEquivalent = @"\r";  /* Return dismisses */
-  done.translatesAutoresizingMaskIntoConstraints = NO;
-
-  NSView *content = [[NSView alloc] init];
-  content.wantsLayer = YES;
-  content.layer.backgroundColor = bg.CGColor;
-  [content addSubview:scroll];
-  [content addSubview:done];
-  [NSLayoutConstraint activateConstraints:@[
-    [scroll.topAnchor constraintEqualToAnchor:content.topAnchor],
-    [scroll.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-    [scroll.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
-    [done.topAnchor constraintEqualToAnchor:scroll.bottomAnchor constant:12],
-    [done.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-16],
-    [done.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-22],
-  ]];
-
-  /* Choose a width up to 80% of the window, then size the height to fit the
-     content (capped at 90% of the window) so scrolling is rarely needed. */
-  NSRect pf = parent.frame;
-  CGFloat width = floor(pf.size.width * 0.8);
-  if (width < 820.0)  width  = 820.0;
-  if (width > 1280.0) width  = 1280.0;
-  NSLayoutConstraint *widthC =
-      [content.widthAnchor constraintEqualToConstant:width];
-  widthC.active = YES;
-
-  [content layoutSubtreeIfNeeded];
-  CGFloat docH = container.fittingSize.height;
-  CGFloat barH = 16.0 + done.fittingSize.height + 12.0;  /* Done button strip */
-  CGFloat height = docH + barH;
-  CGFloat capH = floor(pf.size.height * 0.9);
-  if (height > capH) height = capH;
-  NSLayoutConstraint *heightC =
-      [content.heightAnchor constraintEqualToConstant:height];
-  heightC.active = YES;
-
-  NSPanel *panel = [[NSPanel alloc]
-      initWithContentRect:NSMakeRect(0, 0, width, height)
-                styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable)
-                  backing:NSBackingStoreBuffered
-                    defer:NO];
-  panel.title = @"Keyboard Shortcuts";
-  panel.opaque = YES;
-  panel.backgroundColor = bg;
-  panel.contentView = content;
-  panel.delegate = self;
-  panel.hidesOnDeactivate = NO;
-  g_shortcuts_panel = panel;
-
-  /* centre over the editor window, then show as an ordinary child window — not
-     a modal sheet — so it never blocks the app from quitting. */
-  NSRect wf = parent.frame;
-  NSPoint origin = NSMakePoint(wf.origin.x + (wf.size.width - width) / 2.0,
-                               wf.origin.y + (wf.size.height - height) / 2.0);
-  [panel setFrameOrigin:origin];
-  [parent addChildWindow:panel ordered:NSWindowAbove];
-  [panel makeKeyAndOrderFront:nil];
+  return (void *)CFBridgingRetain(scroll);
 }
-
-- (void)dismissShortcuts {
-  NSPanel *panel = g_shortcuts_panel;
-  if (!panel) return;
-  g_shortcuts_panel = nil;
-  panel.delegate = nil;
-  [panel.parentWindow removeChildWindow:panel];
-  [panel orderOut:nil];
-}
-
-- (void)closeShortcuts:(id)sender {
-  (void)sender;
-  [self dismissShortcuts];
-}
-
-- (void)windowWillClose:(NSNotification *)note {
-  (void)note;
-  g_shortcuts_panel = nil;
-}
-
-@end
 
 static KernTitlebarActions *g_titlebar_actions;  /* strong (ARC) — keep alive */
 static NSButton *g_publish_btn;                  /* the "Publish to X" title-bar button */
@@ -628,14 +544,6 @@ void macos_style_window(SDL_Window *sdl_window) {
      folder in Finder, and a publish button that posts the current note to X
      (shown only while an X account is connected). */
   g_titlebar_actions = [KernTitlebarActions new];
-  NSButton *helpBtn = kern_titlebar_button(@"info.circle", @"Keyboard shortcuts",
-                                           @"Keyboard shortcuts",
-                                           @selector(showShortcuts:),
-                                           NSZeroRect);
-  NSButton *folder = kern_titlebar_button(@"folder", @"Open documents folder",
-                                          @"Open documents folder in Finder",
-                                          @selector(openDocsFolder:),
-                                          NSZeroRect);
   g_publish_btn = kern_titlebar_button(@"paperplane", @"Publish to X",
                                        @"Publish this note to X",
                                        @selector(publishToX:),
@@ -643,30 +551,17 @@ void macos_style_window(SDL_Window *sdl_window) {
   g_publish_btn.hidden = (kern_x_is_connected() == 0);   /* until/unless connected */
 
   /* AppKit stretches the accessory view to the full (toolbar-tall) title bar
-     height. Pin the buttons to its vertical center via Auto Layout so they line
-     up with the window title instead of sinking to the bottom edge. The three
-     buttons are pinned from the *right* (folder, then help, then publish to its
-     left); when the publish button is hidden its empty slot falls on the inner
-     side against the title bar, so there's no visible gap. */
-  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 120, 30)];
-  helpBtn.translatesAutoresizingMaskIntoConstraints = NO;
-  folder.translatesAutoresizingMaskIntoConstraints = NO;
+     height. Pin the publish button to its vertical center via Auto Layout so it
+     lines up with the window title instead of sinking to the bottom edge.
+     (The keyboard-shortcuts and documents-folder buttons moved to the Settings
+     window and the Window menu respectively.) */
+  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 48, 30)];
   g_publish_btn.translatesAutoresizingMaskIntoConstraints = NO;
-  [buttons addSubview:helpBtn];
-  [buttons addSubview:folder];
   [buttons addSubview:g_publish_btn];
   [NSLayoutConstraint activateConstraints:@[
-    [helpBtn.widthAnchor constraintEqualToConstant:32],
-    [helpBtn.heightAnchor constraintEqualToConstant:24],
-    [folder.widthAnchor constraintEqualToConstant:32],
-    [folder.heightAnchor constraintEqualToConstant:24],
     [g_publish_btn.widthAnchor constraintEqualToConstant:32],
     [g_publish_btn.heightAnchor constraintEqualToConstant:24],
-    [folder.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-8],
-    [helpBtn.trailingAnchor constraintEqualToAnchor:folder.leadingAnchor constant:-6],
-    [g_publish_btn.trailingAnchor constraintEqualToAnchor:helpBtn.leadingAnchor constant:-6],
-    [helpBtn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
-    [folder.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
+    [g_publish_btn.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-8],
     [g_publish_btn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
   ]];
 

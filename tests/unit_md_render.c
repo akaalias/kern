@@ -65,6 +65,15 @@ static void test_highlight_draws_bg_per_content_glyph(void) {
   CHECK_IEQ(stub_text_count, 6);
 }
 
+/* ++underline++ draws a rule (one rect) under each content glyph only; the
+   "++" delimiters render in the base color with no rule. */
+static void test_underline_draws_rule_per_content_glyph(void) {
+  stub_reset();
+  draw_window("++hi++", 0, 6);            /* content = h,i */
+  CHECK_IEQ(stub_rect_count, 2);          /* one underline rule per content glyph */
+  CHECK_IEQ(stub_text_count, 6);
+}
+
 /* A wikilink renders its whole token with a background rect. */
 static void test_wikilink_draws_bg_for_token(void) {
   stub_reset();
@@ -224,6 +233,7 @@ void suite_md_render(void) {
   RUN(test_markers_use_base_style);
   RUN(test_bold_full_line);
   RUN(test_highlight_draws_bg_per_content_glyph);
+  RUN(test_underline_draws_rule_per_content_glyph);
   RUN(test_wikilink_draws_bg_for_token);
   RUN(test_col_x_is_linear);
   RUN(test_is_list_item);

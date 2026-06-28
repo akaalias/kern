@@ -9,11 +9,25 @@
 #include "undo.h"
 #include "utf8.h"
 
-static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec);
+static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec, int to_kill);
+
+/* The auto-generated Context section (lines >= ed->readonly_from when > 0) is
+   static: editing primitives refuse to mutate any line inside it. */
+static int ed_line_locked(const EditorState *ed, int line) {
+  return ed->readonly_from > 0 && line >= ed->readonly_from;
+}
+/* True if the caret sits at the very end of the last editable line, where a
+   forward delete / kill would pull the read-only section up into it. */
+static int ed_at_section_join(const EditorState *ed) {
+  return ed->readonly_from > 0 &&
+         ed->cursor_line == ed->readonly_from - 1 &&
+         ed->cursor_col == ed->lines[ed->cursor_line].len;
+}
 
 /* ---- basic editing ---- */
 
 void ed_insert_char(EditorState *ed, const char *text) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   int tlen = strlen(text);
   int ins_line = ed->cursor_line;
   int ins_col = ed->cursor_col;
@@ -34,6 +48,7 @@ void ed_insert_char(EditorState *ed, const char *text) {
 #define INDENT_WIDTH 2
 
 void ed_indent_line(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   Line *l = &ed->lines[ed->cursor_line];
   line_ensure_cap(l, l->len + INDENT_WIDTH);
   memmove(l->text + INDENT_WIDTH, l->text, l->len + 1);  /* +1 keeps the NUL */
@@ -46,6 +61,7 @@ void ed_indent_line(EditorState *ed) {
 }
 
 void ed_dedent_line(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   Line *l = &ed->lines[ed->cursor_line];
   int n = 0;  /* leading whitespace to remove, up to one indent level */
   while (n < INDENT_WIDTH && n < l->len &&
@@ -63,6 +79,7 @@ void ed_dedent_line(EditorState *ed) {
 }
 
 void ed_backspace(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;   /* don't edit the Context section */
   if (ed->cursor_col > 0) {
     Line *l = &ed->lines[ed->cursor_line];
     int nb = utf8_back(l->text, ed->cursor_col);   /* whole codepoint, not one byte */
@@ -90,6 +107,8 @@ void ed_backspace(EditorState *ed) {
 }
 
 void ed_delete(EditorState *ed) {
+  /* refuse to edit the Context section, or to pull it up into the last line */
+  if (ed_line_locked(ed, ed->cursor_line) || ed_at_section_join(ed)) return;
   Line *l = &ed->lines[ed->cursor_line];
   if (ed->cursor_col < l->len) {
     int nb = utf8_len(l->text + ed->cursor_col, l->len - ed->cursor_col);   /* whole codepoint */
@@ -112,6 +131,7 @@ void ed_delete(EditorState *ed) {
 }
 
 void ed_enter(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;   /* don't split a Context line */
   Line *l = &ed->lines[ed->cursor_line];
 
   /* detect list prefix on current line — include any leading indentation so a
@@ -171,6 +191,7 @@ void ed_enter(EditorState *ed) {
 /* ---- emacs commands ---- */
 
 void ed_emacs_kill_line(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line) || ed_at_section_join(ed)) return;
   Line *l = &ed->lines[ed->cursor_line];
   undo_begin_group(ed);
   if (ed->cursor_col < l->len) {
@@ -224,6 +245,7 @@ static void ed_split_plain(EditorState *ed) {
 }
 
 void ed_emacs_yank(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   if (!ed->kill_buf || ed->kill_len == 0) return;
   undo_begin_group(ed);
   for (int i = 0; i < ed->kill_len; i++) {
@@ -285,7 +307,7 @@ void ed_replace_region(EditorState *ed, const char *replacement) {
   int sl, sc, el, ec;
   buf_region_ordered(ed, &sl, &sc, &el, &ec);
   undo_begin_group(ed);
-  ed_kill_range(ed, sl, sc, el, ec);   /* one UNDO_DELETE, cursor at sl,sc */
+  ed_kill_range(ed, sl, sc, el, ec, 1);   /* one UNDO_DELETE, cursor at sl,sc */
   ed_insert_char(ed, replacement);     /* UNDO_INSERT(s) at the cursor */
   undo_end_group(ed);
   buf_mark_clear(ed);
@@ -303,6 +325,7 @@ int ed_wrap_region(EditorState *ed, const char *open, const char *close) {
   int sl, sc, el, ec;
   buf_region_ordered(ed, &sl, &sc, &el, &ec);
   if (sl == el && sc == ec) return 0;   /* empty region: nothing to wrap */
+  if (ed_line_locked(ed, el)) return 0;  /* don't wrap into the Context section */
 
   int olen = (int)strlen(open);
   /* Remember which endpoint the caret is on so we can restore orientation. */
@@ -335,7 +358,12 @@ int ed_wrap_region(EditorState *ed, const char *open, const char *close) {
    Leaves the cursor at the start of the range. Mark is left untouched. Records
    one UNDO_DELETE op (ungrouped), so a caller can wrap several edits in its own
    undo group — see ed_replace_region. */
-static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec) {
+/* Excise [sl,sc)..(el,ec] from the buffer as one UNDO_DELETE. When to_kill is
+   set the removed text also lands in the kill buffer (a "cut"); when clear it is
+   discarded (a plain delete, e.g. Backspace over a selection — leaves the kill
+   ring untouched). */
+static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec, int to_kill) {
+  if (ed_line_locked(ed, el)) return;   /* never cut into the Context section */
   int total = 0;
   for (int ln = sl; ln <= el; ln++) {
     int cs = (ln == sl) ? sc : 0;
@@ -358,7 +386,7 @@ static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec) {
     if (ln < el) region[pos++] = '\n';
   }
   region[pos] = '\0';
-  buf_kill_set(ed, region, total);
+  if (to_kill) buf_kill_set(ed, region, total);
 
   undo_push_op(ed, UNDO_DELETE, sl, sc, region, total);
   free(region);
@@ -390,8 +418,19 @@ void ed_emacs_kill_region(EditorState *ed) {
   if (!ed->mark_active) return;
   int sl, sc, el, ec;
   buf_region_ordered(ed, &sl, &sc, &el, &ec);
-  ed_kill_range(ed, sl, sc, el, ec);
+  ed_kill_range(ed, sl, sc, el, ec, 1);
   buf_mark_clear(ed);
+}
+
+/* Delete the marked region without touching the kill ring — what Backspace /
+   Delete do when a selection is active. Returns 1 if a region was deleted. */
+int ed_delete_region(EditorState *ed) {
+  if (!ed->mark_active) return 0;
+  int sl, sc, el, ec;
+  buf_region_ordered(ed, &sl, &sc, &el, &ec);
+  ed_kill_range(ed, sl, sc, el, ec, 0);
+  buf_mark_clear(ed);
+  return 1;
 }
 
 void ed_emacs_forward_word(EditorState *ed) {
@@ -421,7 +460,7 @@ void ed_emacs_kill_word_forward(EditorState *ed) {
   ed_emacs_forward_word(ed);
   int el = ed->cursor_line, ec = ed->cursor_col;
   if (el == sl && ec == sc) return;
-  ed_kill_range(ed, sl, sc, el, ec);
+  ed_kill_range(ed, sl, sc, el, ec, 1);
 }
 
 /* M-DEL: kill from the start of the previous word to point. */
@@ -430,12 +469,13 @@ void ed_emacs_kill_word_backward(EditorState *ed) {
   ed_emacs_backward_word(ed);
   int sl = ed->cursor_line, sc = ed->cursor_col;
   if (sl == el && sc == ec) return;
-  ed_kill_range(ed, sl, sc, el, ec);
+  ed_kill_range(ed, sl, sc, el, ec, 1);
 }
 
 /* M-u / M-l / M-c: change the case of the word at/after point (mode 0=upper,
    1=lower, 2=capitalize), leaving point after the word. Single line. */
 void ed_emacs_case_word(EditorState *ed, int mode) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   Line *l = &ed->lines[ed->cursor_line];
   while (ed->cursor_col < l->len && l->text[ed->cursor_col] == ' ') ed->cursor_col++;
   int start = ed->cursor_col;
@@ -474,6 +514,7 @@ void ed_emacs_case_word(EditorState *ed, int mode) {
 
 /* C-t: transpose the two characters around point, advancing point. */
 void ed_emacs_transpose_chars(EditorState *ed) {
+  if (ed_line_locked(ed, ed->cursor_line)) return;
   Line *l = &ed->lines[ed->cursor_line];
   if (l->len < 2) return;
   int a, b;

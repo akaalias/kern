@@ -224,6 +224,99 @@ static void test_copy_region_multiline(void) {
   ed_teardown(&ed);
 }
 
+/* Backspace/Delete over an active selection removes the whole region without
+   disturbing the kill ring (it's a delete, not a cut). */
+static void test_delete_region_removes_selection(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "hello world");
+  buf_kill_set(&ed, "PRIOR", 5);     /* something already on the kill ring */
+  ed.cursor_col = 0;
+  buf_mark_set(&ed);                 /* mark at (0,0) */
+  ed.cursor_col = 6;                 /* select "hello " */
+  CHECK_IEQ(ed_delete_region(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "world");
+  CHECK_IEQ(ed.mark_active, 0);      /* mark cleared */
+  CHECK_SEQ(ed.kill_buf, "PRIOR");   /* kill ring untouched */
+  CHECK_IEQ(ed.cursor_col, 0);
+  ed_teardown(&ed);
+}
+
+static void test_delete_region_noop_without_mark(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  CHECK_IEQ(ed_delete_region(&ed), 0);   /* nothing selected → caller falls back */
+  CHECK_SEQ(LINE(ed, 0), "abc");
+  ed_teardown(&ed);
+}
+
+static void test_delete_region_multiline(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "abc");
+  buf_insert_line_at(&ed, 1, "def", 3);
+  ed.cursor_line = 0; ed.cursor_col = 1;
+  buf_mark_set(&ed);
+  ed.cursor_line = 1; ed.cursor_col = 2;   /* select "bc\nde" */
+  CHECK_IEQ(ed_delete_region(&ed), 1);
+  CHECK_IEQ(ed.line_count, 1);
+  CHECK_SEQ(LINE(ed, 0), "af");
+  ed_teardown(&ed);
+}
+
+/* ---- read-only Context section (EditorState.readonly_from) ---- */
+
+/* Editing primitives refuse to mutate a line inside the static section. */
+static void test_readonly_blocks_edits(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "body");
+  buf_insert_line_at(&ed, 1, "## Context", 10);   /* a "section" line below */
+  ed.readonly_from = 1;                            /* lines >= 1 are static */
+
+  ed.cursor_line = 1; ed.cursor_col = 2;
+  ed_insert_char(&ed, "X");                        /* blocked */
+  CHECK_SEQ(LINE(ed, 1), "## Context");
+  ed_delete(&ed);                                  /* blocked */
+  CHECK_SEQ(LINE(ed, 1), "## Context");
+  ed_backspace(&ed);                               /* blocked */
+  CHECK_SEQ(LINE(ed, 1), "## Context");
+  ed_enter(&ed);                                   /* blocked — no new line */
+  CHECK_IEQ(ed.line_count, 2);
+
+  /* the editable line above is still mutable */
+  ed.cursor_line = 0; ed.cursor_col = 4;
+  ed_insert_char(&ed, "!");
+  CHECK_SEQ(LINE(ed, 0), "body!");
+  ed_teardown(&ed);
+}
+
+/* A forward-delete at the end of the last editable line must not pull the
+   section up into it. */
+static void test_readonly_blocks_section_join(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "body");
+  buf_insert_line_at(&ed, 1, "## Context", 10);
+  ed.readonly_from = 1;
+  ed.cursor_line = 0; ed.cursor_col = 4;            /* end of "body" */
+  ed_delete(&ed);                                   /* would join the section — blocked */
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "body");
+  ed_teardown(&ed);
+}
+
+/* The boundary tracks the section as content above it is inserted/removed. */
+static void test_readonly_boundary_tracks_edits(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "body");
+  buf_insert_line_at(&ed, 1, "## Context", 10);
+  ed.readonly_from = 1;
+
+  ed.cursor_line = 0; ed.cursor_col = 4;
+  ed_enter(&ed);                       /* adds a content line above the section */
+  CHECK_IEQ(ed.line_count, 3);
+  CHECK_IEQ(ed.readonly_from, 2);      /* section shifted down with the insert */
+  CHECK_SEQ(LINE(ed, 2), "## Context");
+  ed_teardown(&ed);
+}
+
 static void test_yank_inserts_kill_buffer(void) {
   EditorState ed = {0};
   buf_init_empty(&ed);
@@ -625,6 +718,12 @@ void suite_editing(void) {
   RUN(test_kill_line_to_eol);
   RUN(test_copy_region_single_line);
   RUN(test_copy_region_multiline);
+  RUN(test_delete_region_removes_selection);
+  RUN(test_delete_region_noop_without_mark);
+  RUN(test_delete_region_multiline);
+  RUN(test_readonly_blocks_edits);
+  RUN(test_readonly_blocks_section_join);
+  RUN(test_readonly_boundary_tracks_edits);
   RUN(test_yank_inserts_kill_buffer);
   RUN(test_yank_multiline_splits);
   RUN(test_copy_then_yank_roundtrip);

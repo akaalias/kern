@@ -30,6 +30,7 @@ typedef enum {
   SUB_ARROW,   /* arrows & relations: -> <- => <=> != <= >= ~= */
   SUB_GREEK,   /* Greek letters by name (whole-word): lambda → λ, Sigma → Σ, … */
   SUB_MATH,    /* math operator words (whole-word): forall → ∀, sqrt → √, … */
+  SUB_LIGATURE,/* typographic f-ligatures: ff fi fl ffi ffl → ﬀ ﬁ ﬂ ﬃ ﬄ */
   SUB_CATEGORY_COUNT
 } SubCategory;
 
@@ -47,7 +48,8 @@ typedef struct SubSpan {
 #define SUB_MAX_SPANS  512
 #define SUB_BIT(cat)   (1u << (cat))
 #define SUB_MASK_ALL   (SUB_BIT(SUB_PUNCT) | SUB_BIT(SUB_ARROW) | \
-                        SUB_BIT(SUB_GREEK) | SUB_BIT(SUB_MATH))
+                        SUB_BIT(SUB_GREEK) | SUB_BIT(SUB_MATH) | \
+                        SUB_BIT(SUB_LIGATURE))
 
 /* Lazily scan the line and cache its substitution-span map (recomputed when
    sub_span_count is -1, which line_dirty sets on every edit). Returns the count;

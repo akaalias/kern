@@ -110,6 +110,33 @@ static void test_save_load_roundtrip(void) {
   unlink(dst);
 }
 
+/* buf_save stops at the read-only Context section (readonly_from), so the
+   auto-generated section is never written to disk. */
+static void test_save_excludes_readonly_section(void) {
+  EditorState ed = {0};
+  buf_init_empty(&ed);
+  line_ensure_cap(&ed.lines[0], 5);
+  memcpy(ed.lines[0].text, "hello", 6);
+  ed.lines[0].len = 5;
+  /* a fake static section below the one document line */
+  buf_insert_line_at(&ed, 1, "", 0);              /* separator */
+  buf_insert_line_at(&ed, 2, "## Context", 10);
+  buf_insert_line_at(&ed, 3, "- [[Other.md]]", 14);
+  ed.readonly_from = 1;                            /* section starts at the separator */
+  CHECK_IEQ(buf_content_line_count(&ed), 1);
+
+  char dst[64]; snprintf(dst, sizeof dst, "/tmp/kern_test_ro_XXXXXX");
+  int fd = mkstemp(dst); CHECK(fd >= 0); close(fd);
+  CHECK_IEQ(buf_save(&ed, dst), 0);
+
+  char out[256];
+  long n = read_file(dst, out, sizeof out);
+  CHECK_IEQ(n, 5);                                 /* just "hello" — no section */
+  CHECK_SEQ(out, "hello");
+  ed_teardown(&ed);
+  unlink(dst);
+}
+
 /* ---- line-array growth (beyond the initial 4096 cap) ---- */
 
 static void test_line_array_growth(void) {
@@ -201,11 +228,28 @@ static void test_complete_and_list_filenames(void) {
   CHECK_SEQ(out, "alpha.md");                  /* alphabetically-first longer match */
   CHECK_IEQ(buf_complete_filename("zzz", out, sizeof out), 0);
 
+  /* fuzzy subsequence match: "a" is in all three names; the two anchored at the
+     start (alpha, alphabet) outrank "beta" (mid-word 'a'). */
   char list[8][256];
   int n = buf_list_matches("a", list, 8);
+  CHECK_IEQ(n, 3);
+  CHECK_SEQ(list[0], "alpha.md");
+  CHECK_SEQ(list[1], "alphabet.md");
+  CHECK_SEQ(list[2], "beta.md");
+
+  /* a non-prefix subsequence still matches: "lph" → "alpha.md" / "alphabet.md" */
+  n = buf_list_matches("lph", list, 8);
   CHECK_IEQ(n, 2);
   CHECK_SEQ(list[0], "alpha.md");
   CHECK_SEQ(list[1], "alphabet.md");
+
+  /* "abt" is a subsequence of "alphabet.md" only */
+  n = buf_list_matches("abt", list, 8);
+  CHECK_IEQ(n, 1);
+  CHECK_SEQ(list[0], "alphabet.md");
+
+  /* a char in none of the names yields nothing */
+  CHECK_IEQ(buf_list_matches("z", list, 8), 0);
 
   buf_set_documents_dir("");
   rm(dir, "alpha.md"); rm(dir, "alphabet.md"); rm(dir, "beta.md");
@@ -365,6 +409,7 @@ void suite_buffer(void) {
   RUN(test_load_missing_returns_error);
   RUN(test_load_splits_overlong_line);
   RUN(test_save_load_roundtrip);
+  RUN(test_save_excludes_readonly_section);
   RUN(test_line_array_growth);
   RUN(test_region_orders_endpoints);
   RUN(test_resolve_path);

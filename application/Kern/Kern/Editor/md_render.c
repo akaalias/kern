@@ -69,7 +69,7 @@ int md_heading_prefix_len(Line *l) {
 /* ---- inline markdown formatting ---- */
 
 /* inline span kinds */
-enum { SP_NONE = 0, SP_BOLD, SP_ITALIC, SP_MONO, SP_HL, SP_LINK, SP_WIKI };
+enum { SP_NONE = 0, SP_BOLD, SP_ITALIC, SP_MONO, SP_HL, SP_LINK, SP_WIKI, SP_UNDERLINE };
 
 /* max chars to scan forward for a closing delimiter (bounds O(n²) on
    pathological input) */
@@ -97,6 +97,13 @@ static int md_detect_span(const char *t, int i, int line_len,
     for (int j = i + 2; j + 1 < lim; j++)
       if (t[j] == '=' && t[j+1] == '=') {
         *content = i + 2; *close = j; *end = j + 2; return SP_HL;
+      }
+  }
+  /* ++underline++ */
+  if (i + 1 < line_len && t[i] == '+' && t[i+1] == '+') {
+    for (int j = i + 2; j + 1 < lim; j++)
+      if (t[j] == '+' && t[j+1] == '+') {
+        *content = i + 2; *close = j; *end = j + 2; return SP_UNDERLINE;
       }
   }
   /* `code` */
@@ -261,6 +268,7 @@ float md_draw_text(Line *l, int start, int end,
     int style = base_style;
     Color fg = base_color;
     int bg = 0;   /* 0 none, 1 link, 2 highlight */
+    int underline = 0;
     if (si < span_count && i >= spans[si].open && i < spans[si].end) {
       const struct MdSpan *s = &spans[si];
       if (s->kind == SP_LINK || s->kind == SP_WIKI) {
@@ -269,10 +277,11 @@ float md_draw_text(Line *l, int start, int end,
         fg = dim;   /* the delimiter characters themselves */
       } else {
         switch (s->kind) {
-          case SP_BOLD:   style = FONT_BOLD; break;
-          case SP_ITALIC: style = heading ? FONT_BOLD : FONT_ITALIC; break;
-          case SP_MONO:   style = FONT_MONO; fg = code_fg; break;
-          case SP_HL:     bg = 2; break;
+          case SP_BOLD:      style = FONT_BOLD; break;
+          case SP_ITALIC:    style = heading ? FONT_BOLD : FONT_ITALIC; break;
+          case SP_MONO:      style = FONT_MONO; fg = code_fg; break;
+          case SP_HL:        bg = 2; break;
+          case SP_UNDERLINE: underline = 1; break;
         }
       }
     }
@@ -336,6 +345,11 @@ float md_draw_text(Line *l, int start, int end,
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
       r_draw_text(glyph, vec2((int)px, (int)y), md_fade(fg, op));
+      /* ++underline++: a solid rule on the baseline in the text's own color */
+      if (underline) {
+        int dy = (int)y + (int)(font_h * 0.92f);
+        r_draw_rect(rect((int)px, dy, w, 1), md_fade(fg, op));
+      }
       /* Each style category gets its own line texture, keyed to absolute x so
          the line stays continuous across characters:
            - filler     STRIKE:           light wobble through the x-height;

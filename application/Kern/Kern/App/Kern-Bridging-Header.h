@@ -14,6 +14,15 @@ void editor_set_documents_dir(const char *path);
    possibly off the main thread. */
 void kern_x_set_status(const char *msg);
 
+/* Open the documents folder in Finder. Implemented in Platform/macos_style.m;
+   invoked from the Window menu item (runs on the main thread during tracking). */
+void kern_open_documents_folder(void);
+
+/* Build the keyboard-shortcuts reference view (Platform/macos_style.m), embedded
+   in the Settings window's "Keyboard Shortcuts" tab via an NSViewRepresentable.
+   Returns a retained NSView*; must be called on the main thread. */
+void *kern_make_shortcuts_view(void);
+
 /* View toggles for the menu-bar commands. Implemented in textview.c; selected on
    the main thread during menu tracking, the same thread as the render loop. The
    *_enabled() queries report the current on/off state. */

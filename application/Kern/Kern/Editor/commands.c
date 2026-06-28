@@ -72,15 +72,13 @@ void cmd_backward_word(EditorState *ed, ViewState *vs) {
 /* ---- editing ---- */
 
 static void cmd_backspace(EditorState *ed, ViewState *vs) {
-  buf_mark_clear(ed);
-  ed_backspace(ed);
+  if (!ed_delete_region(ed)) ed_backspace(ed);   /* an active selection is deleted whole */
   nav_ensure_cursor_visible(ed, vs);
 }
 
 static void cmd_delete(EditorState *ed, ViewState *vs) {
-  (void)vs;
-  buf_mark_clear(ed);
-  ed_delete(ed);
+  if (!ed_delete_region(ed)) ed_delete(ed);      /* an active selection is deleted whole */
+  nav_ensure_cursor_visible(ed, vs);
 }
 
 static void cmd_enter(EditorState *ed, ViewState *vs) {

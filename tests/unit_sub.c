@@ -136,11 +136,27 @@ static void test_greek(void) {
   freeline(&c);
 }
 
+/* f-ligatures fire mid-word (not whole-word), longest-match-first. */
+static void test_ligatures(void) {
+  /*               0123456 */
+  Line a = mkline("office");                /* o[ffi]ce — ffi beats ff */
+  const SubSpan *s = span_at(&a, 1);
+  CHECK(glyph_is(s, "ﬃ"));
+  CHECK_IEQ(s->len, 3);
+  CHECK_IEQ(s->category, SUB_LIGATURE);
+  freeline(&a);
+
+  Line b = mkline("file");   CHECK(glyph_is(span_at(&b, 0), "ﬁ")); freeline(&b);
+  Line c = mkline("flow");   CHECK(glyph_is(span_at(&c, 0), "ﬂ")); freeline(&c);
+  Line d = mkline("off");    CHECK(glyph_is(span_at(&d, 1), "ﬀ")); freeline(&d);
+  Line e = mkline("waffle"); CHECK(glyph_is(span_at(&e, 2), "ﬄ")); freeline(&e); /* ffl */
+}
+
 /* whole-word boundaries: a Greek name inside a longer token is left alone. */
 static void test_greek_word_boundary(void) {
   const SubSpan *sp;
   Line a = mkline("lambdas");      CHECK_IEQ(sub_line_spans(&a, &sp), 0); freeline(&a); /* suffix */
-  Line b = mkline("flambda");      CHECK_IEQ(sub_line_spans(&b, &sp), 0); freeline(&b); /* prefix */
+  Line b = mkline("xlambda");      CHECK_IEQ(sub_line_spans(&b, &sp), 0); freeline(&b); /* prefix */
   Line c = mkline("lambda_x");     CHECK_IEQ(sub_line_spans(&c, &sp), 0); freeline(&c); /* identifier */
   Line d = mkline("pi2");          CHECK_IEQ(sub_line_spans(&d, &sp), 0); freeline(&d); /* digit after */
   Line e = mkline("(lambda)");     CHECK(glyph_is(span_at(&e, 1), "λ"));  freeline(&e); /* bracketed */
@@ -342,6 +358,7 @@ void suite_sub(void) {
   RUN(test_symbols);
   RUN(test_greek);
   RUN(test_greek_word_boundary);
+  RUN(test_ligatures);
   RUN(test_math);
   RUN(test_unrenderable_falls_back);
   RUN(test_mask);

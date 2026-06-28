@@ -84,12 +84,14 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 
 | Keys          | Action                     |
 |---------------|----------------------------|
-| `C-Space`     | Set mark                   |
-| `C-w` / `M-w` | Cut / copy region          |
-| `⌘C`          | Copy region                |
-| `C-y` / `⌘V`  | Yank (paste)               |
-| `C-x h`       | Select whole buffer        |
-| `C-x C-x`     | Exchange point & mark      |
+| `C-Space`         | Set mark                   |
+| `Backspace` / `Delete` | Delete the selected region |
+| `C-w` / `M-w`     | Cut / copy region          |
+| `⌘C`              | Copy region                |
+| `C-y` / `⌘V`      | Yank (paste)               |
+| `C-x h`           | Select whole buffer        |
+| `C-x C-x`         | Exchange point & mark      |
+| `**` `*` `==` `++` `` ` `` | With a region marked, wrap it: bold / italic / highlight / underline / code |
 
 **Search & view**
 
@@ -99,7 +101,9 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `⌘=` / `⌘-`   | Increase / decrease font size   |
 | `Esc`         | Cancel / clear mark             |
 
-Markdown headings, bold, and italic are styled live as you type.
+Markdown headings, bold, italic, highlight (`==`), and underline (`++text++`)
+are styled live as you type. Each document also grows a read-only **Context**
+section at the bottom listing backlinks and notes created the same day.
 
 **Notes & wikilinks**
 

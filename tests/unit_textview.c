@@ -155,6 +155,27 @@ static void test_cx_unrecognized_still_clears_prefix(void) {
   CHECK_IEQ(VS->ctrl_x_prefix, 0);  /* prefix consumed regardless */
 }
 
+/* Backspace and Delete with an active selection remove the whole region (the
+   reported bug: the marked text wasn't deleted). Driven through the real event
+   dispatch. */
+static void test_backspace_deletes_marked_region(void) {
+  tv_begin(); load("hello world");
+  put_cursor(0, 0);
+  buf_mark_set(ED);
+  put_cursor(0, 6);                  /* select "hello " */
+  key(0, SDLK_BACKSPACE);
+  EXPECT_LINE(0, "world");
+  CHECK_IEQ(ED->mark_active, 0);
+
+  tv_begin(); load("hello world");
+  put_cursor(0, 0);
+  buf_mark_set(ED);
+  put_cursor(0, 6);
+  key(0, SDLK_DELETE);
+  EXPECT_LINE(0, "world");
+  CHECK_IEQ(ED->mark_active, 0);
+}
+
 static void test_esc_clears_mark_else_starts_meta(void) {
   /* with an active mark, ESC quits the mark and does NOT start meta */
   tv_begin(); load("hi");
@@ -570,6 +591,7 @@ void suite_textview(void) {
   RUN(test_alt_arrow_word_jump);
   RUN(test_vertical_keeps_target_column);
   /* isearch */
+  RUN(test_backspace_deletes_marked_region);
   RUN(test_isearch_forward_and_repeat);
   RUN(test_isearch_direction_flip_and_abort);
   /* minibuffer editing */

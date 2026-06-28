@@ -74,6 +74,11 @@ struct KernApp: App {
         // AppKit NSMenuDelegate sets them from the C state (Platform/macos_style.m),
         // matching items by these exact titles, so keep the two in sync.
         .commands {
+            // Window menu: open the documents folder in Finder (replaces the
+            // former title-bar folder button).
+            CommandGroup(after: .windowArrangement) {
+                Button("Open Documents Folder in Finder") { kern_open_documents_folder() }
+            }
             CommandGroup(after: .toolbar) {
                 Button("Syntax Highlighting") { kern_toggle_syntax() }
                 Button("Verbs") { kern_toggle_verbs() }
@@ -98,10 +103,25 @@ struct SettingsView: View {
         TabView {
             XSettingsView()
                 .tabItem { Text("X (Twitter)") }
+                .frame(width: 460)
+                .padding(20)
+
+            ShortcutsView()
+                .tabItem { Text("Keyboard Shortcuts") }
+                .frame(minWidth: 940, minHeight: 600)
         }
-        .frame(width: 460)
-        .padding(20)
     }
+}
+
+/// Embeds the AppKit keyboard-shortcuts reference (built in Platform/macos_style.m)
+/// in the Settings window. The C function returns a retained NSScrollView*; we
+/// take ownership to balance the +1.
+struct ShortcutsView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        guard let ptr = kern_make_shortcuts_view() else { return NSView() }
+        return Unmanaged<NSView>.fromOpaque(UnsafeRawPointer(ptr)).takeRetainedValue()
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 struct XSettingsView: View {

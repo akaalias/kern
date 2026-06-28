@@ -100,6 +100,13 @@ typedef struct {
 
   /* unsaved-changes flag (set on any edit, cleared on save) */
   int dirty;
+
+  /* Auto-generated, read-only "Context" section: when > 0, lines
+     [readonly_from, line_count) are the static section — editing primitives
+     refuse to mutate them, and save/serialize stop here so it's never written to
+     disk. 0 = no section. Kept in sync across line insert/delete by the two core
+     buf_*_line_at ops, so it tracks the section as content above it changes. */
+  int readonly_from;
 } EditorState;
 
 /* ---- view state (UI, depends on SDL) ---- */

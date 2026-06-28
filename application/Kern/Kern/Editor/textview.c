@@ -8,6 +8,8 @@
 #include <math.h>
 #include <time.h>
 #include <pthread.h>
+#include <sys/stat.h>
+#include <dirent.h>
 #include "renderer.h"
 #include "gfx.h"
 #include "macos_style.h"
@@ -134,6 +136,130 @@ static void minibuf_refresh_completion(void) {
 static void filepos_remember_current(void);
 static void filepos_restore_current(void);
 
+/* ---- auto-generated, read-only "Context" section ----------------------------
+   Appended below the document: related notes (same creation day) and backlinks
+   (other notes that [[link]] to this one). The lines are real buffer lines but
+   guarded read-only (EditorState.readonly_from) and excluded from save, so the
+   caret can move in (and follow wikilinks) yet nothing there is editable or
+   persisted. Regenerated on every file open. App-only: it scans the documents
+   dir + file creation times, so it's a no-op under the headless test build (the
+   read-only/save machinery is unit-tested directly via readonly_from). */
+#ifndef KERN_HEADLESS_TEST
+#define CTX_MAX 24   /* cap each list so a huge vault can't bloat the section */
+
+/* YYYY-MM-DD of a file's creation (birth) time; 0 on stat failure. */
+static int ctx_birth_day(const char *path, char *out, int outsz) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  time_t t = (time_t)st.st_birthtimespec.tv_sec;
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return (int)strftime(out, (size_t)outsz, "%Y-%m-%d", &tm) > 0;
+}
+
+/* Does the file at `path` contain a [[wikilink]] to `base` ("Foo.md") or its
+   extension-less form ("Foo")? Reads up to 256 KB — enough for any note. */
+static int ctx_links_to(const char *path, const char *base, const char *base_noext) {
+  FILE *f = fopen(path, "rb");
+  if (!f) return 0;
+  static char buf[256 * 1024];   /* main-thread only (load time); keep off the stack */
+  size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+  fclose(f);
+  buf[n] = '\0';
+  char needle[300];
+  snprintf(needle, sizeof(needle), "[[%s]]", base);
+  if (strstr(buf, needle)) return 1;
+  snprintf(needle, sizeof(needle), "[[%s]]", base_noext);
+  return strstr(buf, needle) != NULL;
+}
+
+/* Append one read-only line at the end of the buffer (readonly_from is 0 while
+   building, so the boundary bookkeeping in buf_insert_line_at stays inert). */
+static void ctx_append(const char *s) {
+  buf_insert_line_at(&g_ed, g_ed.line_count, s, (int)strlen(s));
+}
+
+/* Strip any existing Context section (lines >= readonly_from). */
+static void context_strip(void) {
+  if (g_ed.readonly_from <= 0) return;
+  int from = g_ed.readonly_from;
+  g_ed.readonly_from = 0;   /* disable boundary bookkeeping during the delete */
+  while (g_ed.line_count > from && g_ed.line_count > 1)
+    buf_delete_line_at(&g_ed, g_ed.line_count - 1);
+  if (g_ed.cursor_line >= g_ed.line_count) g_ed.cursor_line = g_ed.line_count - 1;
+}
+
+static void context_refresh(void) {
+  context_strip();
+  const char *docs = buf_get_documents_dir();
+  if (!docs[0] || !g_ed.filepath[0]) return;
+
+  const char *self = path_base(g_ed.filepath);           /* "Foo.md" */
+  char self_noext[256];
+  snprintf(self_noext, sizeof(self_noext), "%s", self);
+  char *dot = strrchr(self_noext, '.');
+  if (dot) *dot = '\0';
+
+  char myday[16];
+  int have_day = ctx_birth_day(g_ed.filepath, myday, sizeof(myday));
+
+  char sameday[CTX_MAX][256]; int n_same = 0;
+  char backlinks[CTX_MAX][256]; int n_back = 0;
+
+  DIR *d = opendir(docs);
+  if (d) {
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+      const char *name = e->d_name;
+      if (name[0] == '.') continue;                      /* hidden / dotfiles */
+      if (strlen(name) >= 256) continue;
+      if (strcmp(name, self) == 0) continue;             /* skip this file */
+      const char *ext = strrchr(name, '.');
+      if (!ext || strcmp(ext, ".md") != 0) continue;     /* notes only */
+
+      char full[1100];
+      snprintf(full, sizeof(full), "%s/%s", docs, name);
+
+      if (have_day && n_same < CTX_MAX) {
+        char day[16];
+        if (ctx_birth_day(full, day, sizeof(day)) && strcmp(day, myday) == 0)
+          snprintf(sameday[n_same++], 256, "%s", name);
+      }
+      if (n_back < CTX_MAX && ctx_links_to(full, self, self_noext))
+        snprintf(backlinks[n_back++], 256, "%s", name);
+    }
+    closedir(d);
+  }
+
+  if (n_same == 0 && n_back == 0) return;   /* nothing related → no section */
+
+  int start = g_ed.line_count;
+  ctx_append("");                            /* separator (also the save cut-point) */
+  ctx_append("## Context");
+  if (n_back > 0) {
+    ctx_append("");
+    ctx_append("Backlinks");
+    for (int i = 0; i < n_back; i++) {
+      char line[300];
+      snprintf(line, sizeof(line), "- [[%s]]", backlinks[i]);
+      ctx_append(line);
+    }
+  }
+  if (n_same > 0) {
+    ctx_append("");
+    ctx_append("Created the same day");
+    for (int i = 0; i < n_same; i++) {
+      char line[300];
+      snprintf(line, sizeof(line), "- [[%s]]", sameday[i]);
+      ctx_append(line);
+    }
+  }
+  g_ed.readonly_from = start;   /* everything from the separator down is static */
+}
+#else
+static void context_refresh(void) {}
+#endif
+
 static void open_or_create_file(const char *path) {
   filepos_remember_current();   /* stash where we were in the file we're leaving */
   /* resolve the typed name to a path inside the sandbox documents dir */
@@ -149,6 +275,7 @@ static void open_or_create_file(const char *path) {
   g_ed.cursor_col = 0;
   g_ed.cursor_target_col = 0;
   g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);  /* rest at the top page margin */
+  context_refresh();                      /* append the read-only Context section */
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();              /* drop back to where we last were here */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -342,10 +469,12 @@ static void margin_note_commit(void) {
   snprintf(marker, sizeof(marker), "[^%s]", mn_id);
   ed_insert_char(&g_ed, marker);
 
-  /* append the footnote definition at the document bottom */
+  /* append the footnote definition at the document bottom — but above the
+     read-only Context section, so it stays editable and is saved to disk */
   char def[1100];
   snprintf(def, sizeof(def), "[^%s]: %s", mn_id, mn_text);
-  buf_insert_line_at(&g_ed, g_ed.line_count, def, (int)strlen(def));
+  int at = g_ed.readonly_from > 0 ? g_ed.readonly_from : g_ed.line_count;
+  buf_insert_line_at(&g_ed, at, def, (int)strlen(def));
   buf_invalidate_all_wraps(&g_ed);
 
   mn_active = 0; mn_text[0] = '\0'; mn_len = 0;
@@ -393,15 +522,16 @@ static int handle_marginnote_key(int sym) {
 /* Join the whole buffer into one malloc'd, NUL-terminated string, lines
    separated by '\n'. Caller frees; *len_out gets the byte length. */
 static char *buffer_dup_all(EditorState *ed, int *len_out) {
+  int n = buf_content_line_count(ed);   /* the Context section isn't part of the note */
   int total = 1;  /* room for the trailing NUL even on an empty buffer */
-  for (int i = 0; i < ed->line_count; i++) total += ed->lines[i].len + 1;
+  for (int i = 0; i < n; i++) total += ed->lines[i].len + 1;
   char *out = malloc(total);
   if (!out) { if (len_out) *len_out = 0; return NULL; }
   int p = 0;
-  for (int i = 0; i < ed->line_count; i++) {
+  for (int i = 0; i < n; i++) {
     memcpy(out + p, ed->lines[i].text, ed->lines[i].len);
     p += ed->lines[i].len;
-    if (i + 1 < ed->line_count) out[p++] = '\n';
+    if (i + 1 < n) out[p++] = '\n';
   }
   out[p] = '\0';
   if (len_out) *len_out = p;
@@ -1121,6 +1251,22 @@ static char wl_matches[WL_MAX][256];
 static char wl_suppressed[256];
 static int  wl_has_suppress;
 
+/* If the previously-open document (MRU index 1 — index 0 is the current file)
+   is among the matches, lift it to the top so it's the default proposal. */
+static void wikilink_float_recent(void) {
+  const char *prev = recent_get(1);
+  if (!prev) return;
+  const char *base = path_base(prev);
+  for (int i = 1; i < wl_count; i++) {
+    if (strcasecmp(wl_matches[i], base) != 0) continue;
+    char tmp[256];
+    snprintf(tmp, sizeof tmp, "%s", wl_matches[i]);
+    for (int j = i; j > 0; j--) memcpy(wl_matches[j], wl_matches[j-1], 256);
+    snprintf(wl_matches[0], 256, "%s", tmp);
+    return;
+  }
+}
+
 /* Recompute the active "[[" query before the caret and its match list. */
 static void wikilink_refresh(void) {
   wl_active = 0;
@@ -1158,6 +1304,7 @@ static void wikilink_refresh(void) {
 
   wl_count = buf_list_matches(wl_query, wl_matches, WL_MAX);
   if (wl_count <= 0) return;
+  wikilink_float_recent();   /* propose the previously-open document first */
   if (wl_sel >= wl_count) wl_sel = wl_count - 1;
   if (wl_sel < 0) wl_sel = 0;
   wl_query_col = qstart;
@@ -1870,6 +2017,7 @@ static void cmd_open_daily_note(void) {
   filepos_remember_current();   /* remember where we were before jumping away */
   load_daily_note();
   g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);
+  context_refresh();            /* append the read-only Context section */
   buf_invalidate_all_wraps(&g_ed);
   filepos_restore_current();    /* an existing daily note reopens where we left it */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -1947,7 +2095,8 @@ void editor_handle_event(const SDL_Event *ev) {
            active so typing '*' twice turns a selection into **bold**. */
         int is_wrap_char = g_ed.mark_active && e.text.text[1] == '\0' &&
           (e.text.text[0] == '*' || e.text.text[0] == '_' ||
-           e.text.text[0] == '`' || e.text.text[0] == '=');
+           e.text.text[0] == '`' || e.text.text[0] == '=' ||
+           e.text.text[0] == '+');   /* '+' twice → ++underline++ */
         if (is_wrap_char && ed_wrap_region(&g_ed, e.text.text, e.text.text)) {
           nav_ensure_cursor_visible(&g_ed, &g_vs);
           break;
@@ -2217,15 +2366,16 @@ static void autosave_async(void) {
   buf_save(&g_ed, g_ed.filepath);          /* synchronous + deterministic for tests */
 #else
   if (g_saving) return;                    /* a previous save still running; retry next tick */
+  int nlines = buf_content_line_count(&g_ed);   /* exclude the read-only Context section */
   int total = 0;
-  for (int i = 0; i < g_ed.line_count; i++) total += g_ed.lines[i].len + 1;
+  for (int i = 0; i < nlines; i++) total += g_ed.lines[i].len + 1;
   char *text = malloc(total > 0 ? total : 1);
   if (!text) { buf_save(&g_ed, g_ed.filepath); return; }   /* OOM: fall back to sync */
   int off = 0;
-  for (int i = 0; i < g_ed.line_count; i++) {
+  for (int i = 0; i < nlines; i++) {
     memcpy(text + off, g_ed.lines[i].text, g_ed.lines[i].len);
     off += g_ed.lines[i].len;
-    if (i < g_ed.line_count - 1) text[off++] = '\n';
+    if (i < nlines - 1) text[off++] = '\n';
   }
   SaveJob *job = malloc(sizeof *job);
   if (!job) { free(text); buf_save(&g_ed, g_ed.filepath); return; }
@@ -2435,6 +2585,7 @@ int editor_main(int argc, char **argv) {
     g_vs.content_y = TOP_PADDING;
     g_vs.content_h = nav_win_h() - TOP_PADDING - status_bar_h;
   }
+  context_refresh();   /* append the read-only Context section to the opened file */
   nav_ensure_cursor_visible(&g_ed, &g_vs);
   if (g_vs.typewriter_mode) g_vs.scroll_y = g_vs.scroll_target_y;   /* snap, no launch glide */
   else if (g_vs.scroll_y <= 0) g_vs.scroll_y = -nav_top_margin(&g_vs);  /* show the top page margin */
