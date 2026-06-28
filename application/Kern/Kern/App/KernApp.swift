@@ -113,21 +113,219 @@ struct SettingsView: View {
                 .tabItem { Label("X (Twitter)", systemImage: "paperplane") }
 
             ShortcutsView()
-                .frame(width: 900, height: 640)
                 .tabItem { Label("Keyboard Shortcuts", systemImage: "keyboard") }
         }
     }
 }
 
-/// Embeds the AppKit keyboard-shortcuts reference (built in Platform/macos_style.m)
-/// in the Settings window. The C function returns a retained NSScrollView*; we
-/// take ownership to balance the +1.
-struct ShortcutsView: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        guard let ptr = kern_make_shortcuts_view() else { return NSView() }
-        return Unmanaged<NSView>.fromOpaque(UnsafeRawPointer(ptr)).takeRetainedValue()
+// MARK: - Keyboard Shortcuts (native sidebar + detail)
+
+struct ShortcutBinding: Identifiable {
+    let id = UUID()
+    let desc: String
+    let spec: String   // emacs-style chord spec, e.g. "C-x C-s", "M-w / Cmd-C"
+}
+
+struct ShortcutGroup: Identifiable {
+    let id = UUID()
+    let title: String
+    let bindings: [ShortcutBinding]
+}
+
+private func B(_ d: String, _ s: String) -> ShortcutBinding { ShortcutBinding(desc: d, spec: s) }
+
+let shortcutGroups: [ShortcutGroup] = [
+    ShortcutGroup(title: "Moving the cursor", bindings: [
+        B("Start of line", "C-a"), B("End of line", "C-e"),
+        B("Forward a character", "C-f"), B("Back a character", "C-b"),
+        B("Next line", "C-n"), B("Previous line", "C-p"),
+        B("Forward a word", "M-f"), B("Back a word", "M-b"),
+        B("Top of document", "M-S-, / Cmd-S-,"),
+        B("Bottom of document", "M-S-. / Cmd-S-."),
+        B("Go to line…", "M-g"),
+    ]),
+    ShortcutGroup(title: "Editing", bindings: [
+        B("Delete character ahead", "C-d"), B("Delete character behind", "Backspace"),
+        B("Cut to end of line", "C-k"), B("Delete word ahead", "M-d"),
+        B("Delete word behind", "M-Backspace"), B("Insert a blank line", "C-o"),
+        B("Swap the two characters around the cursor", "C-t"), B("Undo", "C-/"),
+        B("UPPERCASE word", "M-u"), B("lowercase word", "M-l"),
+        B("Capitalize Word", "M-c"),
+        B("Indent list item", "Tab"), B("Outdent list item", "S-Tab"),
+    ]),
+    ShortcutGroup(title: "Selecting & the clipboard", bindings: [
+        B("Start selecting (set mark)", "C-Space"),
+        B("Extend selection while moving", "S-Arrows"),
+        B("Copy selection", "M-w / Cmd-C"),
+        B("Cut selection", "C-w"), B("Paste", "C-y / Cmd-V"),
+        B("Delete the selected region", "Backspace / Delete"),
+        B("Select the whole document", "C-x h"),
+        B("Jump between selection ends", "C-x C-x"),
+        B("Cancel / clear selection", "C-g"),
+    ]),
+    ShortcutGroup(title: "Formatting the selection", bindings: [
+        B("Bold", "**"), B("Italic", "*"),
+        B("Highlight", "=="), B("Underline", "++"), B("Inline code", "`"),
+    ]),
+    ShortcutGroup(title: "Searching", bindings: [
+        B("Search forward", "C-s"), B("Search backward", "C-r"),
+        B("Next match (while searching)", "C-s"),
+        B("Previous match (while searching)", "C-r"),
+        B("Finish searching", "Return / Esc"),
+        B("Cancel searching", "C-g"),
+    ]),
+    ShortcutGroup(title: "Notes & links", bindings: [
+        B("Follow link under cursor", "Cmd-Return"),
+        B("Autocomplete a link", "[["),
+        B("Extract selection to a new note", "Cmd-S-N"),
+        B("Today's note", "Cmd-S-T"),
+        B("Go back", "Cmd-S-Left"), B("Go forward", "Cmd-S-Right"),
+    ]),
+    ShortcutGroup(title: "Files", bindings: [
+        B("Save", "C-x C-s"), B("Save as…", "C-x C-w"),
+        B("Open a file", "C-x C-f"), B("Switch to a recent file", "C-x b"),
+        B("Quit", "C-x C-c"),
+    ]),
+    ShortcutGroup(title: "Display", bindings: [
+        B("Bigger text", "Cmd-="), B("Smaller text", "Cmd--"),
+        B("Typewriter mode", "C-x t"), B("Syntax highlighting", "C-x y"),
+        B("Style check", "C-x s"), B("Symbols (ligatures)", "C-x l"),
+    ]),
+    ShortcutGroup(title: "Scrolling", bindings: [
+        B("Page down", "C-v"), B("Page up", "M-v"),
+        B("Recenter the view", "C-l"),
+    ]),
+]
+
+/// A vertical-tab keyboard-shortcuts reference: a plain list of group "tabs" on
+/// the left (not a NavigationSplitView app-sidebar — no collapse button, no
+/// toolbar title, single-click selection), the chosen group's bindings on the
+/// right.
+struct ShortcutsView: View {
+    @State private var selection: ShortcutGroup.ID = shortcutGroups[0].id
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // left: vertical tab list
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(shortcutGroups) { group in
+                    Button {
+                        selection = group.id
+                    } label: {
+                        Text(group.title)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selection == group.id ? Color.primary.opacity(0.12) : .clear)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .frame(width: 220)
+
+            Divider()
+
+            // right: the selected group's bindings
+            ShortcutGroupDetail(group: shortcutGroups.first { $0.id == selection } ?? shortcutGroups[0])
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: 760, height: 660)
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private struct ShortcutGroupDetail: View {
+    let group: ShortcutGroup
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(group.title)
+                    .font(.headline)
+                    .padding(.bottom, 8)
+                ForEach(Array(group.bindings.enumerated()), id: \.element.id) { i, b in
+                    HStack(alignment: .center) {
+                        Text(b.desc)
+                        Spacer(minLength: 16)
+                        ChordView(spec: b.spec)
+                    }
+                    .padding(.vertical, 7)
+                    if i < group.bindings.count - 1 { Divider().opacity(0.4) }
+                }
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// One rounded key-cap.
+private struct KeyCap: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12.5, weight: .medium))
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .frame(minWidth: 22)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.18)))
+            .fixedSize()
+    }
+}
+
+// Renders an emacs-style chord spec into key-caps. " / " = alternatives ("or"),
+// a space = chords pressed in sequence ("then"), modifier prefixes (C-/M-/S-/Cmd-)
+// become ⌃/⌥/⇧/⌘ caps.
+private struct ChordView: View {
+    let spec: String
+
+    private enum Element {
+        case cap(String), sep(String)
+    }
+
+    private static func caps(for chord: String) -> [String] {
+        var s = chord
+        var out: [String] = []
+        let mods: [(String, String)] = [("Cmd-", "⌘"), ("C-", "⌃"), ("M-", "⌥"), ("S-", "⇧")]
+        var changed = true
+        while changed {
+            changed = false
+            for (prefix, sym) in mods where s.hasPrefix(prefix) {
+                out.append(sym); s.removeFirst(prefix.count); changed = true
+            }
+        }
+        if !s.isEmpty {
+            out.append(s.count == 1 && s.first!.isLetter ? s.uppercased() : s)
+        }
+        return out
+    }
+
+    private var elements: [Element] {
+        var out: [Element] = []
+        for (ai, alt) in spec.components(separatedBy: " / ").enumerated() {
+            if ai > 0 { out.append(.sep("or")) }
+            for (ci, chord) in alt.split(separator: " ").map(String.init).enumerated() {
+                if ci > 0 { out.append(.sep("then")) }
+                for cap in Self.caps(for: chord) { out.append(.cap(cap)) }
+            }
+        }
+        return out
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(elements.enumerated()), id: \.offset) { _, el in
+                switch el {
+                case .cap(let s): KeyCap(text: s)
+                case .sep(let s): Text(s).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
 }
 
 struct XSettingsView: View {

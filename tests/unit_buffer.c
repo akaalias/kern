@@ -230,8 +230,8 @@ static void test_complete_and_list_filenames(void) {
   CHECK_SEQ(out, "alpha.md");                  /* alphabetically-first longer match */
   CHECK_IEQ(buf_complete_filename("zzz", out, sizeof out), 0);
 
-  /* fuzzy subsequence match: "a" is in all three names; the two anchored at the
-     start (alpha, alphabet) outrank "beta" (mid-word 'a'). */
+  /* substring match: "a" is in all three names; the two anchored at the start
+     (alpha, alphabet) outrank "beta" (mid-word 'a'). */
   char list[8][256];
   int n = buf_list_matches("a", list, 8);
   CHECK_IEQ(n, 3);
@@ -239,22 +239,26 @@ static void test_complete_and_list_filenames(void) {
   CHECK_SEQ(list[1], "alphabet.md");
   CHECK_SEQ(list[2], "beta.md");
 
-  /* a non-prefix subsequence still matches: "lph" → "alpha.md" / "alphabet.md" */
+  /* a non-prefix substring still matches: "lph" → "alpha.md" / "alphabet.md" */
   n = buf_list_matches("lph", list, 8);
   CHECK_IEQ(n, 2);
   CHECK_SEQ(list[0], "alpha.md");
   CHECK_SEQ(list[1], "alphabet.md");
 
-  /* "abt" is a subsequence of "alphabet.md" only */
-  n = buf_list_matches("abt", list, 8);
+  /* "phab" is a substring of "alphabet.md" only */
+  n = buf_list_matches("phab", list, 8);
   CHECK_IEQ(n, 1);
   CHECK_SEQ(list[0], "alphabet.md");
+
+  /* NOT a loose subsequence: "abt" is a subsequence of "alphabet" but not a
+     substring, so it must NOT match (the "Hello"→"histories" bug). */
+  CHECK_IEQ(buf_list_matches("abt", list, 8), 0);
 
   /* a char in none of the names yields nothing */
   CHECK_IEQ(buf_list_matches("z", list, 8), 0);
 
-  /* recency ranking: on an empty query (all tie at score 0) the most-recently
-     opened note floats to the top; the current file (MRU index 0) is excluded. */
+  /* an empty query lists recent notes only (current file excluded); a note that
+     was never opened doesn't appear. */
   recent_reset();
   char pa[1100], pb[1100];
   snprintf(pa, sizeof pa, "%s/alpha.md", dir);
@@ -262,8 +266,8 @@ static void test_complete_and_list_filenames(void) {
   recent_push(pa);            /* older */
   recent_push(pb);            /* most recent → MRU index 0 = "current file" */
   n = buf_list_matches("", list, 8);
-  CHECK_IEQ(n, 2);            /* beta.md excluded as the current file */
-  CHECK_SEQ(list[0], "alpha.md");   /* the recent (non-current) note leads */
+  CHECK_IEQ(n, 1);            /* only alpha.md: beta is current, alphabet never opened */
+  CHECK_SEQ(list[0], "alpha.md");
   recent_reset();
 
   buf_set_documents_dir("");

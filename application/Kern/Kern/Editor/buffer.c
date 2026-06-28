@@ -111,31 +111,40 @@ int buf_complete_filename(const char *prefix, char *out, int outsz) {
   return 1;
 }
 
-/* Fuzzy subsequence score of `q` against `name` (case-insensitive): every char
-   of `q` must appear in `name` in order, else -1. Higher is a better match —
-   bonuses for matching at the very start, right after a word separator, and
-   contiguously with the previous matched char. An empty query scores 0 (all
-   names match), so just-typed "[[" lists everything. */
-static int fuzzy_score(const char *name, const char *q) {
-  if (!*q) return 0;
-  int score = 0, ni = 0, last = -2;
-  for (int qi = 0; q[qi]; qi++) {
-    int qc = tolower((unsigned char)q[qi]);
-    int found = -1;
-    for (; name[ni]; ni++)
-      if (tolower((unsigned char)name[ni]) == qc) { found = ni; break; }
-    if (found < 0) return -1;                  /* q is not a subsequence */
-    score += 1;
-    if (found == 0) score += 10;               /* anchored at the start */
-    else {
-      unsigned char p = (unsigned char)name[found - 1];
-      if (p==' '||p=='-'||p=='_'||p=='.'||p=='/') score += 5;   /* word start */
-    }
-    if (found == last + 1) score += 5;         /* contiguous run */
-    last = found;
-    ni = found + 1;
+/* Case-insensitive substring search: byte offset of `needle` within `hay`, or
+   -1. An empty needle matches at 0. */
+static int find_ci(const char *hay, const char *needle) {
+  if (!*needle) return 0;
+  for (int i = 0; hay[i]; i++) {
+    int j = 0;
+    while (needle[j] && tolower((unsigned char)hay[i + j]) == tolower((unsigned char)needle[j])) j++;
+    if (!needle[j]) return i;
   }
-  return score;
+  return -1;
+}
+
+/* Match score of query `q` against filename `name`: -1 if `name` doesn't contain
+   `q` as a (case-insensitive) substring, else higher is better — a prefix match
+   beats a word-start match beats a mid-word match. This is a literal "contains"
+   filter, NOT a loose subsequence ("Hello" matches "Hello World" / "My Hello"
+   but not "histories"). An empty query scores 0 (the recent-files case is
+   handled by the caller). */
+static int match_score(const char *name, const char *q) {
+  if (!*q) return 0;
+  int off = find_ci(name, q);
+  if (off < 0) return -1;
+  if (off == 0) return 100;                    /* name starts with the query */
+  unsigned char p = (unsigned char)name[off - 1];
+  if (p == ' ' || p == '-' || p == '_') return 50;   /* a word in the name starts with it */
+  return 10;                                   /* substring somewhere inside a word */
+}
+
+/* Note files only (wikilinks point at notes, not PDFs/images in the vault). */
+static int is_note_file(const char *name) {
+  const char *dot = strrchr(name, '.');
+  if (!dot) return 0;
+  return strcasecmp(dot, ".md") == 0 || strcasecmp(dot, ".markdown") == 0 ||
+         strcasecmp(dot, ".txt") == 0 || strcasecmp(dot, ".text") == 0;
 }
 
 /* Position of `name` in the most-recently-used list (0 = most recent, which is
@@ -151,18 +160,21 @@ static int recency_rank(const char *name) {
   return RECENCY_NONE;
 }
 
-/* Collect up to `max` existing filenames in the documents dir that fuzzy-match
-   `prefix` (subsequence, case-insensitive). Ranking: best fuzzy score first,
-   ties broken by recency (the most-recently-opened note wins), then
-   alphabetically. The currently-open file (MRU index 0) is excluded — you don't
-   link a note to itself. With an empty prefix every name ties at score 0, so the
-   list is effectively the MRU: the document you were just in sits on top.
-   Returns the count. Used for the wikilink autocomplete. */
+/* Collect up to `max` note filenames in the documents dir for the wikilink
+   autocomplete. Two modes:
+     - empty prefix → the most-recently-opened notes only (MRU order), so a bare
+       "[[" proposes where you've been, not a random slice of the vault;
+     - non-empty   → notes whose name *contains* the query (case-insensitive
+       substring; "Hello" → "Hello World" / "My Hello", never "histories").
+   Either way only note files count (.md/.markdown/.txt), the currently-open file
+   (MRU index 0) is excluded, and results rank by match quality, then recency,
+   then alphabetically. Returns the count. */
 int buf_list_matches(const char *prefix, char out[][256], int max) {
   if (g_documents_dir[0] == '\0' || max <= 0) return 0;
   DIR *d = opendir(g_documents_dir);
   if (!d) return 0;
 
+  int empty = (prefix[0] == '\0');
   enum { CAND_MAX = 1024 };
   static char names[CAND_MAX][256];
   static int  scores[CAND_MAX];
@@ -173,10 +185,12 @@ int buf_list_matches(const char *prefix, char out[][256], int max) {
     const char *name = e->d_name;
     if (name[0] == '.') continue;                       /* skip ., .., hidden */
     if (strlen(name) >= 256) continue;
-    int sc = fuzzy_score(name, prefix);
-    if (sc < 0) continue;                               /* not a fuzzy match */
+    if (!is_note_file(name)) continue;                  /* notes only, not PDFs etc. */
     int rec = recency_rank(name);
     if (rec == 0) continue;                             /* the current file — skip self */
+    if (empty && rec == RECENCY_NONE) continue;         /* bare "[[" → recent notes only */
+    int sc = match_score(name, prefix);
+    if (sc < 0) continue;                               /* doesn't contain the query */
     snprintf(names[ncand], 256, "%s", name);
     scores[ncand] = sc;
     recency[ncand] = rec;

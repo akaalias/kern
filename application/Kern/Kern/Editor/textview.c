@@ -234,19 +234,24 @@ static void context_refresh(void) {
   if (n_same == 0 && n_back == 0) return;   /* nothing related → no section */
 
   int start = g_ed.line_count;
-  ctx_append("");                            /* separator (also the save cut-point) */
-  ctx_append("## Context");
+  /* Three blank lines open the section: spacing above, the divider line itself
+     (do_render draws a dotted rule + a centered "Context" label across it, at
+     readonly_from + 1), and spacing below. start is the save cut-point. */
+  ctx_append("");
+  ctx_append("");   /* CONTEXT_DIVIDER_OFFSET = 1 — keep in sync with do_render */
+  ctx_append("");
+  int first = 1;
   if (n_back > 0) {
-    ctx_append("");
     ctx_append("Backlinks");
     for (int i = 0; i < n_back; i++) {
       char line[300];
       snprintf(line, sizeof(line), "- [[%s]]", backlinks[i]);
       ctx_append(line);
     }
+    first = 0;
   }
   if (n_same > 0) {
-    ctx_append("");
+    if (!first) ctx_append("");
     ctx_append("Created the same day");
     for (int i = 0; i < n_same; i++) {
       char line[300];
@@ -254,7 +259,7 @@ static void context_refresh(void) {
       ctx_append(line);
     }
   }
-  g_ed.readonly_from = start;   /* everything from the separator down is static */
+  g_ed.readonly_from = start;   /* everything from the spacing line down is static */
 }
 #else
 static void context_refresh(void) {}
@@ -1130,7 +1135,7 @@ static int handle_esc_prefix_key(int sym, int shift) {
   if (shift && sym == SDLK_PERIOD) {
     /* M-> : end of buffer, set mark first */
     buf_mark_set(&g_ed);
-    g_ed.cursor_line = g_ed.line_count - 1;
+    g_ed.cursor_line = buf_content_line_count(&g_ed) - 1;   /* stop at the editable page */
     g_ed.cursor_col = g_ed.lines[g_ed.cursor_line].len;
     g_ed.cursor_target_col = g_ed.cursor_col;
     nav_ensure_cursor_visible(&g_ed, &g_vs);
@@ -1239,7 +1244,7 @@ static const char button_map[256] = {
 /* ---- render pass (callable from main loop and resize watcher) ---- */
 
 /* ---- wikilink autocomplete ([[ … ]]) ---- */
-#define WL_MAX 6
+#define WL_MAX 5
 static int  wl_active;
 static int  wl_count;
 static int  wl_sel;
@@ -1761,14 +1766,25 @@ static void do_render(void) {
       track = g_ed.cursor_col;
     }
 
-    /* light dotted rule separating the editable page from the read-only Context
-       section (drawn through the blank separator line that opens the section) */
-    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from && vr->row_start == 0) {
+    /* Divider between the editable page and the read-only Context section: a
+       light dotted rule with a centered "Context" label, drawn on the dedicated
+       divider line (readonly_from + 1; a blank line sits above and below it for
+       breathing room). */
+    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from + 1 && vr->row_start == 0) {
       int sepy = vr->py + nav_line_height() / 2;
       int x0 = nav_page_margin() - (int)g_vs.scroll_x;
       int x1 = x0 + nav_page_w();
-      for (int dx = x0; dx < x1; dx += 6)
-        r_draw_rect(rect(dx, sepy, 2, 1), color(120, 120, 128, 110));
+      Color dotc = color(120, 120, 128, 120);
+      const char *label = "Context";
+      r_set_font_style(FONT_REGULAR);
+      int lw = r_get_text_width(label, 7);
+      int th = r_get_text_height();
+      int cx = (x0 + x1) / 2;
+      int lstart = cx - lw / 2, lend = cx + lw / 2;
+      int gap = 14;   /* clear space around the label */
+      for (int dx = x0; dx < lstart - gap; dx += 6) r_draw_rect(rect(dx, sepy, 2, 1), dotc);
+      for (int dx = lend + gap; dx < x1; dx += 6)    r_draw_rect(rect(dx, sepy, 2, 1), dotc);
+      r_draw_text(label, vec2(lstart, sepy - th / 2), color(150, 150, 158, 255));
     }
 
     int draw_start = vr->row_start;
@@ -1832,8 +1848,13 @@ static void do_render(void) {
       VisRow *vr = &g_vs.vis_rows[i];
       if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
           (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
-        r_draw_rect(rect(caret_x, vr->py, 3, font_h),
-                    color(90, 200, 250, 255));
+        /* The caret turns warm amber — the complement of its default cyan — when
+           it's inside the read-only Context section, signalling that text there
+           can't be edited (only navigated / link-followed). */
+        Color caret_col = (g_ed.readonly_from > 0 && g_ed.cursor_line >= g_ed.readonly_from)
+                            ? color(250, 165, 70, 255)
+                            : color(90, 200, 250, 255);
+        r_draw_rect(rect(caret_x, vr->py, 3, font_h), caret_col);
         cursor_py = vr->py;
         break;
       }
