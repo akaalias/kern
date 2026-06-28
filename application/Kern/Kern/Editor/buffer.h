@@ -15,6 +15,10 @@ unsigned long buf_edit_seq(void);
 void buf_ensure_lines_cap(EditorState *ed, int need);
 void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len);
 void buf_delete_line_at(EditorState *ed, int idx);
+/* append line+1 onto `line` and remove line+1 (caller guarantees line+1 exists) */
+void buf_join_line_with_next(EditorState *ed, int line);
+/* clamp the cursor into the buffer after an edit that may have shrunk it */
+void buf_clamp_cursor(EditorState *ed);
 
 /* file I/O — load/save return 0 on success, -1 on failure */
 int  buf_load_file(EditorState *ed, const char *path);

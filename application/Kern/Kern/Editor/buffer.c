@@ -297,6 +297,30 @@ void buf_delete_line_at(EditorState *ed, int idx) {
   if (ed->readonly_from > 0 && idx < ed->readonly_from) ed->readonly_from--;
 }
 
+/* Append line+1 onto `line` (the "+1 keeps NUL" copy), then delete line+1 and
+   mark the merged line dirty. The shared mechanic behind every line join:
+   backspace/delete at a line boundary, kill-to-end-of-line, and undo of a
+   split. Caller guarantees line+1 exists. */
+void buf_join_line_with_next(EditorState *ed, int line) {
+  Line *l = &ed->lines[line];
+  Line *next = &ed->lines[line + 1];
+  line_ensure_cap(l, l->len + next->len);
+  memcpy(l->text + l->len, next->text, next->len + 1);  /* +1 keeps the NUL */
+  l->len += next->len;
+  buf_delete_line_at(ed, line + 1);
+  line_dirty(l);
+}
+
+/* Clamp the cursor into the buffer (line into [0,line_count), col into
+   [0,line.len]). Used after edits that may shrink the buffer under the caret. */
+void buf_clamp_cursor(EditorState *ed) {
+  if (ed->cursor_line >= ed->line_count) ed->cursor_line = ed->line_count - 1;
+  if (ed->cursor_line < 0) ed->cursor_line = 0;
+  if (ed->cursor_col > ed->lines[ed->cursor_line].len)
+    ed->cursor_col = ed->lines[ed->cursor_line].len;
+  if (ed->cursor_col < 0) ed->cursor_col = 0;
+}
+
 /* Number of lines that belong to the document proper (excludes the auto-generated
    read-only Context section). Save/serialize use this so the section never hits
    disk or the clipboard/publish payload. */
@@ -440,25 +464,27 @@ int buf_save_text(const char *path, const char *text, int len) {
 
 /* ---- kill buffer ---- */
 
+/* Grow the kill buffer to hold at least `need` bytes (the caller includes room
+   for the NUL). Returns 1 on success, 0 if the realloc failed. */
+static int kill_ensure_cap(EditorState *ed, int need) {
+  if (need <= ed->kill_cap) return 1;
+  int cap = need * 2;
+  char *tmp = realloc(ed->kill_buf, cap);
+  if (!tmp) return 0;
+  ed->kill_buf = tmp;
+  ed->kill_cap = cap;
+  return 1;
+}
+
 void buf_kill_set(EditorState *ed, const char *text, int len) {
-  if (len + 1 > ed->kill_cap) {
-    ed->kill_cap = (len + 1) * 2;
-    char *tmp = realloc(ed->kill_buf, ed->kill_cap);
-    if (!tmp) return;
-    ed->kill_buf = tmp;
-  }
+  if (!kill_ensure_cap(ed, len + 1)) return;
   memcpy(ed->kill_buf, text, len);
   ed->kill_buf[len] = '\0';
   ed->kill_len = len;
 }
 
 void buf_kill_append(EditorState *ed, const char *text, int len) {
-  if (ed->kill_len + len + 1 > ed->kill_cap) {
-    ed->kill_cap = (ed->kill_len + len + 1) * 2;
-    char *tmp = realloc(ed->kill_buf, ed->kill_cap);
-    if (!tmp) return;
-    ed->kill_buf = tmp;
-  }
+  if (!kill_ensure_cap(ed, ed->kill_len + len + 1)) return;
   memcpy(ed->kill_buf + ed->kill_len, text, len);
   ed->kill_len += len;
   ed->kill_buf[ed->kill_len] = '\0';

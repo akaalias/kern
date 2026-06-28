@@ -13,6 +13,10 @@
 #include "clock.h"
 #include "utf8.h"
 
+/* Cap on visual rows per logical line for an on-stack wrap-break buffer. A line
+   is hard-split at MAX_LINE_LEN, so this is comfortably above any real row count. */
+#define NAV_MAX_WRAP_ROWS 256
+
 /* ---- window / page metrics ---- */
 
 int nav_win_w(void) { int w, h; r_get_size(&w, &h); return w; }
@@ -128,8 +132,8 @@ int nav_get_wrap_breaks(Line *l, int *starts, int max_starts) {
 
 int nav_count_wraps(Line *l) {
   if (l->wrap_count >= 0) return l->wrap_count;
-  int starts[256];
-  l->wrap_count = nav_get_wrap_breaks(l, starts, 256);
+  int starts[NAV_MAX_WRAP_ROWS];
+  l->wrap_count = nav_get_wrap_breaks(l, starts, NAV_MAX_WRAP_ROWS);
   return l->wrap_count;
 }
 
@@ -175,8 +179,8 @@ int nav_logical_to_visual(EditorState *ed, int logical_line) {
 
 int nav_cursor_to_visual(EditorState *ed, int cline, int ccol) {
   int base = nav_logical_to_visual(ed, cline);
-  int starts[256];
-  int nrows = nav_get_wrap_breaks(&ed->lines[cline], starts, 256);
+  int starts[NAV_MAX_WRAP_ROWS];
+  int nrows = nav_get_wrap_breaks(&ed->lines[cline], starts, NAV_MAX_WRAP_ROWS);
   for (int r = nrows - 1; r >= 0; r--) {
     if (ccol >= starts[r]) return base + r;
   }
@@ -252,6 +256,17 @@ static void nav_row_geom(EditorState *ed, int ln, int row_start,
   *heading = h;
 }
 
+/* Byte bounds [*start,*end) of visual row `row` (0-based) of line `l`, where
+   `row` is a wrap offset the caller already has. Mirrors do_render's wrap split. */
+static void nav_row_bounds(Line *l, int row, int *start, int *end) {
+  int starts[NAV_MAX_WRAP_ROWS];
+  int nrows = nav_get_wrap_breaks(l, starts, NAV_MAX_WRAP_ROWS);
+  if (row < 0) row = 0;
+  if (row >= nrows) row = nrows - 1;
+  *start = starts[row];
+  *end = (row + 1 < nrows) ? starts[row + 1] : l->len;
+}
+
 /* Publish the symbol reveal range for logical line `ln`: the caret point (when
    the caret is on it), unioned with the active selection's extent on that line, so
    render and measurement collapse/reveal the same tokens and a selected symbol
@@ -275,8 +290,8 @@ void nav_sub_reveal_for_line(EditorState *ed, int ln) {
 int nav_cursor_x(EditorState *ed, int line, int col) {
   nav_sub_reveal_for_line(ed, line);   /* reveal the caret/selection tokens on this line */
   Line *l = &ed->lines[line];
-  int starts[256];
-  int nrows = nav_get_wrap_breaks(l, starts, 256);
+  int starts[NAV_MAX_WRAP_ROWS];
+  int nrows = nav_get_wrap_breaks(l, starts, NAV_MAX_WRAP_ROWS);
   int row = 0;
   for (int r = nrows - 1; r >= 0; r--) { if (col >= starts[r]) { row = r; break; } }
   int row_start = starts[row];
@@ -301,10 +316,8 @@ void nav_click_to_cursor(EditorState *ed, ViewState *vs, int mx, int my) {
   int wrap_offset;
   int ln = nav_visual_to_logical(ed, vis_line, &wrap_offset);
 
-  int starts[256];
-  int nrows = nav_get_wrap_breaks(&ed->lines[ln], starts, 256);
-  int row_start = starts[wrap_offset];
-  int row_end = (wrap_offset + 1 < nrows) ? starts[wrap_offset + 1] : ed->lines[ln].len;
+  int row_start, row_end;
+  nav_row_bounds(&ed->lines[ln], wrap_offset, &row_start, &row_end);
 
   int x0, draw_start, heading;
   nav_row_geom(ed, ln, row_start, &x0, &draw_start, &heading);
@@ -358,10 +371,8 @@ void nav_visual_move(EditorState *ed, ViewState *vs, int dir) {
   } else {
     int wrap_off;
     int ln = nav_visual_to_logical(ed, target_vis, &wrap_off);
-    int starts[256];
-    int nrows = nav_get_wrap_breaks(&ed->lines[ln], starts, 256);
-    int row_start = starts[wrap_off];
-    int row_end = (wrap_off + 1 < nrows) ? starts[wrap_off + 1] : ed->lines[ln].len;
+    int row_start, row_end;
+    nav_row_bounds(&ed->lines[ln], wrap_off, &row_start, &row_end);
     int x0, draw_start, heading;
     nav_row_geom(ed, ln, row_start, &x0, &draw_start, &heading);
     int ms = draw_start > row_start ? draw_start : row_start;
@@ -389,6 +400,16 @@ void nav_visual_move(EditorState *ed, ViewState *vs, int dir) {
 
 /* ---- search ---- */
 
+/* Land the caret on a found match and scroll it into view. */
+static void nav_record_match(EditorState *ed, ViewState *vs, int ln, int col) {
+  vs->search_match_line = ln;
+  vs->search_match_col = col;
+  ed->cursor_line = ln;
+  ed->cursor_col = col;
+  ed->cursor_target_col = col;
+  nav_ensure_cursor_visible(ed, vs);
+}
+
 void nav_search_find_next(EditorState *ed, ViewState *vs, int from_line, int from_col) {
   if (vs->search_len == 0) { vs->search_match_line = -1; return; }
   for (int pass = 0; pass < 2; pass++) {
@@ -400,12 +421,7 @@ void nav_search_find_next(EditorState *ed, ViewState *vs, int from_line, int fro
       if (l->len < vs->search_len) continue;
       for (int c = start_col; c <= l->len - vs->search_len; c++) {
         if (strncasecmp(l->text + c, vs->search_buf, vs->search_len) == 0) {
-          vs->search_match_line = ln;
-          vs->search_match_col = c;
-          ed->cursor_line = ln;
-          ed->cursor_col = c;
-          ed->cursor_target_col = c;
-          nav_ensure_cursor_visible(ed, vs);
+          nav_record_match(ed, vs, ln, c);
           return;
         }
       }
@@ -427,12 +443,7 @@ void nav_search_find_prev(EditorState *ed, ViewState *vs, int from_line, int fro
       if (start_col > max_col) start_col = max_col;
       for (int c = start_col; c >= 0; c--) {
         if (strncasecmp(l->text + c, vs->search_buf, vs->search_len) == 0) {
-          vs->search_match_line = ln;
-          vs->search_match_col = c;
-          ed->cursor_line = ln;
-          ed->cursor_col = c;
-          ed->cursor_target_col = c;
-          nav_ensure_cursor_visible(ed, vs);
+          nav_record_match(ed, vs, ln, c);
           return;
         }
       }

@@ -11,6 +11,34 @@
 
 static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec, int to_kill);
 
+/* Flatten the ordered range [sl,sc]..[el,ec] into a freshly malloc'd,
+   NUL-terminated string (lines joined with '\n'); *len_out gets the byte length
+   (excluding the NUL, 0 for an empty range). Returns NULL only on OOM — an empty
+   range yields an allocated "". Caller frees. The one place region geometry is
+   turned into bytes, shared by copy and cut. */
+static char *region_flatten(EditorState *ed, int sl, int sc, int el, int ec, int *len_out) {
+  int total = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : ed->lines[ln].len;
+    total += ce - cs;
+    if (ln < el) total++;
+  }
+  char *region = malloc(total + 1);
+  if (!region) { if (len_out) *len_out = 0; return NULL; }
+  int pos = 0;
+  for (int ln = sl; ln <= el; ln++) {
+    int cs = (ln == sl) ? sc : 0;
+    int ce = (ln == el) ? ec : ed->lines[ln].len;
+    memcpy(region + pos, ed->lines[ln].text + cs, ce - cs);
+    pos += ce - cs;
+    if (ln < el) region[pos++] = '\n';
+  }
+  region[pos] = '\0';
+  if (len_out) *len_out = total;
+  return region;
+}
+
 /* The auto-generated Context section (lines >= ed->readonly_from when > 0) is
    static: editing primitives refuse to mutate any line inside it. */
 static int ed_line_locked(const EditorState *ed, int line) {
@@ -40,6 +68,12 @@ void ed_insert_char(EditorState *ed, const char *text) {
   ed->cursor_target_col = ed->cursor_col;
   line_dirty(l);
   undo_push_op(ed, UNDO_INSERT, ins_line, ins_col, text, tlen);
+}
+
+/* Insert a single byte — the NUL-terminated-string ceremony for one char. */
+static void ed_insert_byte(EditorState *ed, char c) {
+  char ch[2] = { c, 0 };
+  ed_insert_char(ed, ch);
 }
 
 /* one indent level for list items — two spaces, the CommonMark width for
@@ -95,13 +129,9 @@ void ed_backspace(EditorState *ed) {
     int prev = ed->cursor_line - 1;
     int new_col = ed->lines[prev].len;
     undo_push_op(ed, UNDO_JOIN_LINE, prev, new_col, NULL, 0);
-    line_ensure_cap(&ed->lines[prev], ed->lines[prev].len + ed->lines[ed->cursor_line].len);
-    memcpy(ed->lines[prev].text + ed->lines[prev].len, ed->lines[ed->cursor_line].text, ed->lines[ed->cursor_line].len + 1);
-    ed->lines[prev].len += ed->lines[ed->cursor_line].len;
-    buf_delete_line_at(ed, ed->cursor_line);
+    buf_join_line_with_next(ed, prev);
     ed->cursor_line = prev;
     ed->cursor_col = new_col;
-    line_dirty(&ed->lines[prev]);
   }
   ed->cursor_target_col = ed->cursor_col;
 }
@@ -120,13 +150,8 @@ void ed_delete(EditorState *ed) {
     l->len -= nb;
     line_dirty(l);
   } else if (ed->cursor_line < ed->line_count - 1) {
-    int next = ed->cursor_line + 1;
     undo_push_op(ed, UNDO_JOIN_LINE, ed->cursor_line, l->len, NULL, 0);
-    line_ensure_cap(l, l->len + ed->lines[next].len);
-    memcpy(l->text + l->len, ed->lines[next].text, ed->lines[next].len + 1);
-    l->len += ed->lines[next].len;
-    buf_delete_line_at(ed, next);
-    line_dirty(l);
+    buf_join_line_with_next(ed, ed->cursor_line);
   }
 }
 
@@ -212,12 +237,7 @@ void ed_emacs_kill_line(EditorState *ed) {
     } else {
       buf_kill_set(ed, "\n", 1);
     }
-    Line *next = &ed->lines[ed->cursor_line + 1];
-    line_ensure_cap(l, l->len + next->len);
-    memcpy(l->text + l->len, next->text, next->len + 1);
-    l->len += next->len;
-    buf_delete_line_at(ed, ed->cursor_line + 1);
-    line_dirty(l);
+    buf_join_line_with_next(ed, ed->cursor_line);
   }
   undo_end_group(ed);
   ed->last_kill_was_k = 1;
@@ -252,45 +272,24 @@ void ed_emacs_yank(EditorState *ed) {
     if (ed->kill_buf[i] == '\n') {
       ed_split_plain(ed);   /* verbatim — no list/heading auto-continuation */
     } else {
-      char ch[2] = { ed->kill_buf[i], 0 };
-      ed_insert_char(ed, ch);
+      ed_insert_byte(ed, ed->kill_buf[i]);
     }
   }
   undo_end_group(ed);
 }
 
-/* M-w (kill-ring-save): copy the region into the kill buffer without deleting. */
 /* Return the marked region as a freshly malloc'd, NUL-terminated string (lines
-   joined with '\n'), or NULL if there's no region. *len_out gets the byte
+   joined with '\n'), or NULL if there's no active mark. *len_out gets the byte
    length (excluding the NUL). Caller frees. */
 char *ed_region_dup(EditorState *ed, int *len_out) {
   if (len_out) *len_out = 0;
   if (!ed->mark_active) return NULL;
   int sl, sc, el, ec;
   buf_region_ordered(ed, &sl, &sc, &el, &ec);
-
-  int total = 0;
-  for (int ln = sl; ln <= el; ln++) {
-    int cs = (ln == sl) ? sc : 0;
-    int ce = (ln == el) ? ec : ed->lines[ln].len;
-    total += ce - cs;
-    if (ln < el) total++;
-  }
-  char *region = malloc(total + 1);
-  if (!region) return NULL;
-  int pos = 0;
-  for (int ln = sl; ln <= el; ln++) {
-    int cs = (ln == sl) ? sc : 0;
-    int ce = (ln == el) ? ec : ed->lines[ln].len;
-    memcpy(region + pos, ed->lines[ln].text + cs, ce - cs);
-    pos += ce - cs;
-    if (ln < el) region[pos++] = '\n';
-  }
-  region[pos] = '\0';
-  if (len_out) *len_out = total;
-  return region;
+  return region_flatten(ed, sl, sc, el, ec, len_out);
 }
 
+/* M-w (kill-ring-save): copy the region into the kill buffer without deleting. */
 void ed_emacs_copy_region(EditorState *ed) {
   int len;
   char *region = ed_region_dup(ed, &len);
@@ -354,38 +353,22 @@ int ed_wrap_region(EditorState *ed, const char *open, const char *close) {
   return 1;
 }
 
-/* Kill (cut to kill buffer, with undo) the ordered range [sl,sc] .. [el,ec].
-   Leaves the cursor at the start of the range. Mark is left untouched. Records
-   one UNDO_DELETE op (ungrouped), so a caller can wrap several edits in its own
-   undo group — see ed_replace_region. */
-/* Excise [sl,sc)..(el,ec] from the buffer as one UNDO_DELETE. When to_kill is
-   set the removed text also lands in the kill buffer (a "cut"); when clear it is
-   discarded (a plain delete, e.g. Backspace over a selection — leaves the kill
-   ring untouched). */
+/* Excise the ordered range [sl,sc]..[el,ec] as one UNDO_DELETE (ungrouped, so a
+   caller can wrap several edits in its own group — see ed_replace_region).
+   Leaves the cursor at the start of the range; the mark is left untouched. When
+   to_kill is set the removed text also lands in the kill buffer (a "cut"); when
+   clear it is discarded (a plain delete, e.g. Backspace over a selection —
+   leaves the kill ring untouched). */
 static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec, int to_kill) {
   if (ed_line_locked(ed, el)) return;   /* never cut into the Context section */
   int total = 0;
-  for (int ln = sl; ln <= el; ln++) {
-    int cs = (ln == sl) ? sc : 0;
-    int ce = (ln == el) ? ec : ed->lines[ln].len;
-    total += ce - cs;
-    if (ln < el) total++;
-  }
-  if (total <= 0) {
+  char *region = region_flatten(ed, sl, sc, el, ec, &total);
+  if (total <= 0) {   /* empty range: just place the cursor */
+    free(region);
     ed->cursor_line = sl; ed->cursor_col = sc; ed->cursor_target_col = sc;
     return;
   }
-  char *region = malloc(total + 1);
-  if (!region) return;
-  int pos = 0;
-  for (int ln = sl; ln <= el; ln++) {
-    int cs = (ln == sl) ? sc : 0;
-    int ce = (ln == el) ? ec : ed->lines[ln].len;
-    memcpy(region + pos, ed->lines[ln].text + cs, ce - cs);
-    pos += ce - cs;
-    if (ln < el) region[pos++] = '\n';
-  }
-  region[pos] = '\0';
+  if (!region) return;   /* OOM */
   if (to_kill) buf_kill_set(ed, region, total);
 
   undo_push_op(ed, UNDO_DELETE, sl, sc, region, total);
@@ -407,10 +390,7 @@ static void ed_kill_range(EditorState *ed, int sl, int sc, int el, int ec, int t
     line_dirty(first);
     for (int i = el; i > sl; i--) buf_delete_line_at(ed, i);
   }
-  if (ed->cursor_line < 0) ed->cursor_line = 0;
-  if (ed->cursor_line >= ed->line_count) ed->cursor_line = ed->line_count - 1;
-  if (ed->cursor_col < 0) ed->cursor_col = 0;
-  if (ed->cursor_col > ed->lines[ed->cursor_line].len) ed->cursor_col = ed->lines[ed->cursor_line].len;
+  buf_clamp_cursor(ed);
   ed->cursor_target_col = ed->cursor_col;
 }
 
@@ -500,10 +480,7 @@ void ed_emacs_case_word(EditorState *ed, int mode) {
   if (changed) {
     undo_begin_group(ed);
     for (int i = 0; i < wlen; i++) ed_delete(ed);          /* remove the word */
-    for (int i = 0; i < wlen; i++) {                        /* insert transformed */
-      char ch[2] = { xf[i], 0 };
-      ed_insert_char(ed, ch);
-    }
+    for (int i = 0; i < wlen; i++) ed_insert_byte(ed, xf[i]);  /* insert transformed */
     undo_end_group(ed);
   } else {
     ed->cursor_col = end;
@@ -527,8 +504,7 @@ void ed_emacs_transpose_chars(EditorState *ed) {
   ed->cursor_col = a;
   ed_delete(ed);            /* remove x */
   ed_delete(ed);            /* remove y (now at a) */
-  char ch[2];
-  ch[0] = y; ch[1] = 0; ed_insert_char(ed, ch);
-  ch[0] = x; ch[1] = 0; ed_insert_char(ed, ch);
+  ed_insert_byte(ed, y);
+  ed_insert_byte(ed, x);
   undo_end_group(ed);
 }

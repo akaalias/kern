@@ -234,12 +234,14 @@ void cmd_exchange_point_mark(EditorState *ed, ViewState *vs) {  /* C-x C-x */
 
 /* ---- scrolling / font ---- */
 
-static void cmd_page_down(EditorState *ed, ViewState *vs) {     /* C-v */
+/* Move the caret one screenful in `dir` (+1 down / -1 up), keeping the target
+   column, and scroll to follow. One page is content height minus a row of overlap. */
+static void cmd_page_move(EditorState *ed, ViewState *vs, int dir) {
   int lh = nav_line_height();
   int rows = vs->content_h / lh - 1; if (rows < 1) rows = 1;
   int vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
   int total = nav_total_visual_lines(ed);
-  int target = vis + rows;
+  int target = vis + dir * rows;
   if (target > total - 1) target = total - 1;
   if (target < 0) target = 0;
   int off; ed->cursor_line = nav_visual_to_logical(ed, target, &off);
@@ -248,16 +250,8 @@ static void cmd_page_down(EditorState *ed, ViewState *vs) {     /* C-v */
   nav_ensure_cursor_visible(ed, vs);
 }
 
-void cmd_page_up(EditorState *ed, ViewState *vs) {             /* M-v */
-  int lh = nav_line_height();
-  int rows = vs->content_h / lh - 1; if (rows < 1) rows = 1;
-  int vis = nav_cursor_to_visual(ed, ed->cursor_line, ed->cursor_col);
-  int target = vis - rows; if (target < 0) target = 0;
-  int off; ed->cursor_line = nav_visual_to_logical(ed, target, &off);
-  ed->cursor_col = ed->cursor_target_col;
-  nav_cursor_clamp(ed);
-  nav_ensure_cursor_visible(ed, vs);
-}
+static void cmd_page_down(EditorState *ed, ViewState *vs) { cmd_page_move(ed, vs, +1); }  /* C-v */
+void cmd_page_up(EditorState *ed, ViewState *vs) { cmd_page_move(ed, vs, -1); }           /* M-v */
 
 static int g_recenter_state = 0;
 static void cmd_recenter(EditorState *ed, ViewState *vs) {     /* C-l: center→top→bottom */
@@ -284,21 +278,18 @@ void cmd_toggle_typewriter(EditorState *ed, ViewState *vs) {   /* C-x t */
 /* A font change alters glyph widths, so all wraps are invalid even if the page
    width is unchanged; invalidate and re-anchor the reflow cache to the new
    page width so a later same-width resize still skips correctly. */
-static void cmd_font_increase(EditorState *ed, ViewState *vs) {
-  vs->font_size += 2.0f; if (vs->font_size > 72.0f) vs->font_size = 72.0f;
+static void cmd_font_step(EditorState *ed, ViewState *vs, float delta) {
+  vs->font_size += delta;
+  if (vs->font_size > 72.0f) vs->font_size = 72.0f;
+  if (vs->font_size < 8.0f) vs->font_size = 8.0f;
   r_set_font_size(vs->font_size);
   buf_invalidate_all_wraps(ed);
   vs->wrap_page_w = nav_page_w();
   nav_ensure_cursor_visible(ed, vs);
 }
 
-static void cmd_font_decrease(EditorState *ed, ViewState *vs) {
-  vs->font_size -= 2.0f; if (vs->font_size < 8.0f) vs->font_size = 8.0f;
-  r_set_font_size(vs->font_size);
-  buf_invalidate_all_wraps(ed);
-  vs->wrap_page_w = nav_page_w();
-  nav_ensure_cursor_visible(ed, vs);
-}
+static void cmd_font_increase(EditorState *ed, ViewState *vs) { cmd_font_step(ed, vs, +2.0f); }
+static void cmd_font_decrease(EditorState *ed, ViewState *vs) { cmd_font_step(ed, vs, -2.0f); }
 
 /* ---- dispatch ---- */
 

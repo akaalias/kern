@@ -173,15 +173,7 @@ static void undo_apply_one(EditorState *ed, UndoOp *op) {
     case UNDO_SPLIT_LINE: {
       /* undo a split: join line and line+1 back together */
       int ln = op->line;
-      if (ln + 1 < ed->line_count) {
-        Line *cur = &ed->lines[ln];
-        Line *next = &ed->lines[ln + 1];
-        line_ensure_cap(cur, cur->len + next->len);
-        memcpy(cur->text + cur->len, next->text, next->len + 1);
-        cur->len += next->len;
-        buf_delete_line_at(ed, ln + 1);
-        line_dirty(cur);
-      }
+      if (ln + 1 < ed->line_count) buf_join_line_with_next(ed, ln);
       break;
     }
     case UNDO_JOIN_LINE: {
@@ -235,11 +227,6 @@ void undo_perform(EditorState *ed) {
     ed->cursor_col = op->cursor_col;
   }
 
-  /* clamp cursor */
-  if (ed->cursor_line >= ed->line_count) ed->cursor_line = ed->line_count - 1;
-  if (ed->cursor_line < 0) ed->cursor_line = 0;
-  if (ed->cursor_col > ed->lines[ed->cursor_line].len)
-    ed->cursor_col = ed->lines[ed->cursor_line].len;
-  if (ed->cursor_col < 0) ed->cursor_col = 0;
+  buf_clamp_cursor(ed);
 }
 

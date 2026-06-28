@@ -9,47 +9,35 @@
 #include "renderer.h"
 #include "utf8.h"
 
+/* If `l` is a list item, return the byte index just past its marker — leading
+   whitespace plus "- " or "N. " — else 0. The single marker scan that the three
+   list helpers below share. */
+static int md_list_marker_end(Line *l) {
+  int i = 0;
+  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
+  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') return i + 2;
+  int d = i;
+  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
+  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') return d + 2;
+  return 0;
+}
+
 /* base indent shared by every list level; nesting is added on top by the line's
    own leading whitespace, which is drawn as literal text */
 int md_list_indent(Line *l) {
-  int i = 0;
-  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
-  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') {
-    return r_get_text_width("    ", 4);
-  }
-  int d = i;
-  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
-  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') {
-    return r_get_text_width("    ", 4);
-  }
-  return 0;
+  return md_list_marker_end(l) ? r_get_text_width("    ", 4) : 0;
 }
 
 /* pixel width of a list item's marker — including any leading indentation
    whitespace, so wrapped continuation rows hang under the item text. 0 if not
    a list item. */
 int md_list_marker_width(Line *l) {
-  int i = 0;
-  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
-  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') {
-    return r_get_text_width(l->text, i + 2);  /* leading ws + "- " */
-  }
-  int d = i;
-  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
-  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') {
-    return r_get_text_width(l->text, d + 2);  /* leading ws + digits + ". " */
-  }
-  return 0;
+  int end = md_list_marker_end(l);
+  return end ? r_get_text_width(l->text, end) : 0;
 }
 
 int md_is_list_item(Line *l) {
-  int i = 0;
-  while (i < l->len && (l->text[i] == ' ' || l->text[i] == '\t')) i++;
-  if (i + 1 < l->len && l->text[i] == '-' && l->text[i+1] == ' ') return 1;
-  int d = i;
-  while (d < l->len && l->text[d] >= '0' && l->text[d] <= '9') d++;
-  if (d > i && d + 1 < l->len && l->text[d] == '.' && l->text[d+1] == ' ') return 1;
-  return 0;
+  return md_list_marker_end(l) != 0;
 }
 
 int md_is_heading(Line *l) {
@@ -80,32 +68,29 @@ enum { SP_NONE = 0, SP_BOLD, SP_ITALIC, SP_MONO, SP_HL, SP_LINK, SP_WIKI, SP_UND
    searched up to line_len, so a span may cross visual-row boundaries.
    content..close is the styled inner text; [i,content) and [close,end) are the
    delimiter runs. For links the whole token is "content" (no inner markers). */
+/* A doubled symmetric delimiter (** == ++) opening at i: scan for its closer and
+   fill the boundaries, returning `kind`; SP_NONE if none opens here. */
+static int md_detect_pair(const char *t, int i, int line_len, int lim,
+                          char d, int kind, int *content, int *close, int *end) {
+  if (i + 1 < line_len && t[i] == d && t[i+1] == d) {
+    for (int j = i + 2; j + 1 < lim; j++)
+      if (t[j] == d && t[j+1] == d) {
+        *content = i + 2; *close = j; *end = j + 2; return kind;
+      }
+  }
+  return SP_NONE;
+}
+
 static int md_detect_span(const char *t, int i, int line_len,
                           int *content, int *close, int *end) {
   int lim = i + MD_MAX_SCAN;
   if (lim > line_len) lim = line_len;
 
-  /* **bold** */
-  if (i + 1 < line_len && t[i] == '*' && t[i+1] == '*') {
-    for (int j = i + 2; j + 1 < lim; j++)
-      if (t[j] == '*' && t[j+1] == '*') {
-        *content = i + 2; *close = j; *end = j + 2; return SP_BOLD;
-      }
-  }
-  /* ==highlight== */
-  if (i + 1 < line_len && t[i] == '=' && t[i+1] == '=') {
-    for (int j = i + 2; j + 1 < lim; j++)
-      if (t[j] == '=' && t[j+1] == '=') {
-        *content = i + 2; *close = j; *end = j + 2; return SP_HL;
-      }
-  }
-  /* ++underline++ */
-  if (i + 1 < line_len && t[i] == '+' && t[i+1] == '+') {
-    for (int j = i + 2; j + 1 < lim; j++)
-      if (t[j] == '+' && t[j+1] == '+') {
-        *content = i + 2; *close = j; *end = j + 2; return SP_UNDERLINE;
-      }
-  }
+  int kind;
+  if ((kind = md_detect_pair(t, i, line_len, lim, '*', SP_BOLD, content, close, end))) return kind;
+  if ((kind = md_detect_pair(t, i, line_len, lim, '=', SP_HL, content, close, end))) return kind;
+  if ((kind = md_detect_pair(t, i, line_len, lim, '+', SP_UNDERLINE, content, close, end))) return kind;
+
   /* `code` */
   if (t[i] == '`') {
     for (int j = i + 1; j < lim; j++)
