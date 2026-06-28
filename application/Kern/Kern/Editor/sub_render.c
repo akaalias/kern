@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "sub_render.h"
 #include "renderer.h"   /* r_has_glyph — fall back to literal for glyphs the font lacks */
+#include "span_cache.h"
 
 /* Fixed substitutions matched at a position, longest-match-first (so "<=>" wins
    over "<="). Curated precision-first. `word` entries (Greek names, math operator
@@ -147,25 +148,8 @@ static int sub_scan(const char *t, int len, SubSpan *out, int max) {
   return n;
 }
 
-int sub_line_spans(Line *l, const SubSpan **out) {
-  if (l->sub_span_count < 0) {
-    free(l->sub_spans);
-    l->sub_spans = NULL;
-    SubSpan scratch[SUB_MAX_SPANS];
-    int n = sub_scan(l->text, l->len, scratch, SUB_MAX_SPANS);
-    if (n > 0) {
-      l->sub_spans = malloc((size_t)n * sizeof(SubSpan));
-      if (l->sub_spans) {
-        for (int i = 0; i < n; i++) l->sub_spans[i] = scratch[i];
-      } else {
-        n = 0;   /* allocation failed: cache empty, render literal */
-      }
-    }
-    l->sub_span_count = n;
-  }
-  *out = l->sub_spans;
-  return l->sub_span_count;
-}
+KERN_DEFINE_SPAN_CACHE(sub_line_spans, SubSpan,
+                       sub_spans, sub_span_count, sub_scan, SUB_MAX_SPANS)
 
 const SubSpan *sub_at(Line *l, unsigned int sub_mask, int col) {
   if (!sub_mask) return NULL;

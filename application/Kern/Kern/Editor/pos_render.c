@@ -2,7 +2,9 @@
 
 #include <ctype.h>
 #include <stdlib.h>
+#include <string.h>
 #include "pos_render.h"
+#include "span_cache.h"
 
 /* Value, not hue. The Tufte alternative to iA's five-hue rainbow: no color at
    all, only luminance — a strict descending ramp by grammatical importance:
@@ -47,35 +49,25 @@ int pos_class_enabled(unsigned int syntax_mask, PosClass cls) {
   return (syntax_mask & POS_BIT(cls)) != 0;
 }
 
-int pos_line_spans(Line *l, const PosSpan **out) {
-  if (l->pos_span_count < 0) {
-    free(l->pos_spans);
-    l->pos_spans = NULL;
-    PosSpan scratch[POS_MAX_SPANS];
-    int n = pos_tag_line(l->text, l->len, scratch, POS_MAX_SPANS);
-    /* Post-correction: the tagger reads a gerund right after a determiner as a
-       verb ("a heading"), but English puts a noun there, not a finite verb.
-       Retag any Verb whose nearest preceding non-adjective span is a Determiner
-       (so "a heading", "the meeting", "an interesting opening" all become nouns). */
-    for (int i = 1; i < n; i++) {
-      if (scratch[i].cls != POS_VERB) continue;
-      int j = i - 1;
-      while (j >= 0 && scratch[j].cls == POS_ADJECTIVE) j--;
-      if (j >= 0 && scratch[j].cls == POS_DETERMINER) scratch[i].cls = POS_NOUN;
-    }
-    if (n > 0) {
-      l->pos_spans = malloc((size_t)n * sizeof(PosSpan));
-      if (l->pos_spans) {
-        for (int i = 0; i < n; i++) l->pos_spans[i] = scratch[i];
-      } else {
-        n = 0;   /* allocation failed: cache an empty map, render uncolored */
-      }
-    }
-    l->pos_span_count = n;
+/* Tag a line, then apply POS's one post-correction so the shared span-cache
+   macro sees the same `int scan(text,len,out,max)` shape as the other layers.
+   Correction: the tagger reads a gerund right after a determiner as a verb
+   ("a heading"), but English puts a noun there, not a finite verb. Retag any
+   Verb whose nearest preceding non-adjective span is a Determiner (so
+   "a heading", "the meeting", "an interesting opening" all become nouns). */
+static int pos_scan(const char *text, int len, PosSpan *out, int max) {
+  int n = pos_tag_line(text, len, out, max);
+  for (int i = 1; i < n; i++) {
+    if (out[i].cls != POS_VERB) continue;
+    int j = i - 1;
+    while (j >= 0 && out[j].cls == POS_ADJECTIVE) j--;
+    if (j >= 0 && out[j].cls == POS_DETERMINER) out[i].cls = POS_NOUN;
   }
-  *out = l->pos_spans;
-  return l->pos_span_count;
+  return n;
 }
+
+KERN_DEFINE_SPAN_CACHE(pos_line_spans, PosSpan,
+                       pos_spans, pos_span_count, pos_scan, POS_MAX_SPANS)
 
 int pos_color_at(Line *l, unsigned int syntax_mask, int col, Color *out) {
   if (!syntax_mask) return 0;

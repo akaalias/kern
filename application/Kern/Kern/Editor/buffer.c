@@ -260,6 +260,16 @@ void line_dirty(Line *l) {
   g_edit_seq++;
 }
 
+/* Free every per-line span cache (md / pos / style / sub). One place to add a
+   new span layer's free, so a new layer can't leak by being forgotten at a
+   free site. Does not touch l->text. */
+static void line_free_spans(Line *l) {
+  free(l->md_spans);
+  free(l->pos_spans);
+  free(l->style_spans);
+  free(l->sub_spans);
+}
+
 void buf_ensure_lines_cap(EditorState *ed, int need) {
   if (need > ed->line_cap) {
     ed->line_cap = need * 2;
@@ -281,10 +291,7 @@ void buf_insert_line_at(EditorState *ed, int idx, const char *s, int len) {
 
 void buf_delete_line_at(EditorState *ed, int idx) {
   free(ed->lines[idx].text);
-  free(ed->lines[idx].md_spans);
-  free(ed->lines[idx].pos_spans);
-  free(ed->lines[idx].style_spans);
-  free(ed->lines[idx].sub_spans);
+  line_free_spans(&ed->lines[idx]);
   memmove(&ed->lines[idx], &ed->lines[idx + 1], (ed->line_count - idx - 1) * sizeof(Line));
   ed->line_count--;
   if (ed->readonly_from > 0 && idx < ed->readonly_from) ed->readonly_from--;
@@ -365,10 +372,7 @@ int buf_load_file(EditorState *ed, const char *path) {
 void buf_free_all_lines(EditorState *ed) {
   for (int i = 0; i < ed->line_count; i++) {
     free(ed->lines[i].text);
-    free(ed->lines[i].md_spans);
-    free(ed->lines[i].pos_spans);
-    free(ed->lines[i].style_spans);
-    free(ed->lines[i].sub_spans);
+    line_free_spans(&ed->lines[i]);
   }
   ed->line_count = 0;
 }

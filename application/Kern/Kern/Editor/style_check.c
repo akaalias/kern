@@ -2,7 +2,9 @@
 
 #include <ctype.h>
 #include <stdlib.h>
+#include <string.h>
 #include "style_check.h"
+#include "span_cache.h"
 
 /* A pattern is one or more lowercase words separated by single spaces, matched
    against whole word tokens (so "just" never matches inside "adjust"). Multi-word
@@ -148,25 +150,8 @@ static int style_scan(const char *text, int len, StyleSpan *out, int max) {
   return n;
 }
 
-int style_line_spans(Line *l, const StyleSpan **out) {
-  if (l->style_span_count < 0) {
-    free(l->style_spans);
-    l->style_spans = NULL;
-    StyleSpan scratch[STYLE_MAX_SPANS];
-    int n = style_scan(l->text, l->len, scratch, STYLE_MAX_SPANS);
-    if (n > 0) {
-      l->style_spans = malloc((size_t)n * sizeof(StyleSpan));
-      if (l->style_spans) {
-        for (int i = 0; i < n; i++) l->style_spans[i] = scratch[i];
-      } else {
-        n = 0;   /* allocation failed: cache empty, render unmarked */
-      }
-    }
-    l->style_span_count = n;
-  }
-  *out = l->style_spans;
-  return l->style_span_count;
-}
+KERN_DEFINE_SPAN_CACHE(style_line_spans, StyleSpan,
+                       style_spans, style_span_count, style_scan, STYLE_MAX_SPANS)
 
 StyleDecor style_decor_at(Line *l, unsigned int style_mask, int col) {
   if (!style_mask) return STYLE_DECOR_NONE;
