@@ -214,6 +214,49 @@ float md_focus_opacity(int line, int cur, int prev, float t) {
   return FOCUS_DIM_OPACITY;
 }
 
+/* The width-affecting font style for the byte at `i`: base, unless `i` is inside
+   the content of a bold/italic/mono span (links and the delimiter runs keep the
+   base width). `si` must already cover `i`. g_force_mono forces FONT_MONO. This
+   is the one place the draw walk (md_draw_text) and the click walk (md_x_to_col)
+   agree on per-token width, so they can't drift. */
+static int md_span_style(const struct MdSpan *spans, int span_count, int si,
+                         int i, int base_style, int heading) {
+  int style = base_style;
+  if (si < span_count && i >= spans[si].open && i < spans[si].end) {
+    const struct MdSpan *s = &spans[si];
+    if (s->kind != SP_LINK && s->kind != SP_WIKI && i >= s->content && i < s->close) {
+      switch (s->kind) {
+        case SP_BOLD:   style = FONT_BOLD; break;
+        case SP_ITALIC: style = heading ? FONT_BOLD : FONT_ITALIC; break;
+        case SP_MONO:   style = FONT_MONO; break;
+        default: break;   /* SP_HL / SP_UNDERLINE don't change width */
+      }
+    }
+  }
+  if (g_force_mono) style = FONT_MONO;
+  return style;
+}
+
+/* Resolve the token beginning at byte `i`, advancing the substitution cursor
+   `*xi`. Returns the source byte advance `n`; *sub_out is the collapsed token to
+   draw (a single glyph), or NULL when none begins here, or it is revealed/masked
+   (draw the literal source). Shared by the draw and click walks so width and
+   reveal state stay in lockstep. */
+static int md_token_advance(Line *l, const SubSpan *subs, int sub_count, int *xi,
+                            unsigned int sub_mask, int i, int end, const SubSpan **sub_out) {
+  const SubSpan *sub = NULL;
+  if (sub_count) {
+    while (*xi < sub_count && subs[*xi].start + subs[*xi].len <= i) (*xi)++;
+    if (*xi < sub_count && subs[*xi].start == i &&
+        subs[*xi].start + subs[*xi].len <= end &&
+        (sub_mask & SUB_BIT(subs[*xi].category)))
+      sub = &subs[*xi];
+  }
+  if (sub && sub_token_revealed(l, sub->start, sub->len)) sub = NULL;
+  *sub_out = sub;
+  return sub ? sub->len : utf8_len(l->text + i, end - i);
+}
+
 float md_draw_text(Line *l, int start, int end,
                    float x, float y, Color base_color, int heading,
                    int track_cursor_col, int *out_cursor_x, int draw) {
@@ -249,8 +292,9 @@ float md_draw_text(Line *l, int start, int end,
   for (int i = start; i < end; ) {
     while (si < span_count && i >= spans[si].end) si++;
 
-    /* attributes for the character at i */
-    int style = base_style;
+    /* width style is shared with the click walk; color/bg/underline are draw-only
+       and derive from the same span. */
+    int style = md_span_style(spans, span_count, si, i, base_style, heading);
     Color fg = base_color;
     int bg = 0;   /* 0 none, 1 link, 2 highlight */
     int underline = 0;
@@ -262,11 +306,10 @@ float md_draw_text(Line *l, int start, int end,
         fg = dim;   /* the delimiter characters themselves */
       } else {
         switch (s->kind) {
-          case SP_BOLD:      style = FONT_BOLD; break;
-          case SP_ITALIC:    style = heading ? FONT_BOLD : FONT_ITALIC; break;
-          case SP_MONO:      style = FONT_MONO; fg = code_fg; break;
+          case SP_MONO:      fg = code_fg; break;   /* width set by md_span_style */
           case SP_HL:        bg = 2; break;
           case SP_UNDERLINE: underline = 1; break;
+          default: break;                           /* BOLD/ITALIC: width only */
         }
       }
     }
@@ -292,20 +335,10 @@ float md_draw_text(Line *l, int start, int end,
                                     : STYLE_DECOR_NONE;
     if (decor == STYLE_DECOR_STRIKE) fg = strike_fg;   /* only the filler strike greys */
 
-    /* does a substituted token begin exactly here? (skip if it would cross the
-       row edge — defensive; wrap keeps tokens whole) */
-    const SubSpan *sub = NULL;
-    if (sub_count) {
-      while (xi < sub_count && subs[xi].start + subs[xi].len <= i) xi++;
-      if (xi < sub_count && subs[xi].start == i &&
-          subs[xi].start + subs[xi].len <= end &&
-          (sub_mask & SUB_BIT(subs[xi].category)))
-        sub = &subs[xi];
-    }
-    /* reveal-on-contact: a token under the caret / in the selection draws literally */
-    if (sub && sub_token_revealed(l, sub->start, sub->len)) sub = NULL;
-
-    int n = sub ? sub->len : utf8_len(text + i, end - i);   /* source bytes */
+    /* does a substituted token begin exactly here? (reveal-on-contact draws the
+       literal source instead) */
+    const SubSpan *sub;
+    int n = md_token_advance(l, subs, sub_count, &xi, sub_mask, i, end, &sub);
     /* the caret anywhere within a collapsed token renders at its left edge */
     if (track_cursor_col >= i && track_cursor_col < i + n) *out_cursor_x = (int)px;
 
@@ -319,7 +352,6 @@ float md_draw_text(Line *l, int start, int end,
       ch[n] = '\0';
       glyph = ch; glyph_n = n;
     }
-    if (g_force_mono) style = FONT_MONO;
     r_set_font_style(style);
     int w = r_get_text_width(glyph, glyph_n);
     if (draw) {
@@ -392,7 +424,8 @@ int md_row_indent(Line *l, int row_start) {
 /* Inverse of md_col_x: the column in [start,end] whose rendered position is
    nearest target_x, measured with the same per-span font metrics md_draw_text
    uses (so bold/italic/mono runs map correctly). x0 is the row's draw origin.
-   Mirrors only the width-affecting subset of md_draw_text's span logic. */
+   Shares md_span_style + md_token_advance with the draw walk, so the two can't
+   drift on token width or reveal state. */
 int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) {
   const char *text = l->text;
   int base_style = heading ? FONT_BOLD : FONT_REGULAR;
@@ -415,35 +448,11 @@ int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) 
   for (int i = start; i < end; ) {
     while (si < span_count && i >= spans[si].end) si++;
 
-    int style = base_style;
-    if (si < span_count && i >= spans[si].open && i < spans[si].end) {
-      const struct MdSpan *s = &spans[si];
-      /* only content of bold/italic/mono shifts width; links and the delimiter
-         characters keep the base style (md_draw_text only recolors those) */
-      if (s->kind != SP_LINK && s->kind != SP_WIKI &&
-          i >= s->content && i < s->close) {
-        switch (s->kind) {
-          case SP_BOLD:   style = FONT_BOLD; break;
-          case SP_ITALIC: style = heading ? FONT_BOLD : FONT_ITALIC; break;
-          case SP_MONO:   style = FONT_MONO; break;
-          default: break;
-        }
-      }
-    }
-
-    const SubSpan *sub = NULL;
-    if (sub_count) {
-      while (xi < sub_count && subs[xi].start + subs[xi].len <= i) xi++;
-      if (xi < sub_count && subs[xi].start == i &&
-          subs[xi].start + subs[xi].len <= end &&
-          (sub_mask & SUB_BIT(subs[xi].category)))
-        sub = &subs[xi];
-    }
-    if (sub && sub_token_revealed(l, sub->start, sub->len))
-      sub = NULL;   /* revealed: measure the literal, mirroring md_draw_text */
-
-    int n = sub ? sub->len : utf8_len(text + i, end - i);
-    if (g_force_mono) style = FONT_MONO;
+    /* same width style + token advance the draw walk uses, so a click maps to the
+       column the caret would render at */
+    int style = md_span_style(spans, span_count, si, i, base_style, heading);
+    const SubSpan *sub;
+    int n = md_token_advance(l, subs, sub_count, &xi, sub_mask, i, end, &sub);
     r_set_font_style(style);
     int w = sub ? r_get_text_width(sub->glyph, sub->glyph_len)
                 : r_get_text_width(text + i, n);
