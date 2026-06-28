@@ -127,6 +127,26 @@ static void test_enter_continues_numbered(void) {
   ed_teardown(&ed);
 }
 
+static void test_enter_continues_indented_bullet(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "  - sub");            /* indented sub-list item, caret at end */
+  ed_enter(&ed);
+  CHECK_IEQ(ed.line_count, 2);
+  CHECK_SEQ(LINE(ed, 0), "  - sub");
+  CHECK_SEQ(LINE(ed, 1), "  - ");     /* indentation + bullet both carried */
+  CHECK_IEQ(ed.cursor_col, 4);
+  ed_teardown(&ed);
+}
+
+static void test_enter_continues_indented_numbered(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "    2. item");        /* indented numbered item */
+  ed_enter(&ed);
+  CHECK_SEQ(LINE(ed, 1), "    3. ");   /* indentation kept, number incremented */
+  CHECK_IEQ(ed.cursor_col, 7);
+  ed_teardown(&ed);
+}
+
 /* ---- ed_indent_line / ed_dedent_line ---- */
 
 static void test_indent_inserts_two_spaces(void) {
@@ -596,6 +616,8 @@ void suite_editing(void) {
   RUN(test_enter_splits_line);
   RUN(test_enter_continues_bullet);
   RUN(test_enter_continues_numbered);
+  RUN(test_enter_continues_indented_bullet);
+  RUN(test_enter_continues_indented_numbered);
   RUN(test_indent_inserts_two_spaces);
   RUN(test_dedent_removes_indent);
   RUN(test_dedent_noop_at_margin);

@@ -114,20 +114,29 @@ void ed_delete(EditorState *ed) {
 void ed_enter(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
 
-  /* detect list prefix on current line */
-  char prefix[32] = "";
+  /* detect list prefix on current line — include any leading indentation so a
+     sub-list item continues at its own nesting depth (CommonMark indents with
+     spaces, INDENT_UNIT) */
+  char prefix[64] = "";
   int prefix_len = 0;
-  if (l->len >= 2 && l->text[0] == '-' && l->text[1] == ' ') {
-    prefix[0] = '-'; prefix[1] = ' '; prefix_len = 2;
-  } else {
-    /* check for "N. " numbered list */
-    int ni = 0;
-    while (ni < l->len && l->text[ni] >= '0' && l->text[ni] <= '9') ni++;
-    if (ni > 0 && ni + 1 < l->len && l->text[ni] == '.' && l->text[ni+1] == ' ') {
-      /* parse the number and increment */
-      int num = 0;
-      for (int j = 0; j < ni; j++) num = num * 10 + (l->text[j] - '0');
-      prefix_len = snprintf(prefix, sizeof(prefix), "%d. ", num + 1);
+  int ind = 0;
+  while (ind < l->len && l->text[ind] == ' ') ind++;
+  if (ind <= (int)sizeof(prefix) - 4) {  /* leave room for marker + NUL */
+    if (l->len - ind >= 2 && l->text[ind] == '-' && l->text[ind + 1] == ' ') {
+      memset(prefix, ' ', ind);
+      prefix[ind] = '-'; prefix[ind + 1] = ' ';
+      prefix_len = ind + 2;
+    } else {
+      /* check for "N. " numbered list after the indentation */
+      int ni = ind;
+      while (ni < l->len && l->text[ni] >= '0' && l->text[ni] <= '9') ni++;
+      if (ni > ind && ni + 1 < l->len && l->text[ni] == '.' && l->text[ni+1] == ' ') {
+        /* parse the number and increment */
+        int num = 0;
+        for (int j = ind; j < ni; j++) num = num * 10 + (l->text[j] - '0');
+        memset(prefix, ' ', ind);
+        prefix_len = ind + snprintf(prefix + ind, sizeof(prefix) - ind, "%d. ", num + 1);
+      }
     }
   }
 
