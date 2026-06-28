@@ -1699,166 +1699,61 @@ static void draw_margin_note_input(void) {
   r_set_font_style(FONT_REGULAR);
 }
 
-static void do_render(void) {
-  r_clear(color(30, 30, 32, 255));
-  /* Set substitution BEFORE process_frame: it draws the selection/search
-     highlights via md_col_x, which must measure the same collapsed/revealed glyph
-     widths the text pass draws — otherwise the highlight (literal width) and the
-     text (collapsed) disagree and the marked region looks wonky around symbols.
-     process_frame sets the per-line reveal range itself, per visual row. */
-  sub_set_mask(g_vs.sub_mask);
-  process_frame();          /* lays out + draws bg, highlights, scrollbar */
-  wikilink_refresh();
-
-  /* draw markdown-formatted text */
-  r_set_font_size(g_vs.font_size);
+/* The dotted rule + centered "Context" label drawn on the first read-only
+   section row, separating the editable page from the auto-generated Context. */
+static void draw_context_divider(VisRow *vr) {
+  int sepy = vr->py + nav_line_height() / 2;
+  int x0 = nav_page_margin() - (int)g_vs.scroll_x;
+  int x1 = x0 + nav_page_w();
+  Color dotc = color(120, 120, 128, 120);
+  const char *label = "Context";
   r_set_font_style(FONT_REGULAR);
-  r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
-  Color text_color = color(204, 200, 195, 255);
-  md_set_syntax_mask(g_vs.syntax_mask);   /* POS coloring (0 = off) for this pass */
-  md_set_style_mask(g_vs.style_mask);     /* style-check strikes (0 = off) */
-  /* sub_set_mask already set before process_frame (see do_render top) */
-  g_vs.cursor_x = -1;
-  for (int i = 0; i < g_vs.vis_row_count; i++) {
-    VisRow *vr = &g_vs.vis_rows[i];
-    Line *L = &g_ed.lines[vr->ln];
-    nav_sub_reveal_for_line(&g_ed, vr->ln);   /* reveal caret/selection tokens on this row */
-    /* typewriter focus: fade every line except the caret's, crossfading on a
-       line change (focus_prev_line → dim, focus_cur_line → full) */
-    md_set_text_opacity(g_vs.typewriter_mode
-      ? md_focus_opacity(vr->ln, g_vs.focus_cur_line, g_vs.focus_prev_line, g_vs.focus_t)
-      : 1.0f);
-    /* list hanging indent: continuation rows hang under the item text */
-    int indent = md_row_indent(L, vr->row_start);
-    /* track cursor if it's on this row */
-    int track = is_caret_row(i) ? g_ed.cursor_col : -1;
+  int lw = r_get_text_width(label, 7);
+  int th = r_get_text_height();
+  int cx = (x0 + x1) / 2;
+  int lstart = cx - lw / 2, lend = cx + lw / 2;
+  int gap = 14;   /* clear space around the label */
+  for (int dx = x0; dx < lstart - gap; dx += 6) r_draw_rect(rect(dx, sepy, 2, 1), dotc);
+  for (int dx = lend + gap; dx < x1; dx += 6)    r_draw_rect(rect(dx, sepy, 2, 1), dotc);
+  r_draw_text(label, vec2(lstart, sepy - th / 2), color(150, 150, 158, 255));
+}
 
-    /* Divider between the editable page and the read-only Context section: a
-       light dotted rule with a centered "Context" label, drawn on the first
-       section line (readonly_from), which is also where the caret first turns
-       amber. */
-    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from && vr->row_start == 0) {
-      int sepy = vr->py + nav_line_height() / 2;
-      int x0 = nav_page_margin() - (int)g_vs.scroll_x;
-      int x1 = x0 + nav_page_w();
-      Color dotc = color(120, 120, 128, 120);
-      const char *label = "Context";
-      r_set_font_style(FONT_REGULAR);
-      int lw = r_get_text_width(label, 7);
-      int th = r_get_text_height();
-      int cx = (x0 + x1) / 2;
-      int lstart = cx - lw / 2, lend = cx + lw / 2;
-      int gap = 14;   /* clear space around the label */
-      for (int dx = x0; dx < lstart - gap; dx += 6) r_draw_rect(rect(dx, sepy, 2, 1), dotc);
-      for (int dx = lend + gap; dx < x1; dx += 6)    r_draw_rect(rect(dx, sepy, 2, 1), dotc);
-      r_draw_text(label, vec2(lstart, sepy - th / 2), color(150, 150, 158, 255));
-    }
-
-    int draw_start = vr->row_start;
-    if (vr->heading && vr->row_start == 0) {
-      int prefix = md_heading_prefix_len(L);
-      /* reveal the markers inline when the caret is at the line start so they
-         can be edited/removed; otherwise hang them in the left margin */
-      int reveal = (vr->ln == g_ed.cursor_line && g_ed.cursor_col <= prefix);
-      /* hang markers in the margin only when there's room; otherwise let the
-         "## " render inline (draw_start stays at row_start) so it never
-         overlaps the text in a narrow window */
-      if (!reveal && nav_heading_markers_hang(L)) {
-        int hcount = prefix - 1;
-        if (hcount > 23) hcount = 23;
-        char hashes[24];
-        memset(hashes, '#', hcount); hashes[hcount] = '\0';
-        r_set_font_style(FONT_BOLD);
-        int hw = r_get_text_width(hashes, hcount);
-        int gap = r_get_text_width(" ", 1);
-        int hx = nav_page_margin() + indent - gap - hw - (int)g_vs.scroll_x;   /* right-aligned in the left margin */
-        r_draw_text(hashes, vec2(hx, vr->py), color(110, 110, 115, 255));
-        r_set_font_style(FONT_REGULAR);
-        if (prefix <= vr->row_end) draw_start = prefix;
-      }
-    }
-
-    md_draw_text(L, draw_start, vr->row_end,
-                 nav_page_margin() + indent - (int)g_vs.scroll_x, vr->py, text_color, vr->heading, track,
-                 &g_vs.cursor_x, 1);
-    r_set_font_style(FONT_REGULAR);
+/* The [[ wikilink autocomplete dropdown, anchored under the "[[" query at the
+   caret (caret_py = the py of the caret's row). */
+static void draw_wikilink_dropdown(int caret_py) {
+  r_set_font_style(FONT_REGULAR);
+  r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));
+  int fh = r_get_text_height();
+  int lh = nav_line_height();
+  int item_h = fh + 6;
+  int box_w = 0;
+  for (int i = 0; i < wl_count; i++) {
+    int w = r_get_text_width(wl_matches[i], (int)strlen(wl_matches[i]));
+    if (w > box_w) box_w = w;
   }
-  md_set_text_opacity(1.0f);   /* don't leak the focus dim past the text pass */
-  md_set_syntax_mask(0);       /* status bar etc. draw in their own colors */
-  md_set_style_mask(0);
-  sub_set_mask(0);             /* status bar / chrome draw literal text */
-
-  /* page furniture + margin notes. Typewriter mode always draws them (the page
-     slides to make room); normal mode draws them only when the window margin is
-     wide enough to hold the note strip — otherwise notes stay as bottom-of-page
-     footnotes (the plain markdown view). */
-  if (g_vs.typewriter_mode) {
-    draw_page_furniture();      /* furniture + notes BEFORE the fog so they frost with the page */
-    draw_margin_notes();
-    draw_typewriter_fog();      /* frosted guards + hitzone */
-    draw_margin_note_input();   /* live input AFTER the fog stays sharp in the hitzone */
-  } else if (nav_page_margin() >= tv_margin_pad()) {
-    draw_page_furniture();
-    draw_margin_notes();
-    draw_margin_note_input();
+  box_w += 18;
+  if (box_w < 140) box_w = 140;
+  int box_h = wl_count * item_h;   /* exact fit — items tile edge to edge */
+  int bx = g_vs.cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
+                      - r_get_text_width("[[", 2);
+  if (bx < nav_page_margin()) bx = nav_page_margin();
+  int by = caret_py + lh;
+  /* border + background */
+  r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
+  r_draw_rect(rect(bx, by, box_w, box_h), color(48, 48, 52, 255));
+  for (int i = 0; i < wl_count; i++) {
+    int iy = by + i * item_h;
+    if (i == wl_sel)
+      r_draw_rect(rect(bx, iy, box_w, item_h), color(104, 68, 158, 235));
+    r_draw_text(wl_matches[i], vec2(bx + 9, iy + (item_h - fh) / 2),
+                color(222, 218, 212, 255));
   }
+}
 
-  /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
-     a caret floating past EOL is shifted right by its virtual columns so it holds
-     the strike point over the blank page. */
-  int cursor_py = -1;
-  if (g_vs.cursor_x >= 0 && !mn_active) {   /* while writing a margin note the only caret is in the margin */
-    int font_h = r_get_text_height();
-    int caret_x = g_vs.cursor_x + tv_virtual_px();
-    /* find the py for the cursor row */
-    for (int i = 0; i < g_vs.vis_row_count; i++) {
-      VisRow *vr = &g_vs.vis_rows[i];
-      if (is_caret_row(i)) {
-        /* The caret turns warm amber — the complement of its default cyan — when
-           it's inside the read-only Context section, signalling that text there
-           can't be edited (only navigated / link-followed). */
-        Color caret_col = (g_ed.readonly_from > 0 && g_ed.cursor_line >= g_ed.readonly_from)
-                            ? color(250, 165, 70, 255)
-                            : color(90, 200, 250, 255);
-        r_draw_rect(rect(caret_x, vr->py, 3, font_h), caret_col);
-        cursor_py = vr->py;
-        break;
-      }
-    }
-  }
-
-  /* wikilink autocomplete dropdown, anchored under the "[[" query */
-  if (wl_active && wl_count > 0 && g_vs.cursor_x >= 0 && cursor_py >= 0) {
-    r_set_font_style(FONT_REGULAR);
-    r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));
-    int fh = r_get_text_height();
-    int lh = nav_line_height();
-    int item_h = fh + 6;
-    int box_w = 0;
-    for (int i = 0; i < wl_count; i++) {
-      int w = r_get_text_width(wl_matches[i], (int)strlen(wl_matches[i]));
-      if (w > box_w) box_w = w;
-    }
-    box_w += 18;
-    if (box_w < 140) box_w = 140;
-    int box_h = wl_count * item_h;   /* exact fit — items tile edge to edge */
-    int bx = g_vs.cursor_x - r_get_text_width(wl_query, (int)strlen(wl_query))
-                        - r_get_text_width("[[", 2);
-    if (bx < nav_page_margin()) bx = nav_page_margin();
-    int by = cursor_py + lh;
-    /* border + background */
-    r_draw_rect(rect(bx - 1, by - 1, box_w + 2, box_h + 2), color(90, 90, 96, 255));
-    r_draw_rect(rect(bx, by, box_w, box_h), color(48, 48, 52, 255));
-    for (int i = 0; i < wl_count; i++) {
-      int iy = by + i * item_h;
-      if (i == wl_sel)
-        r_draw_rect(rect(bx, iy, box_w, item_h), color(104, 68, 158, 235));
-      r_draw_text(wl_matches[i], vec2(bx + 9, iy + (item_h - fh) / 2),
-                  color(222, 218, 212, 255));
-    }
-  }
-
-  /* emacs-style status bar (monospace) */
+/* The bottom status bar (mono): background + the C-x b candidate list,
+   minibuffer / isearch / status message on the left, position + dev badge on
+   the right. */
+static void draw_status_bar(void) {
   r_set_font_size(g_vs.font_size);
   r_set_font_style(FONT_MONO);
   int bar_h = r_get_text_height() + 16;
@@ -1941,6 +1836,127 @@ static void do_render(void) {
   }
 #endif
   r_set_font_size(g_vs.font_size);
+}
+
+static void do_render(void) {
+  r_clear(color(30, 30, 32, 255));
+  /* Set substitution BEFORE process_frame: it draws the selection/search
+     highlights via md_col_x, which must measure the same collapsed/revealed glyph
+     widths the text pass draws — otherwise the highlight (literal width) and the
+     text (collapsed) disagree and the marked region looks wonky around symbols.
+     process_frame sets the per-line reveal range itself, per visual row. */
+  sub_set_mask(g_vs.sub_mask);
+  process_frame();          /* lays out + draws bg, highlights, scrollbar */
+  wikilink_refresh();
+
+  /* draw markdown-formatted text */
+  r_set_font_size(g_vs.font_size);
+  r_set_font_style(FONT_REGULAR);
+  r_set_clip_rect(rect(0, g_vs.content_y, nav_win_w(), g_vs.content_h));
+  Color text_color = color(204, 200, 195, 255);
+  md_set_syntax_mask(g_vs.syntax_mask);   /* POS coloring (0 = off) for this pass */
+  md_set_style_mask(g_vs.style_mask);     /* style-check strikes (0 = off) */
+  /* sub_set_mask already set before process_frame (see do_render top) */
+  g_vs.cursor_x = -1;
+  for (int i = 0; i < g_vs.vis_row_count; i++) {
+    VisRow *vr = &g_vs.vis_rows[i];
+    Line *L = &g_ed.lines[vr->ln];
+    nav_sub_reveal_for_line(&g_ed, vr->ln);   /* reveal caret/selection tokens on this row */
+    /* typewriter focus: fade every line except the caret's, crossfading on a
+       line change (focus_prev_line → dim, focus_cur_line → full) */
+    md_set_text_opacity(g_vs.typewriter_mode
+      ? md_focus_opacity(vr->ln, g_vs.focus_cur_line, g_vs.focus_prev_line, g_vs.focus_t)
+      : 1.0f);
+    /* list hanging indent: continuation rows hang under the item text */
+    int indent = md_row_indent(L, vr->row_start);
+    /* track cursor if it's on this row */
+    int track = is_caret_row(i) ? g_ed.cursor_col : -1;
+
+    /* Divider between the editable page and the read-only Context section: a
+       light dotted rule with a centered "Context" label, drawn on the first
+       section line (readonly_from), which is also where the caret first turns
+       amber. */
+    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from && vr->row_start == 0)
+      draw_context_divider(vr);
+
+    int draw_start = vr->row_start;
+    if (vr->heading && vr->row_start == 0) {
+      int prefix = md_heading_prefix_len(L);
+      /* reveal the markers inline when the caret is at the line start so they
+         can be edited/removed; otherwise hang them in the left margin */
+      int reveal = (vr->ln == g_ed.cursor_line && g_ed.cursor_col <= prefix);
+      /* hang markers in the margin only when there's room; otherwise let the
+         "## " render inline (draw_start stays at row_start) so it never
+         overlaps the text in a narrow window */
+      if (!reveal && nav_heading_markers_hang(L)) {
+        int hcount = prefix - 1;
+        if (hcount > 23) hcount = 23;
+        char hashes[24];
+        memset(hashes, '#', hcount); hashes[hcount] = '\0';
+        r_set_font_style(FONT_BOLD);
+        int hw = r_get_text_width(hashes, hcount);
+        int gap = r_get_text_width(" ", 1);
+        int hx = nav_page_margin() + indent - gap - hw - (int)g_vs.scroll_x;   /* right-aligned in the left margin */
+        r_draw_text(hashes, vec2(hx, vr->py), color(110, 110, 115, 255));
+        r_set_font_style(FONT_REGULAR);
+        if (prefix <= vr->row_end) draw_start = prefix;
+      }
+    }
+
+    md_draw_text(L, draw_start, vr->row_end,
+                 nav_page_margin() + indent - (int)g_vs.scroll_x, vr->py, text_color, vr->heading, track,
+                 &g_vs.cursor_x, 1);
+    r_set_font_style(FONT_REGULAR);
+  }
+  md_set_text_opacity(1.0f);   /* don't leak the focus dim past the text pass */
+  md_set_syntax_mask(0);       /* status bar etc. draw in their own colors */
+  md_set_style_mask(0);
+  sub_set_mask(0);             /* status bar / chrome draw literal text */
+
+  /* page furniture + margin notes. Typewriter mode always draws them (the page
+     slides to make room); normal mode draws them only when the window margin is
+     wide enough to hold the note strip — otherwise notes stay as bottom-of-page
+     footnotes (the plain markdown view). */
+  if (g_vs.typewriter_mode) {
+    draw_page_furniture();      /* furniture + notes BEFORE the fog so they frost with the page */
+    draw_margin_notes();
+    draw_typewriter_fog();      /* frosted guards + hitzone */
+    draw_margin_note_input();   /* live input AFTER the fog stays sharp in the hitzone */
+  } else if (nav_page_margin() >= tv_margin_pad()) {
+    draw_page_furniture();
+    draw_margin_notes();
+    draw_margin_note_input();
+  }
+
+  /* draw cursor (post-render, uses markdown-aware x position). In typewriter mode
+     a caret floating past EOL is shifted right by its virtual columns so it holds
+     the strike point over the blank page. */
+  int cursor_py = -1;
+  if (g_vs.cursor_x >= 0 && !mn_active) {   /* while writing a margin note the only caret is in the margin */
+    int font_h = r_get_text_height();
+    int caret_x = g_vs.cursor_x + tv_virtual_px();
+    /* find the py for the cursor row */
+    for (int i = 0; i < g_vs.vis_row_count; i++) {
+      VisRow *vr = &g_vs.vis_rows[i];
+      if (is_caret_row(i)) {
+        /* The caret turns warm amber — the complement of its default cyan — when
+           it's inside the read-only Context section, signalling that text there
+           can't be edited (only navigated / link-followed). */
+        Color caret_col = (g_ed.readonly_from > 0 && g_ed.cursor_line >= g_ed.readonly_from)
+                            ? color(250, 165, 70, 255)
+                            : color(90, 200, 250, 255);
+        r_draw_rect(rect(caret_x, vr->py, 3, font_h), caret_col);
+        cursor_py = vr->py;
+        break;
+      }
+    }
+  }
+
+  /* wikilink autocomplete dropdown, anchored under the "[[" query */
+  if (wl_active && wl_count > 0 && g_vs.cursor_x >= 0 && cursor_py >= 0)
+    draw_wikilink_dropdown(cursor_py);
+
+  draw_status_bar();
 
   r_present();
 }
