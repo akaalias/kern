@@ -197,7 +197,7 @@ void cmd_capitalize_word(EditorState *ed, ViewState *vs) {      /* M-c */
 /* ---- buffer ends / mark (also invoked by textview's prefix handlers) ---- */
 
 void cmd_end_of_buffer_alt(EditorState *ed, ViewState *vs) {
-  ed->cursor_line = buf_content_line_count(ed) - 1;   /* stop at the editable page, not the Context section */
+  ed->cursor_line = ed->line_count - 1;   /* the true end — into the Context section (read-only but navigable) */
   ed->cursor_col = ed->lines[ed->cursor_line].len;
   ed->cursor_target_col = ed->cursor_col;
   nav_ensure_cursor_visible(ed, vs);
