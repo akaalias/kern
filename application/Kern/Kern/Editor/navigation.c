@@ -232,6 +232,15 @@ void nav_ensure_cursor_visible(EditorState *ed, ViewState *vs) {
      so scrolling back up restores the margin — process_frame draws it the same as
      on launch. */
   if (cursor_top <= 0) vs->scroll_y = -nav_top_margin(vs);
+  /* Symmetric bottom page margin: when the caret reaches the last visual row of a
+     document that overflows the view, float that row up by the same margin so
+     there's breathing room below it (mirrors the top margin above line 0). The
+     last-logical-line guard keeps the O(n) total-rows walk off the common path. */
+  else if (ed->cursor_line == ed->line_count - 1) {
+    int total = nav_total_visual_lines(ed);
+    if (vis >= total - 1 && (float)total * lh > (float)view_h)
+      vs->scroll_y = cursor_bot - view_h + nav_top_margin(vs);
+  }
 }
 
 /* ---- visual-row geometry (mirrors do_render's per-row layout) ---- */

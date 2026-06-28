@@ -732,6 +732,10 @@ static void process_frame(void) {
     if (g_vs.typewriter_mode)
       max_scroll += (int)((1.0f - TYPEWRITER_FRACTION) * (g_vs.content_h - lh));
     if (max_scroll < 0) max_scroll = 0;
+    /* normal mode: a bottom page margin below the last line, symmetric with the
+       top margin (see nav_ensure_cursor_visible) — only when the page overflows. */
+    if (!g_vs.typewriter_mode && max_scroll > 0)
+      max_scroll += nav_top_margin(&g_vs);
     /* typewriter mode also adds virtual whitespace ABOVE the first line so it,
        too, can pin at the golden height (negative scroll). */
     float min_scroll = 0;
