@@ -62,6 +62,9 @@ struct KernApp: App {
         Settings {
             SettingsView()
         }
+        // Let the Settings window hug each tab's content size (it animates between
+        // the small X tab and the wide Keyboard Shortcuts tab).
+        .windowResizability(.contentSize)
         // Menu-bar View toggles for the syntax/style overlays. Defining them
         // through SwiftUI's `.commands` (rather than poking NSApp.mainMenu, which
         // SwiftUI rebuilds) is what makes them stick. The actions call straight
@@ -102,13 +105,16 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             XSettingsView()
-                .tabItem { Text("X (Twitter)") }
-                .frame(width: 460)
                 .padding(20)
+                .frame(width: 460, height: 320)
+                // tabItem must carry an SF Symbol — a Label with a systemImage is
+                // what makes macOS render the native preferences toolbar tab bar
+                // (text-only tabItems fall back to the ugly segmented control).
+                .tabItem { Label("X (Twitter)", systemImage: "paperplane") }
 
             ShortcutsView()
-                .tabItem { Text("Keyboard Shortcuts") }
-                .frame(minWidth: 940, minHeight: 600)
+                .frame(width: 900, height: 640)
+                .tabItem { Label("Keyboard Shortcuts", systemImage: "keyboard") }
         }
     }
 }

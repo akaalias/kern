@@ -9,6 +9,7 @@
 #include <strings.h>
 #include "buffer.h"
 #include "undo.h"
+#include "recent.h"   /* MRU ranking for wikilink suggestions */
 
 /* ---- sandboxed document location ---- */
 
@@ -137,9 +138,26 @@ static int fuzzy_score(const char *name, const char *q) {
   return score;
 }
 
+/* Position of `name` in the most-recently-used list (0 = most recent, which is
+   the currently-open file), or a large sentinel if it isn't in the MRU. Compared
+   on basename, case-insensitively, since the MRU stores full paths. */
+#define RECENCY_NONE 100000
+static int recency_rank(const char *name) {
+  int n = recent_count();
+  for (int i = 0; i < n; i++) {
+    const char *p = recent_get(i);
+    if (p && strcasecmp(path_base(p), name) == 0) return i;
+  }
+  return RECENCY_NONE;
+}
+
 /* Collect up to `max` existing filenames in the documents dir that fuzzy-match
-   `prefix` (subsequence, case-insensitive), best match first (ties broken
-   alphabetically). Returns the count. Used for the wikilink autocomplete. */
+   `prefix` (subsequence, case-insensitive). Ranking: best fuzzy score first,
+   ties broken by recency (the most-recently-opened note wins), then
+   alphabetically. The currently-open file (MRU index 0) is excluded — you don't
+   link a note to itself. With an empty prefix every name ties at score 0, so the
+   list is effectively the MRU: the document you were just in sits on top.
+   Returns the count. Used for the wikilink autocomplete. */
 int buf_list_matches(const char *prefix, char out[][256], int max) {
   if (g_documents_dir[0] == '\0' || max <= 0) return 0;
   DIR *d = opendir(g_documents_dir);
@@ -148,6 +166,7 @@ int buf_list_matches(const char *prefix, char out[][256], int max) {
   enum { CAND_MAX = 1024 };
   static char names[CAND_MAX][256];
   static int  scores[CAND_MAX];
+  static int  recency[CAND_MAX];
   int ncand = 0;
   struct dirent *e;
   while ((e = readdir(d)) != NULL && ncand < CAND_MAX) {
@@ -156,22 +175,29 @@ int buf_list_matches(const char *prefix, char out[][256], int max) {
     if (strlen(name) >= 256) continue;
     int sc = fuzzy_score(name, prefix);
     if (sc < 0) continue;                               /* not a fuzzy match */
+    int rec = recency_rank(name);
+    if (rec == 0) continue;                             /* the current file — skip self */
     snprintf(names[ncand], 256, "%s", name);
     scores[ncand] = sc;
+    recency[ncand] = rec;
     ncand++;
   }
   closedir(d);
 
-  /* selection-sort the top `max` out of `ncand` by score desc, then name asc */
+  /* selection-sort the top `max`: score desc, then recency asc, then name asc */
   int count = ncand < max ? ncand : max;
   for (int i = 0; i < count; i++) {
     int best = i;
-    for (int j = i + 1; j < ncand; j++)
-      if (scores[j] > scores[best] ||
-          (scores[j] == scores[best] && strcasecmp(names[j], names[best]) < 0))
-        best = j;
+    for (int j = i + 1; j < ncand; j++) {
+      int cmp;
+      if (scores[j] != scores[best])        cmp = scores[j] - scores[best];        /* >0 → j better */
+      else if (recency[j] != recency[best]) cmp = recency[best] - recency[j];       /* fewer = better */
+      else                                  cmp = strcasecmp(names[best], names[j]);/* a < b → j better */
+      if (cmp > 0) best = j;
+    }
     if (best != i) {
       int ts = scores[i]; scores[i] = scores[best]; scores[best] = ts;
+      int tr = recency[i]; recency[i] = recency[best]; recency[best] = tr;
       char tn[256];
       memcpy(tn, names[i], 256);
       memcpy(names[i], names[best], 256);

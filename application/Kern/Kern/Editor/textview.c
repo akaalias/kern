@@ -1251,22 +1251,6 @@ static char wl_matches[WL_MAX][256];
 static char wl_suppressed[256];
 static int  wl_has_suppress;
 
-/* If the previously-open document (MRU index 1 — index 0 is the current file)
-   is among the matches, lift it to the top so it's the default proposal. */
-static void wikilink_float_recent(void) {
-  const char *prev = recent_get(1);
-  if (!prev) return;
-  const char *base = path_base(prev);
-  for (int i = 1; i < wl_count; i++) {
-    if (strcasecmp(wl_matches[i], base) != 0) continue;
-    char tmp[256];
-    snprintf(tmp, sizeof tmp, "%s", wl_matches[i]);
-    for (int j = i; j > 0; j--) memcpy(wl_matches[j], wl_matches[j-1], 256);
-    snprintf(wl_matches[0], 256, "%s", tmp);
-    return;
-  }
-}
-
 /* Recompute the active "[[" query before the caret and its match list. */
 static void wikilink_refresh(void) {
   wl_active = 0;
@@ -1304,7 +1288,6 @@ static void wikilink_refresh(void) {
 
   wl_count = buf_list_matches(wl_query, wl_matches, WL_MAX);
   if (wl_count <= 0) return;
-  wikilink_float_recent();   /* propose the previously-open document first */
   if (wl_sel >= wl_count) wl_sel = wl_count - 1;
   if (wl_sel < 0) wl_sel = 0;
   wl_query_col = qstart;
@@ -1776,6 +1759,16 @@ static void do_render(void) {
     if (vr->ln == g_ed.cursor_line && g_ed.cursor_col >= vr->row_start &&
         (g_ed.cursor_col < vr->row_end || (i + 1 >= g_vs.vis_row_count || g_vs.vis_rows[i+1].ln != vr->ln))) {
       track = g_ed.cursor_col;
+    }
+
+    /* light dotted rule separating the editable page from the read-only Context
+       section (drawn through the blank separator line that opens the section) */
+    if (g_ed.readonly_from > 0 && vr->ln == g_ed.readonly_from && vr->row_start == 0) {
+      int sepy = vr->py + nav_line_height() / 2;
+      int x0 = nav_page_margin() - (int)g_vs.scroll_x;
+      int x1 = x0 + nav_page_w();
+      for (int dx = x0; dx < x1; dx += 6)
+        r_draw_rect(rect(dx, sepy, 2, 1), color(120, 120, 128, 110));
     }
 
     int draw_start = vr->row_start;

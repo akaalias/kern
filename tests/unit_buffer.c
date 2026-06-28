@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include "test.h"
 #include "ed_fixture.h"
+#include "recent.h"
 
 /* ---- temp-file helpers ---- */
 
@@ -222,6 +223,7 @@ static void test_complete_and_list_filenames(void) {
   touch(dir, "alphabet.md");
   touch(dir, "beta.md");
   buf_set_documents_dir(dir);
+  recent_reset();                              /* no MRU → ties break alphabetically */
 
   char out[1024];
   CHECK_IEQ(buf_complete_filename("alpha", out, sizeof out), 1);
@@ -250,6 +252,19 @@ static void test_complete_and_list_filenames(void) {
 
   /* a char in none of the names yields nothing */
   CHECK_IEQ(buf_list_matches("z", list, 8), 0);
+
+  /* recency ranking: on an empty query (all tie at score 0) the most-recently
+     opened note floats to the top; the current file (MRU index 0) is excluded. */
+  recent_reset();
+  char pa[1100], pb[1100];
+  snprintf(pa, sizeof pa, "%s/alpha.md", dir);
+  snprintf(pb, sizeof pb, "%s/beta.md", dir);
+  recent_push(pa);            /* older */
+  recent_push(pb);            /* most recent → MRU index 0 = "current file" */
+  n = buf_list_matches("", list, 8);
+  CHECK_IEQ(n, 2);            /* beta.md excluded as the current file */
+  CHECK_SEQ(list[0], "alpha.md");   /* the recent (non-current) note leads */
+  recent_reset();
 
   buf_set_documents_dir("");
   rm(dir, "alpha.md"); rm(dir, "alphabet.md"); rm(dir, "beta.md");

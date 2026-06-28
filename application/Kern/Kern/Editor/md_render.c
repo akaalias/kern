@@ -345,10 +345,12 @@ float md_draw_text(Line *l, int start, int end,
         r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
       }
       r_draw_text(glyph, vec2((int)px, (int)y), md_fade(fg, op));
-      /* ++underline++: a solid rule on the baseline in the text's own color */
+      /* ++underline++: a solid, uniform rule on the baseline. Use base_color, not
+         the per-glyph fg, so syntax/POS coloring doesn't break it into a
+         multicolor dashed-looking line — it's one continuous straight underline. */
       if (underline) {
         int dy = (int)y + (int)(font_h * 0.92f);
-        r_draw_rect(rect((int)px, dy, w, 1), md_fade(fg, op));
+        r_draw_rect(rect((int)px, dy, w, 1), md_fade(base_color, op));
       }
       /* Each style category gets its own line texture, keyed to absolute x so
          the line stays continuous across characters:
