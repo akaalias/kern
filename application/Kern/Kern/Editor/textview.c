@@ -136,6 +136,84 @@ static void minibuf_refresh_completion(void) {
 static void filepos_remember_current(void);
 static void filepos_restore_current(void);
 
+/* ---- "Opened after" history --------------------------------------------------
+   For each note, remember the files that were open right before it was opened
+   (via C-x C-f, C-x C-b, a wikilink follow, or the daily-note jump). Surfaced in
+   the read-only Context section ("Opened after") and persisted to
+   ".kern_opened_after" alongside the session. The predecessor is kept as a
+   basename ("Foo.md") so it renders as a [[wikilink]] like the other lists.
+   Compiled into both builds (the table + record logic); only the file I/O is
+   app-guarded, matching the filepos machinery. */
+#define OPENED_AFTER_MAX 256   /* files tracked */
+#define OA_PRED_MAX 24         /* predecessors kept per file (matches CTX_MAX) */
+typedef struct {
+  char path[1024];               /* the opened file (full sandboxed path) */
+  char preds[OA_PRED_MAX][256];  /* basenames of files open just before it, MRU */
+  int  npred;
+} OpenedAfter;
+static OpenedAfter g_opened_after[OPENED_AFTER_MAX];
+static int         g_opened_after_count;
+
+static OpenedAfter *opened_after_find(const char *path, int create) {
+  for (int i = 0; i < g_opened_after_count; i++)
+    if (strcmp(g_opened_after[i].path, path) == 0) return &g_opened_after[i];
+  if (!create) return NULL;
+  int i = g_opened_after_count < OPENED_AFTER_MAX ? g_opened_after_count++
+                                                  : OPENED_AFTER_MAX - 1;
+  OpenedAfter *e = &g_opened_after[i];
+  snprintf(e->path, sizeof(e->path), "%s", path);
+  e->npred = 0;
+  return e;
+}
+
+/* Add `prevbase` (a basename) to `newpath`'s predecessor list, most-recent
+   first and deduped (an existing entry is lifted to the front). */
+static void opened_after_add(const char *newpath, const char *prevbase) {
+  if (!newpath || !newpath[0] || !prevbase || !prevbase[0]) return;
+  OpenedAfter *e = opened_after_find(newpath, 1);
+  if (!e) return;
+  int at = -1;
+  for (int i = 0; i < e->npred; i++)
+    if (strcmp(e->preds[i], prevbase) == 0) { at = i; break; }
+  if (at == 0) return;                       /* already newest */
+  if (at > 0) {                              /* move an existing entry up front */
+    char tmp[256]; snprintf(tmp, sizeof(tmp), "%s", e->preds[at]);
+    memmove(&e->preds[1], &e->preds[0], sizeof(e->preds[0]) * at);
+    snprintf(e->preds[0], sizeof(e->preds[0]), "%s", tmp);
+    return;
+  }
+  int keep = e->npred < OA_PRED_MAX ? e->npred : OA_PRED_MAX - 1;   /* drop oldest if full */
+  memmove(&e->preds[1], &e->preds[0], sizeof(e->preds[0]) * keep);
+  snprintf(e->preds[0], sizeof(e->preds[0]), "%s", prevbase);
+  if (e->npred < OA_PRED_MAX) e->npred++;
+}
+
+/* Record the transition from `prevpath` to `newpath` (both full paths): the file
+   we're leaving becomes a predecessor of the one we're opening. No-op on a
+   self-transition or an empty previous path (e.g. the launch open). */
+static void opened_after_record(const char *newpath, const char *prevpath) {
+  if (!prevpath || !prevpath[0]) return;
+  if (newpath && strcmp(newpath, prevpath) == 0) return;
+  opened_after_add(newpath, path_base(prevpath));
+}
+
+static void opened_after_save(void) {
+#ifndef KERN_HEADLESS_TEST
+  if (!buf_get_documents_dir()[0]) return;
+  char path[1024];
+  buf_resolve_path(".kern_opened_after", path, sizeof(path));
+  FILE *f = fopen(path, "wb");
+  if (!f) return;
+  /* one "<predecessor-basename>\t<full-path>" line per pair; path last (it may
+     contain spaces), oldest-first so a reload via opened_after_add rebuilds the
+     same MRU order (newest ends up at the front). */
+  for (int i = 0; i < g_opened_after_count; i++)
+    for (int j = g_opened_after[i].npred - 1; j >= 0; j--)
+      fprintf(f, "%s\t%s\n", g_opened_after[i].preds[j], g_opened_after[i].path);
+  fclose(f);
+#endif
+}
+
 /* ---- auto-generated, read-only "Context" section ----------------------------
    Appended below the document: related notes (same creation day) and backlinks
    (other notes that [[link]] to this one). The lines are real buffer lines but
@@ -173,6 +251,20 @@ static int ctx_links_to(const char *path, const char *base, const char *base_noe
   return strstr(buf, needle) != NULL;
 }
 
+/* Fill `out` (up to `max` basenames) with the files opened right before `path`,
+   most-recent first. No on-disk existence filter: a file opened via C-x C-f may
+   not be saved to disk yet (a blank new note stays in memory until autosave), but
+   it was genuinely opened, so it belongs in the list — and a [[wikilink]] to a
+   note that doesn't exist just creates it on follow, like everywhere else. */
+static int opened_after_list(const char *path, char out[][256], int max) {
+  OpenedAfter *e = opened_after_find(path, 0);
+  if (!e) return 0;
+  int n = 0;
+  for (int i = 0; i < e->npred && n < max; i++)
+    snprintf(out[n++], 256, "%s", e->preds[i]);
+  return n;
+}
+
 /* Append one read-only line at the end of the buffer (readonly_from is 0 while
    building, so the boundary bookkeeping in buf_insert_line_at stays inert). */
 static void ctx_append(const char *s) {
@@ -205,6 +297,8 @@ static void context_refresh(void) {
 
   char sameday[CTX_MAX][256]; int n_same = 0;
   char backlinks[CTX_MAX][256]; int n_back = 0;
+  char opened[CTX_MAX][256];
+  int n_open = opened_after_list(g_ed.filepath, opened, CTX_MAX);
 
   DIR *d = opendir(docs);
   if (d) {
@@ -231,7 +325,7 @@ static void context_refresh(void) {
     closedir(d);
   }
 
-  if (n_same == 0 && n_back == 0) return;   /* nothing related → no section */
+  if (n_same == 0 && n_back == 0 && n_open == 0) return;   /* nothing related → no section */
 
   int start = g_ed.line_count;
   /* The section opens with the divider line itself (readonly_from — do_render
@@ -260,6 +354,16 @@ static void context_refresh(void) {
       snprintf(line, sizeof(line), "- [[%s]]", sameday[i]);
       ctx_append(line);
     }
+    first = 0;
+  }
+  if (n_open > 0) {
+    if (!first) ctx_append("");
+    ctx_append("Opened after");
+    for (int i = 0; i < n_open; i++) {
+      char line[300];
+      snprintf(line, sizeof(line), "- [[%s]]", opened[i]);
+      ctx_append(line);
+    }
   }
   g_ed.readonly_from = start;   /* everything from the spacing line down is static */
 }
@@ -269,9 +373,12 @@ static void context_refresh(void) {}
 
 static void open_or_create_file(const char *path) {
   filepos_remember_current();   /* stash where we were in the file we're leaving */
+  char prev[1024];              /* the file we're leaving, for the "Opened after" list */
+  snprintf(prev, sizeof(prev), "%s", g_ed.filepath);
   /* resolve the typed name to a path inside the sandbox documents dir */
   buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
   g_ed.filename = path_base(g_ed.filepath);
+  opened_after_record(g_ed.filepath, prev);   /* before context_refresh, so it lists prev */
 
   buf_free_all_lines(&g_ed);
   int existed = (buf_load_file(&g_ed, g_ed.filepath) == 0);
@@ -2014,7 +2121,10 @@ static void load_daily_note(void) {
 static void cmd_open_daily_note(void) {
   save_if_dirty();
   filepos_remember_current();   /* remember where we were before jumping away */
+  char prev[1024];              /* the file we're leaving, for the "Opened after" list */
+  snprintf(prev, sizeof(prev), "%s", g_ed.filepath);
   load_daily_note();
+  opened_after_record(g_ed.filepath, prev);   /* today's note was opened after prev */
   g_vs.scroll_y = g_vs.typewriter_mode ? 0.0f : -nav_top_margin(&g_vs);
   context_refresh();            /* append the read-only Context section */
   buf_invalidate_all_wraps(&g_ed);
@@ -2402,6 +2512,7 @@ static void session_save(void) {
   if (n > 0) buf_save_text(path, out, n);
   filepos_remember_current();   /* keep the open file's position fresh, then persist */
   filepos_save();
+  opened_after_save();          /* persist the "Opened after" history too */
 #endif
 }
 
@@ -2494,6 +2605,25 @@ static void filepos_load(void) {
   fclose(f);
 }
 
+/* Load the "Opened after" history written by opened_after_save (lines
+   "<predecessor-basename>\t<full-path>"). */
+static void opened_after_load(void) {
+  if (!buf_get_documents_dir()[0]) return;
+  char path[1024];
+  buf_resolve_path(".kern_opened_after", path, sizeof(path));
+  FILE *f = fopen(path, "rb");
+  if (!f) return;
+  char line[1400];
+  while (fgets(line, sizeof(line), f)) {
+    char *tab = strchr(line, '\t');
+    if (!tab) continue;
+    *tab = '\0';
+    char *nl = strchr(tab + 1, '\n'); if (nl) *nl = '\0';
+    opened_after_add(tab + 1, line);   /* (full path, predecessor basename) */
+  }
+  fclose(f);
+}
+
 /* Drop a wikilink back to `filepath` into a freshly-created daily note (below the
    date heading), then park the cursor on the blank line under it and save. */
 static void daily_add_backlink(EditorState *ed, const char *filepath) {
@@ -2509,6 +2639,7 @@ static void daily_add_backlink(EditorState *ed, const char *filepath) {
 int editor_main(int argc, char **argv) {
   SessionState ss = session_load();
   filepos_load();   /* per-file cursor table, consulted below + by open_or_create_file */
+  opened_after_load();   /* "Opened after" history, surfaced in the Context section */
 
   if (argc >= 2 && buf_load_file(&g_ed, argv[1]) == 0) {
     snprintf(g_ed.filepath, sizeof(g_ed.filepath), "%s", argv[1]);
@@ -2520,9 +2651,14 @@ int editor_main(int argc, char **argv) {
     today_note_path(today, sizeof(today));
     if (!file_exists(today)) {
       /* new day: create today's note and, if we had a file open last time, link
-         back to it from the fresh note */
+         back to it from the fresh note — and record it as an "Opened after"
+         predecessor, since today's note was opened right after that file (the
+         Context section is generated further below). */
       load_daily_note();
-      if (ss.loaded && ss.file[0]) daily_add_backlink(&g_ed, ss.file);
+      if (ss.loaded && ss.file[0]) {
+        daily_add_backlink(&g_ed, ss.file);
+        opened_after_record(g_ed.filepath, ss.file);
+      }
     } else if (ss.loaded && ss.file[0] && buf_load_file(&g_ed, ss.file) == 0) {
       /* today's note already exists → resume the last session's file, dropping to
          its remembered cursor (session cursor as a fallback) */
@@ -2627,6 +2763,18 @@ void tv_test_reset(void) {
   pos_anim_reset();
   g_last_autosave = 0;
   g_last_x_conn = -1;
+  g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
+}
+
+/* Test accessor: the recorded predecessor basenames for `path` (raw, unfiltered
+   by on-disk existence — that filtering lives in the app-only opened_after_list). */
+int tv_test_opened_after(const char *path, char out[][256], int max) {
+  OpenedAfter *e = opened_after_find(path, 0);
+  if (!e) return 0;
+  int n = 0;
+  for (int i = 0; i < e->npred && n < max; i++)
+    snprintf(out[n++], 256, "%s", e->preds[i]);
+  return n;
 }
 #endif /* KERN_HEADLESS_TEST */
 

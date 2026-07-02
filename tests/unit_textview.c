@@ -362,6 +362,56 @@ static void test_find_file_creates_buffer(void) {
   buf_set_documents_dir("");
 }
 
+/* "Opened after": the file open right before we open another becomes a
+   predecessor of it. Driven through the real C-x C-f open path. */
+static void test_opened_after_records_predecessor(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char xxx[512]; snprintf(xxx, sizeof xxx, "%s/XXX.md", dir);
+  buf_save_text(xxx, "x", 1);
+  tv_begin(); load("x");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", xxx);   /* we're in XXX.md */
+  ED->filename = "XXX.md";
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f);
+  type("Foo.md");
+  key(0, SDLK_RETURN);                     /* open Foo.md while XXX.md was open */
+  CHECK(strstr(ED->filepath, "Foo.md") != NULL);
+  char preds[8][256];
+  int n = tv_test_opened_after(ED->filepath, preds, 8);
+  CHECK_IEQ(n, 1);
+  CHECK_SEQ(preds[0], "XXX.md");
+  buf_set_documents_dir("");
+}
+
+/* Predecessors accumulate most-recent-first and never duplicate (an existing
+   predecessor is lifted to the front instead of being appended again). */
+static void test_opened_after_accumulates_and_dedups(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char target[512]; snprintf(target, sizeof target, "%s/Target.md", dir);
+  tv_begin(); load("");
+  char a[512]; snprintf(a, sizeof a, "%s/A.md", dir);
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);   /* start in A.md */
+  ED->filename = "A.md";
+
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f); type("Target.md"); key(0, SDLK_RETURN);
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f); type("B.md");      key(0, SDLK_RETURN);
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f); type("Target.md"); key(0, SDLK_RETURN);
+
+  char preds[8][256];
+  int n = tv_test_opened_after(target, preds, 8);
+  CHECK_IEQ(n, 2);
+  CHECK_SEQ(preds[0], "B.md");    /* most recent predecessor first */
+  CHECK_SEQ(preds[1], "A.md");
+
+  /* re-opening Target from B lifts B to the front; no duplicate entry */
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f); type("A.md");      key(0, SDLK_RETURN);
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f); type("Target.md"); key(0, SDLK_RETURN);
+  n = tv_test_opened_after(target, preds, 8);
+  CHECK_IEQ(n, 2);
+  CHECK_SEQ(preds[0], "A.md");
+  CHECK_SEQ(preds[1], "B.md");
+  buf_set_documents_dir("");
+}
+
 static void test_minibuffer_tab_completion(void) {
   char dir[256]; fresh_docs_dir(dir, sizeof dir);
   char path[512]; snprintf(path, sizeof path, "%s/foobar.md", dir);
@@ -596,6 +646,8 @@ void suite_textview(void) {
   RUN(test_isearch_direction_flip_and_abort);
   /* minibuffer editing */
   RUN(test_find_file_creates_buffer);
+  RUN(test_opened_after_records_predecessor);
+  RUN(test_opened_after_accumulates_and_dedups);
   RUN(test_minibuffer_tab_completion);
   RUN(test_save_as_writes_file);
   /* wikilink nav */

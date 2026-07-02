@@ -25,6 +25,8 @@ void editor_tick(void);
 EditorState *tv_test_ed(void);
 ViewState   *tv_test_vs(void);
 void         tv_test_reset(void);
+/* The recorded "Opened after" predecessor basenames for `path` (see textview.c). */
+int          tv_test_opened_after(const char *path, char out[][256], int max);
 #endif
 
 #endif /* EDITOR_LOOP_H */
