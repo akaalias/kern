@@ -15,6 +15,7 @@ int      stub_op_count;
 
 static int s_cell_w = 10, s_cell_h = 20, s_win_w = 800, s_win_h = 600;
 static int s_style = FONT_REGULAR;
+static float s_scale = 1.0f;   /* r_set_font_scale, applied to width/height */
 /* per-style extra width per char (default 0 = style-independent, matching real
    life closely enough for most tests). A test can widen e.g. FONT_MONO to model
    the real renderer, where measuring in the wrong font corrupts wrap caches. */
@@ -29,6 +30,7 @@ void stub_reset(void) {
   stub_rect_count = 0;
   stub_op_count = 0;
   s_style = FONT_REGULAR;
+  s_scale = 1.0f;
   s_missing_n = 0;
   for (int i = 0; i < FONT_COUNT; i++) s_style_extra[i] = 0;
 }
@@ -49,9 +51,9 @@ void stub_set_style_extra(int style, int extra) {
 /* ---- metrics ---- */
 int  r_get_text_width(const char *text, int len) {
   (void)text;
-  return len * (s_cell_w + s_style_extra[s_style]);
+  return (int)(len * (s_cell_w + s_style_extra[s_style]) * s_scale + 0.5f);
 }
-int  r_get_text_height(void)                     { return s_cell_h; }
+int  r_get_text_height(void)                     { return (int)(s_cell_h * s_scale + 0.5f); }
 void r_get_size(int *w, int *h)                  { if (w) *w = s_win_w; if (h) *h = s_win_h; }
 int  r_has_glyph(const char *utf8, int byte_len) {
   int cp = 0;
@@ -65,6 +67,7 @@ void r_set_font_style(int style) { s_style = style; }
 int  r_get_font_style(void)      { return s_style; }
 int  r_ui_font_style(void)       { return FONT_REGULAR; }  /* no system font headless */
 void r_set_font_size(float size) { (void)size; }
+void r_set_font_scale(float scale) { s_scale = scale > 0.0f ? scale : 1.0f; }
 
 /* ---- draw capture ---- */
 void r_draw_text(const char *text, Vec2 pos, Color color) {

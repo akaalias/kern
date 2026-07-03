@@ -60,6 +60,7 @@ typedef struct {
 static FontData fonts[FONT_COUNT];
 static int current_font = FONT_REGULAR;
 static float font_size = 16.0f;
+static float font_scale = 1.0f;   /* quad-level draw/measure scale; see renderer.h */
 
 /* Load a TTF at an exact path into `style`. On failure: exit if `required`,
    else leave the slot unloaded and return 0 (so an optional font degrades). */
@@ -531,13 +532,13 @@ void r_draw_text(const char *text, Vec2 pos, Color color) {
       float u1 = g->x1 / (float)FONT_ATLAS_W;
       float v1 = g->y1 / (float)FONT_ATLAS_H;
 
-      float dx = x + g->xoff;
-      float dy = y + fd->baseline + g->yoff;
+      float dx = x + g->xoff * font_scale;
+      float dy = y + (fd->baseline + g->yoff) * font_scale;
 
-      push_quad_uv(dx, dy, g->bw, g->bh, u0, v0, u1, v1, color);
+      push_quad_uv(dx, dy, g->bw * font_scale, g->bh * font_scale, u0, v0, u1, v1, color);
     }
 
-    x += g->xadvance;
+    x += g->xadvance * font_scale;
   }
 }
 
@@ -551,14 +552,14 @@ int r_get_text_width(const char *text, int len) {
   while (i < len && text[i]) {
     int cp;
     i += utf8_decode(text + i, len - i, &cp);
-    w += glyph_for(fd, cp)->xadvance;
+    w += glyph_for(fd, cp)->xadvance * font_scale;
   }
   return (int)(w + 0.5f);
 }
 
 
 int r_get_text_height(void) {
-  return (int)(font_size + 0.5f);
+  return (int)(font_size * font_scale + 0.5f);
 }
 
 int r_has_glyph(const char *utf8, int byte_len) {
@@ -578,6 +579,10 @@ void r_set_font_size(float size) {
   font_size = size;
   flush();
   rebuild_all_font_atlases();
+}
+
+void r_set_font_scale(float scale) {
+  font_scale = scale > 0.0f ? scale : 1.0f;
 }
 
 void r_set_font_style(int style) {

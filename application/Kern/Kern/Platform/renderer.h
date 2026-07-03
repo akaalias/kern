@@ -44,6 +44,12 @@ void r_set_clip_rect(Rect rect);
 void r_clear(Color color);
 void r_present(void);
 void r_set_font_size(float size);
+/* Scale factor applied to text drawing + measuring (r_draw_text /
+   r_get_text_width / r_get_text_height). Glyphs are drawn from the existing
+   atlas, scaled at the quad — unlike r_set_font_size this never rebuilds the
+   atlases, so it's safe per frame. Used by margin notes (0.5). Restore to 1.0f
+   after use. */
+void r_set_font_scale(float scale);
 void r_set_font_style(int style);
  int r_get_font_style(void);
 /* FONT_UI if the native system font loaded, else FONT_REGULAR — the font style

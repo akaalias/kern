@@ -568,6 +568,12 @@ static void cmd_extract_region_to_note(void) {
  * definitions render in the right margin aligned to their reference's row; in
  * normal mode they're just footnote lines at the bottom. Authored keyboard-first
  * via Cmd-Shift-M on a marked region. */
+/* Margin-note text scale relative to the body font (perceived size tracks ink
+   AREA, so ratios read smaller than they measure — 0.5 felt tiny). Applied as a
+   quad-level draw scale (r_set_font_scale) and to the note line height. */
+#define MN_SCALE 0.8f
+static int mn_line_height(void) { return (int)(nav_line_height() * MN_SCALE + 0.5f); }
+
 static int  mn_active;          /* margin-note input modal is open */
 static char mn_text[1024];      /* the note being typed */
 static int  mn_len;
@@ -1692,6 +1698,17 @@ static int draw_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, 
   return penx;
 }
 
+/* draw_wrapped at the margin-note scale (MN_SCALE of the body font). The quad
+   scale is set only around the text pass itself — never while nav geometry
+   (nav_line_height, nav_get_wrap_breaks) is measured, which would shrink line
+   heights and corrupt the wrap caches. */
+static int draw_note_wrapped(const char *s, int x, int y, int maxw, int fh, Color c, int *out_y, int draw) {
+  r_set_font_scale(MN_SCALE);
+  int penx = draw_wrapped(s, x, y, maxw, fh, c, out_y, draw);
+  r_set_font_scale(1.0f);
+  return penx;
+}
+
 /* Footnote definition text for `id` (into the NUL-terminated def line), or NULL. */
 static const char *find_footnote_def(const char *id) {
   char pat[40];
@@ -1755,7 +1772,8 @@ static int fn_side_known(const char *id) {
    Cache the resulting side per id. */
 static void recompute_footnote_sides(void) {
   g_fn_side_count = 0;
-  int lh  = nav_line_height();
+  int lh  = nav_line_height();              /* body row height — the reference's document y */
+  int fh  = mn_line_height();               /* note line height: MN_SCALE, matching the draw */
   int ncx, mw; tv_note_col(0, &ncx, &mw);   /* note-column width (heights must match the draw) */
   int saved = r_get_font_style();
   r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);
@@ -1774,8 +1792,8 @@ static void recompute_footnote_sides(void) {
       if (def) {
         int docy = nav_cursor_to_visual(&g_ed, i, k) * lh;
         int ly = docy;
-        draw_wrapped(def, 0, docy, mw, lh, dummy, &ly, 0);
-        int height = ly - docy + lh;
+        draw_note_wrapped(def, 0, docy, mw, fh, dummy, &ly, 0);
+        int height = ly - docy + fh;
         int side = 0;
         if (docy >= right_bottom) { side = 0; right_bottom = docy + height + 14; }
         else side = 1;
@@ -1804,7 +1822,8 @@ static void draw_margin_notes(void) {
   int rmx = rx0 - sx, lmx = lx0 - sx;
 
   r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);   /* never r_set_font_size here — it rebuilds the atlases (lag) */
-  int lh = nav_line_height(), fh = lh;
+  int lh = nav_line_height();                /* body row height — positions refY against the text */
+  int fh = mn_line_height();                 /* the note's own line height: MN_SCALE of the body's */
   Color ink = color(150, 150, 155, 255);
 
   /* the live input's screen extent, so a note below it spills left as it grows */
@@ -1812,7 +1831,7 @@ static void draw_margin_notes(void) {
   if (mn_active) {
     int py = caret_row_py();
     if (py < 0) py = row_py_for_line(mn_ref_line);
-    if (py >= 0) { int ly = py; draw_wrapped(mn_text, rmx, py, mw, fh, ink, &ly, 0);
+    if (py >= 0) { int ly = py; draw_note_wrapped(mn_text, rmx, py, mw, fh, ink, &ly, 0);
                    live_top = py; live_bottom = ly + fh + gap; }
   }
 
@@ -1838,13 +1857,13 @@ static void draw_margin_notes(void) {
         }
         int refY = cy + (visual + row) * lh - sy;
         if (refY <= cy + ch && refY >= cy - 80 * lh) {        /* in range to possibly show */
-          int ely = refY; draw_wrapped(def, rmx, refY, mw, fh, ink, &ely, 0);
+          int ely = refY; draw_note_wrapped(def, rmx, refY, mw, fh, ink, &ely, 0);
           int height = ely - refY + fh;
           if (refY + height >= cy && refY < cy + ch) {        /* any part on screen */
             if (!fn_side_known(id)) recompute_footnote_sides();
             int side = fn_side(id);
             if (mn_active && live_top >= 0 && refY > live_top && refY < live_bottom) side = 1;
-            draw_wrapped(def, side ? lmx : rmx, refY, mw, fh, ink, NULL, 1);
+            draw_note_wrapped(def, side ? lmx : rmx, refY, mw, fh, ink, NULL, 1);
           }
         }
       }
@@ -1864,13 +1883,13 @@ static void draw_margin_note_input(void) {
   int rx0, mw; tv_note_col(0, &rx0, &mw);
   int mx  = rx0 - sx;
   r_set_font_style(g_vs.typewriter_mode ? FONT_MONO : FONT_REGULAR);
-  int fh = nav_line_height();
+  int fh = mn_line_height();                 /* note line height: MN_SCALE of the body's */
   int py = caret_row_py();
   if (py < 0) py = row_py_for_line(mn_ref_line);
   if (py < 0) py = g_vs.content_y + 8;
   int endy = py;
-  int endx = draw_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy, 1);
-  r_draw_rect(rect(endx + 1, endy, 3, r_get_text_height()), color(90, 200, 250, 255));  /* same as the body caret */
+  int endx = draw_note_wrapped(mn_text, mx, py, mw, fh, color(210, 210, 215, 255), &endy, 1);
+  r_draw_rect(rect(endx + 1, endy, 3, (int)(r_get_text_height() * MN_SCALE + 0.5f)), color(90, 200, 250, 255));  /* same shape as the body caret, note-sized */
   r_set_font_style(FONT_REGULAR);
 }
 
