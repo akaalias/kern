@@ -30,7 +30,11 @@ INCS    := -I$(APP)/Editor -I$(APP)/Platform -I$(APP)/ThirdParty $(SDL_CFLAGS)
 # enables the tv_test_* seam.
 CFLAGS  := -std=c11 -D_GNU_SOURCE -g -O1 -Wall -Wextra -Wno-unused-parameter \
            -DKERN_HEADLESS_TEST $(SAN) $(INCS)
-LDFLAGS := $(SAN)
+# libm (sqrt, used by textview.c's circle/rounded-rect fills) is auto-linked on
+# macOS via libSystem but must be explicit on Linux — omitting it links locally
+# yet fails the Linux CI. Appended to every link line below.
+MATHLIB := -lm
+LDFLAGS := $(SAN) $(MATHLIB)
 
 # Pure core (no renderer) + layout code (renderer-dependent, exercised through
 # the stub). Geometry types (color/rect/vec2) come from gfx.h. textview.c joins
@@ -81,7 +85,7 @@ COV_FLOOR := 85
 .PHONY: coverage
 coverage:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
-	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
+	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC) $(MATHLIB)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
 	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
@@ -94,7 +98,7 @@ coverage:
 .PHONY: coverage-check
 coverage-check:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
-	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
+	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC) $(MATHLIB)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
 	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
@@ -128,7 +132,7 @@ PERF_SRC := perf/perf_main.c stub_renderer.c clock_fake.c pos_tagger_fake.c \
             $(APP)/Editor/style_check.c $(APP)/Editor/sub_render.c
 
 $(PERF_BIN): $(PERF_SRC) stub_renderer.h clock_fake.h
-	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC)
+	$(CC) -std=c11 -D_GNU_SOURCE -O2 $(INCS) -o $@ $(PERF_SRC) $(MATHLIB)
 
 # Usage: make perf CORPUS=../test_100mb.txt        (add PERF_ARGS=--check for CI)
 # Generate a corpus first: python3 ../tools/gen_prose.py 100MB ../test_100mb.txt
