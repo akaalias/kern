@@ -165,9 +165,12 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Jump between selection ends", "C-x C-x"),
         B("Cancel / clear selection", "C-g"),
     ]),
-    ShortcutGroup(title: "Formatting the selection", bindings: [
-        B("Bold", "**"), B("Italic", "*"),
-        B("Highlight", "=="), B("Underline", "++"), B("Inline code", "`"),
+    ShortcutGroup(title: "Formatting", bindings: [
+        B("Bold selection", "**"), B("Italic selection", "*"),
+        B("Highlight selection", "=="), B("Underline selection", "++"),
+        B("Inline code selection", "`"),
+        B("Highlight the current sentence", "Cmd-S-H"),
+        B("Underline the current sentence", "Cmd-S-U"),
     ]),
     ShortcutGroup(title: "Searching", bindings: [
         B("Search forward", "C-s"), B("Search backward", "C-r"),
