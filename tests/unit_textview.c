@@ -145,6 +145,18 @@ static void test_cx_s_toggles_style_check(void) {
   CHECK_IEQ(VS->style_mask, 0);
 }
 
+static void test_cx_p_toggles_page_furniture(void) {
+  tv_begin(); load("hi");
+  CHECK_IEQ(VS->page_furniture_hidden, 0);  /* shown by default */
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_p);                           /* C-x p hides borders/gutters */
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);          /* prefix cleared */
+  CHECK_IEQ(VS->page_furniture_hidden, 1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_p);                           /* C-x p again shows them */
+  CHECK_IEQ(VS->page_furniture_hidden, 0);
+}
+
 static void test_cx_cf_opens_find_minibuffer(void) {
   tv_begin(); load("hi");
   key(KMOD_CTRL, SDLK_x);
@@ -775,6 +787,7 @@ void suite_textview(void) {
   RUN(test_cx_prefix_sets_and_clears);
   RUN(test_cx_y_toggles_syntax);
   RUN(test_cx_s_toggles_style_check);
+  RUN(test_cx_p_toggles_page_furniture);
   RUN(test_cx_cf_opens_find_minibuffer);
   RUN(test_cx_unrecognized_still_clears_prefix);
   RUN(test_esc_clears_mark_else_starts_meta);

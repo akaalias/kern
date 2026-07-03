@@ -195,6 +195,7 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Bigger text", "Cmd-="), B("Smaller text", "Cmd--"),
         B("Typewriter mode", "C-x t"), B("Syntax highlighting", "C-x y"),
         B("Style check", "C-x s"), B("Symbols (ligatures)", "C-x l"),
+        B("Page borders", "C-x p"),
     ]),
     ShortcutGroup(title: "Scrolling", bindings: [
         B("Page down", "C-v"), B("Page up", "M-v"),

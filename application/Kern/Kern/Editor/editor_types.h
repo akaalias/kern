@@ -163,6 +163,8 @@ struct ViewState {
 
   /* typewriter mode: pin the active line at a fixed fraction of the page */
   int    typewriter_mode;
+  /* C-x p: hide all page furniture (borders, rails, note gutters) in both modes */
+  int    page_furniture_hidden;
   /* focus crossfade: as the caret changes line, the old line fades down and the
      new line fades up over focus_t in [0,1] (1 = settled). */
   int    focus_cur_line;

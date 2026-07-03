@@ -65,6 +65,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-x y`       | Syntax highlight (parts of speech, by brightness) |
 | `C-x s`       | Style check (strike cuttable fillers/redundancies) |
 | `C-x l`       | Symbols on/off (draw `->` `--` `!=` `(c)` quotes `lambda` `forall` as → — ≠ © “ ” λ ∀; on by default) |
+| `C-x p`       | Page borders on/off (hide/show the page rails, gutters & note margins) |
 | `M-g`         | Go to line                      |
 
 **Editing**

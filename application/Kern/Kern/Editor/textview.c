@@ -1413,6 +1413,12 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     g_vs.suppress_next_text = 1;   /* swallow the "l" text event */
     return 1;
   }
+  if (!ctrl && sym == SDLK_p) {                                       /* C-x p */
+    g_vs.page_furniture_hidden = !g_vs.page_furniture_hidden;
+    nav_status_set(&g_vs, g_vs.page_furniture_hidden ? "Page borders hidden" : "Page borders shown");
+    g_vs.suppress_next_text = 1;   /* swallow the "p" text event */
+    return 1;
+  }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -1556,11 +1562,12 @@ static void tv_note_col(int side, int *x0, int *w) {
 }
 
 /* Page furniture: the dotted writing-area edges, the dotted note gutters, the
-   solid page-margin rails, and the page top/bottom edges. Shared by typewriter
-   mode and (when the window is wide enough) normal mode. Tracks scroll_x, which
-   is 0 in normal mode so the guides sit still. */
+   solid page-margin rails, and the page top/bottom edges. One drawing for ALL
+   modes — a fixed framed page: a closed rectangle filling the writing area (top
+   of content down to just above the status bar), with the vertical rails clipped
+   to that frame and solid top/bottom edges closing it off. Tracks scroll_x (0 in
+   normal mode, the horizontal-pin offset in typewriter mode). */
 static void draw_page_furniture(void) {
-  int lh     = nav_line_height();
   int margin = nav_page_margin();
   int page_w = nav_page_w();
   int sx     = (int)g_vs.scroll_x;
@@ -1569,22 +1576,9 @@ static void draw_page_furniture(void) {
   Color dotted = color(120, 120, 125, 80);
   Color solid  = color(120, 120, 125, 150);
   int pad = tv_margin_pad();
-  int top_y, bottom_y;
-  if (g_vs.typewriter_mode) {
-    /* paper edges: a fixed margin above line 0 / below the last line, scrolling
-       with the page (there's virtual whitespace above & below to make room). */
-    int line0_top = cy - (int)g_vs.scroll_y;
-    int margin_y  = (int)(8.0f * g_vs.font_size);
-    top_y    = line0_top - margin_y;
-    bottom_y = line0_top + nav_total_visual_lines(&g_ed) * lh + margin_y;
-  } else {
-    /* normal mode: a fixed page frame filling the writing area (top of content
-       down to just above the status bar), regardless of document length. */
-    top_y    = cy;
-    bottom_y = cy + ch - 1;
-  }
-  int vtop = top_y    < cy      ? cy      : top_y;      /* rails clip to the content viewport */
-  int vbot = bottom_y > cy + ch ? cy + ch : bottom_y;
+  int top_y    = cy;                                   /* fixed frame filling the writing area */
+  int bottom_y = cy + ch - 1;
+  int vtop = top_y, vbot = bottom_y;
   /* the solid page edge sits npad outside the outer gutter; halve that overhang
      (pulls the edge in toward the notes, leaving a bit more window margin). */
   int npad2 = (int)(pad * 0.09f);                      /* half of tv_note_gutter's npad (0.18) */
@@ -1603,10 +1597,8 @@ static void draw_page_furniture(void) {
     r_draw_rect(rect(left_x,  vtop, 1, vbot - vtop), solid);          /* page margin left   */
     r_draw_rect(rect(right_x, vtop, 1, vbot - vtop), solid);          /* page margin right  */
   }
-  if (top_y >= cy && top_y < cy + ch)                                  /* page TOP edge      */
-    r_draw_rect(rect(left_x, top_y, right_x - left_x + 1, 1), solid);
-  if (bottom_y >= cy && bottom_y < cy + ch)                            /* page BOTTOM edge   */
-    r_draw_rect(rect(left_x, bottom_y, right_x - left_x + 1, 1), solid);
+  r_draw_rect(rect(left_x, top_y, right_x - left_x + 1, 1), solid);   /* page TOP edge      */
+  r_draw_rect(rect(left_x, bottom_y, right_x - left_x + 1, 1), solid);/* page BOTTOM edge   */
 }
 
 /* Typewriter frosted guards + hitzone (typewriter mode only): the two rounded
@@ -2318,13 +2310,14 @@ static void do_render(void) {
      slides to make room); normal mode draws them only when the window margin is
      wide enough to hold the note strip — otherwise notes stay as bottom-of-page
      footnotes (the plain markdown view). */
+  int show_furniture = !g_vs.page_furniture_hidden;   /* C-x p hides borders/gutters */
   if (g_vs.typewriter_mode) {
-    draw_page_furniture();      /* furniture + notes BEFORE the fog so they frost with the page */
+    if (show_furniture) draw_page_furniture();   /* furniture + notes BEFORE the fog so they frost with the page */
     draw_margin_notes();
     draw_typewriter_fog();      /* frosted guards + hitzone */
     draw_margin_note_input();   /* live input AFTER the fog stays sharp in the hitzone */
   } else if (nav_page_margin() >= tv_margin_pad()) {
-    draw_page_furniture();
+    if (show_furniture) draw_page_furniture();
     draw_margin_notes();
     draw_margin_note_input();
   }
@@ -2821,9 +2814,10 @@ static void session_save(void) {
   buf_resolve_path(".kern_session", path, sizeof(path));
   char out[2048];
   int n = snprintf(out, sizeof(out),
-    "file %s\ncursor %d %d\ntypewriter %d\nsyntax %u\nstyle %u\n",
+    "file %s\ncursor %d %d\ntypewriter %d\nsyntax %u\nstyle %u\nnoborders %d\n",
     g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col,
-    g_vs.typewriter_mode, g_vs.syntax_mask, g_vs.style_mask);
+    g_vs.typewriter_mode, g_vs.syntax_mask, g_vs.style_mask,
+    g_vs.page_furniture_hidden);
   if (n > 0) buf_save_text(path, out, n);
   filepos_remember_current();   /* keep the open file's position fresh, then persist */
   filepos_save();
@@ -2870,6 +2864,7 @@ typedef struct {
   int  cursor_line, cursor_col;
   int  typewriter;
   unsigned int syntax_mask, style_mask;
+  int  page_furniture_hidden;
   int  loaded;
 } SessionState;
 
@@ -2887,6 +2882,7 @@ static SessionState session_load(void) {
     else if (strncmp(line, "typewriter ", 11) == 0) s.typewriter  = atoi(line + 11);
     else if (strncmp(line, "syntax ", 7) == 0)      s.syntax_mask = (unsigned int)strtoul(line + 7, NULL, 10);
     else if (strncmp(line, "style ", 6) == 0)       s.style_mask  = (unsigned int)strtoul(line + 6, NULL, 10);
+    else if (strncmp(line, "noborders ", 10) == 0)  s.page_furniture_hidden = atoi(line + 10);
   }
   fclose(f);
   s.loaded = 1;
@@ -3005,6 +3001,7 @@ int editor_main(int argc, char **argv) {
      the restored line so it doesn't flash on the first frame) */
   if (ss.loaded) {
     g_vs.typewriter_mode = ss.typewriter;
+    g_vs.page_furniture_hidden = ss.page_furniture_hidden;
     g_vs.syntax_mask     = ss.syntax_mask;
     g_vs.style_mask      = ss.style_mask;
     g_vs.focus_cur_line  = g_vs.focus_prev_line = g_ed.cursor_line;
