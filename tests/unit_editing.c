@@ -747,6 +747,26 @@ static void test_toggle_sentence_highlight_no_terminator(void) {
   ed_teardown(&ed);
 }
 
+/* Cmd-Shift-U: the same toggle with ++underline++ markers, and it nests with an
+   existing highlight (each marker toggles independently). */
+static void test_toggle_sentence_underline_wraps_and_nests(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "Just do it.");
+  ed.cursor_col = 2;
+  CHECK_IEQ(ed_toggle_sentence_underline(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "++Just do it.++");
+  CHECK_IEQ(ed_toggle_sentence_underline(&ed), 1);      /* toggles back off */
+  CHECK_SEQ(LINE(ed, 0), "Just do it.");
+  /* nesting: underline a sentence that is already highlighted */
+  ed_load(&ed, "==Wow.==");
+  ed.cursor_col = 3;
+  ed_toggle_sentence_underline(&ed);
+  CHECK_SEQ(LINE(ed, 0), "==++Wow.++==");
+  ed_toggle_sentence_underline(&ed);                    /* removes only the ++ */
+  CHECK_SEQ(LINE(ed, 0), "==Wow.==");
+  ed_teardown(&ed);
+}
+
 /* No sentence text under the caret (empty line) → no-op. */
 static void test_toggle_sentence_highlight_empty_is_noop(void) {
   EditorState ed = {0};
@@ -799,6 +819,7 @@ void suite_editing(void) {
   RUN(test_toggle_sentence_highlight_second_sentence_and_undo);
   RUN(test_toggle_sentence_highlight_unwrap_amid_neighbors);
   RUN(test_toggle_sentence_highlight_no_terminator);
+  RUN(test_toggle_sentence_underline_wraps_and_nests);
   RUN(test_toggle_sentence_highlight_empty_is_noop);
   RUN(test_delete_at_eol_joins_next);
   RUN(test_kill_line_appends_when_consecutive);

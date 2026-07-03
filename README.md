@@ -93,6 +93,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-x C-x`         | Exchange point & mark      |
 | `**` `*` `==` `++` `` ` `` | With a region marked, wrap it: bold / italic / highlight / underline / code |
 | `Cmd-Shift-H`     | Toggle `==highlight==` around the caret's sentence |
+| `Cmd-Shift-U`     | Toggle `++underline++` around the caret's sentence |
 
 **Search & view**
 

@@ -757,6 +757,17 @@ static void test_cmd_shift_h_toggles_sentence_highlight(void) {
   EXPECT_LINE(0, "The cat sat. The dog ran.");
 }
 
+/* Cmd-Shift-U routes to the sentence-underline toggle. */
+static void test_cmd_shift_u_toggles_sentence_underline(void) {
+  tv_begin();
+  load("Just do it.");
+  put_cursor(0, 2);
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_u);
+  EXPECT_LINE(0, "++Just do it.++");
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_u);
+  EXPECT_LINE(0, "Just do it.");
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -806,6 +817,7 @@ void suite_textview(void) {
   RUN(test_margin_note_no_room);
   RUN(test_margin_note_normal_mode_with_room);
   RUN(test_cmd_shift_h_toggles_sentence_highlight);
+  RUN(test_cmd_shift_u_toggles_sentence_underline);
   /* X publish confirmation overlay */
   RUN(test_publish_opens_overlay);
   RUN(test_publish_not_connected_no_overlay);

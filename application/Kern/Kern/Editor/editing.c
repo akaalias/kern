@@ -439,11 +439,12 @@ static int ed_sentence_content(const Line *l, int col, int *a, int *b) {
   return 1;
 }
 
-/* Cmd-Shift-H: toggle a ==highlight== around the sentence the caret is in. If
-   that sentence is already wrapped in "==", remove the markers; otherwise add
-   them. One undo group; no-op (returns 0) when the caret isn't over a sentence
-   or sits in the read-only Context section. */
-int ed_toggle_sentence_highlight(EditorState *ed) {
+/* Toggle a doubled `m` marker (== or ++) around the sentence the caret is in:
+   if it's already wrapped in that marker, remove it; otherwise add it. One undo
+   group; no-op (returns 0) when the caret isn't over a sentence or sits in the
+   read-only Context section. Detection looks at the markers immediately hugging
+   the sentence, so ==hl== and ++ul++ nest and each toggles independently. */
+static int ed_toggle_sentence_wrap(EditorState *ed, char m) {
   int ln = ed->cursor_line;
   if (ed_line_locked(ed, ln)) return 0;
   Line *l = &ed->lines[ln];
@@ -451,25 +452,31 @@ int ed_toggle_sentence_highlight(EditorState *ed) {
   if (!ed_sentence_content(l, ed->cursor_col, &a, &b)) return 0;
 
   int wrapped = a >= 2 && b + 2 <= l->len &&
-                l->text[a - 2] == '=' && l->text[a - 1] == '=' &&
-                l->text[b] == '=' && l->text[b + 1] == '=';
+                l->text[a - 2] == m && l->text[a - 1] == m &&
+                l->text[b] == m && l->text[b + 1] == m;
+  char mk[3] = { m, m, '\0' };
 
   undo_begin_group(ed);
   if (wrapped) {
-    /* remove the closing "==" first (higher index) so `a` stays valid */
+    /* remove the closing marker first (higher index) so `a` stays valid */
     ed_kill_range(ed, ln, b, ln, b + 2, 0);
     ed_kill_range(ed, ln, a - 2, ln, a, 0);      /* leaves the caret at a-2 */
   } else {
     ed->cursor_line = ln; ed->cursor_col = b;
-    ed_insert_char(ed, "==");                    /* closer first */
+    ed_insert_char(ed, mk);                      /* closer first */
     ed->cursor_line = ln; ed->cursor_col = a;
-    ed_insert_char(ed, "==");                    /* opener shifts the sentence right by 2 */
+    ed_insert_char(ed, mk);                      /* opener shifts the sentence right by 2 */
     ed->cursor_col = a + 2;                       /* keep the caret over the sentence */
   }
   undo_end_group(ed);
   ed->cursor_target_col = ed->cursor_col;
   return 1;
 }
+
+/* Cmd-Shift-H / Cmd-Shift-U: toggle ==highlight== / ++underline++ around the
+   caret's sentence. */
+int ed_toggle_sentence_highlight(EditorState *ed) { return ed_toggle_sentence_wrap(ed, '='); }
+int ed_toggle_sentence_underline(EditorState *ed) { return ed_toggle_sentence_wrap(ed, '+'); }
 
 void ed_emacs_forward_word(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
