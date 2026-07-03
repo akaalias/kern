@@ -152,6 +152,30 @@ static int md_scan_spans(const char *t, int len, struct MdSpan *out) {
   return n;
 }
 
+/* Nesting-aware decoration scan: mark, per byte in [lo,hi), whether it sits
+   inside a highlight's content (hl) and/or an underline's content (ul),
+   recursing into each span's content so an ==highlight== inside ++underline++
+   (and vice versa) shows BOTH rules. Only these two decorations nest — they're
+   zero-width overlays, so the click/wrap/width walks (which never look at them)
+   stay flat and unchanged. `content > i` skips whole-token link/wiki (content==
+   open) so recursion can't spin on them. Bounded by md_detect_span's MD_MAX_SCAN. */
+static void md_decor_recurse(const char *t, int lo, int hi,
+                             unsigned char *hl, unsigned char *ul) {
+  int i = lo;
+  while (i < hi) {
+    int content, close, end;
+    int kind = md_detect_span(t, i, hi, &content, &close, &end);
+    if (kind && content > i) {
+      if (kind == SP_HL)             { for (int d = content; d < close; d++) hl[d] = 1; }
+      else if (kind == SP_UNDERLINE) { for (int d = content; d < close; d++) ul[d] = 1; }
+      md_decor_recurse(t, content, close, hl, ul);   /* nested HL/UL inside this span */
+      i = end;
+    } else {
+      i++;
+    }
+  }
+}
+
 /* Lazily compute and cache the line's span map (recomputed when md_span_count is
    -1, which line_dirty sets on every edit). Returns the count; *out gets the
    array. This replaces re-parsing the line for each wrapped visual row. */
@@ -270,7 +294,7 @@ float md_draw_text(Line *l, int start, int end,
   Color link_fg = color(180, 160, 220, 255);
   Color link_bg = color(80, 50, 120, 255);
   Color code_fg = color(180, 140, 100, 255);
-  Color hl_bg   = color(240, 214, 92, 70);   /* soft highlighter yellow */
+  Color hl_line = color(240, 214, 92, 235);   /* highlighter yellow — now a rule, not a fill */
   Color strike_fg = color(120, 116, 111, 255); /* greyed cuttable text */
   int strike_thick = font_h >= 24 ? 2 : 1;
   static const int wave[4] = { 0, 1, 2, 1 };       /* hand-drawn wobble */
@@ -279,6 +303,16 @@ float md_draw_text(Line *l, int start, int end,
   int span_count = md_line_spans(l, &spans);
   int si = 0;
   while (si < span_count && spans[si].end <= start) si++;   /* first span over `start` */
+
+  /* Nesting-aware highlight/underline flags (draw-only; these overlays don't
+     affect width, so the measure/click walks skip this). A glyph can be both
+     highlighted and underlined when the two spans nest. */
+  unsigned char *dec_hl = NULL, *dec_ul = NULL;
+  if (draw && l->len > 0) {
+    dec_hl = calloc((size_t)l->len, 1);
+    dec_ul = calloc((size_t)l->len, 1);
+    if (dec_hl && dec_ul) md_decor_recurse(text, 0, l->len, dec_hl, dec_ul);
+  }
 
   /* text→symbol substitution: a source token (->, --, a straight quote) draws as
      one replacement glyph. Streamed with a forward cursor alongside the md spans;
@@ -292,27 +326,24 @@ float md_draw_text(Line *l, int start, int end,
   for (int i = start; i < end; ) {
     while (si < span_count && i >= spans[si].end) si++;
 
-    /* width style is shared with the click walk; color/bg/underline are draw-only
-       and derive from the same span. */
+    /* width style is shared with the click walk; color is draw-only and derives
+       from the same (flat) span. Highlight/underline are separate nesting-aware
+       overlays (dec_hl/dec_ul), so they aren't set here. */
     int style = md_span_style(spans, span_count, si, i, base_style, heading);
     Color fg = base_color;
-    int bg = 0;   /* 0 none, 1 link, 2 highlight */
-    int underline = 0;
+    int bg = 0;   /* 0 none, 1 link */
     if (si < span_count && i >= spans[si].open && i < spans[si].end) {
       const struct MdSpan *s = &spans[si];
       if (s->kind == SP_LINK || s->kind == SP_WIKI) {
         fg = link_fg; bg = 1;
       } else if (i < s->content || i >= s->close) {
         fg = dim;   /* the delimiter characters themselves */
-      } else {
-        switch (s->kind) {
-          case SP_MONO:      fg = code_fg; break;   /* width set by md_span_style */
-          case SP_HL:        bg = 2; break;
-          case SP_UNDERLINE: underline = 1; break;
-          default: break;                           /* BOLD/ITALIC: width only */
-        }
+      } else if (s->kind == SP_MONO) {
+        fg = code_fg;                             /* width set by md_span_style */
       }
     }
+    int hl = dec_hl ? dec_hl[i] : 0;              /* nesting-aware highlight */
+    int ul = dec_ul ? dec_ul[i] : 0;              /* nesting-aware underline  */
 
     /* Part-of-speech coloring layers on top of markdown: it recolors only runs
        markdown left at the base color, so links/code/delimiters keep their hue,
@@ -357,15 +388,21 @@ float md_draw_text(Line *l, int start, int end,
     if (draw) {
       if (bg == 1) {
         r_draw_rect(rect((int)px, (int)y, w, font_h), md_fade(link_bg, op));
-      } else if (bg == 2) {
-        int woff = wave[i & 3];
-        r_draw_rect(rect((int)px, (int)y + woff, w, font_h - 1), md_fade(hl_bg, op));
+      }
+      /* ==highlight==: a yellow rule ABOVE and BELOW the text (was a full-height
+         fill). The underline sits at font_h — a clear row below the ++ underline
+         (font_h*0.92) — so a run that is both highlighted and underlined shows two
+         separated lines, not one stuck to the other. hl is nesting-aware, so an
+         ==hl== inside ++ul++ (and vice versa) both draw. */
+      if (hl) {
+        r_draw_rect(rect((int)px, (int)y + 1, w, 1), md_fade(hl_line, op));          /* overline  */
+        r_draw_rect(rect((int)px, (int)y + font_h, w, 1), md_fade(hl_line, op));     /* underline */
       }
       r_draw_text(glyph, vec2((int)px, (int)y), md_fade(fg, op));
       /* ++underline++: a solid, uniform rule on the baseline. Use base_color, not
          the per-glyph fg, so syntax/POS coloring doesn't break it into a
          multicolor dashed-looking line — it's one continuous straight underline. */
-      if (underline) {
+      if (ul) {
         int dy = (int)y + (int)(font_h * 0.92f);
         r_draw_rect(rect((int)px, dy, w, 1), md_fade(base_color, op));
       }
@@ -403,6 +440,8 @@ float md_draw_text(Line *l, int start, int end,
 
   if (track_cursor_col >= end) *out_cursor_x = (int)px;
 
+  free(dec_hl);
+  free(dec_ul);
   r_set_font_style(saved_style);
   return px;
 }

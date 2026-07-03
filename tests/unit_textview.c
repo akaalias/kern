@@ -622,15 +622,6 @@ static void test_margin_note_normal_mode_with_room(void) {
 
 /* ---- X publish confirmation overlay (kern_publish_to_x -> preview -> confirm) ---- */
 
-/* Helper: a left mouse click at (x, y). */
-static void click(int x, int y) {
-  SDL_Event e; memset(&e, 0, sizeof e);
-  e.type = SDL_MOUSEBUTTONDOWN;
-  e.button.button = SDL_BUTTON_LEFT;
-  e.button.x = x; e.button.y = y;
-  editor_handle_event(&e);
-}
-
 /* Clicking Publish while connected opens the confirmation overlay with the note
    snapshotted for preview — it does NOT post yet. */
 static void test_publish_opens_overlay(void) {
@@ -755,6 +746,17 @@ static void test_overlay_renders_identity(void) {
   CHECK(saw_handle);
 }
 
+/* Cmd-Shift-H routes to the sentence-highlight toggle and edits the buffer. */
+static void test_cmd_shift_h_toggles_sentence_highlight(void) {
+  tv_begin();
+  load("The cat sat. The dog ran.");
+  put_cursor(0, 4);                            /* inside the first sentence */
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_h);
+  EXPECT_LINE(0, "==The cat sat.== The dog ran.");
+  key(KMOD_GUI | KMOD_SHIFT, SDLK_h);          /* toggles back off */
+  EXPECT_LINE(0, "The cat sat. The dog ran.");
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -803,6 +805,7 @@ void suite_textview(void) {
   RUN(test_margin_note_escape_cancels);
   RUN(test_margin_note_no_room);
   RUN(test_margin_note_normal_mode_with_room);
+  RUN(test_cmd_shift_h_toggles_sentence_highlight);
   /* X publish confirmation overlay */
   RUN(test_publish_opens_overlay);
   RUN(test_publish_not_connected_no_overlay);

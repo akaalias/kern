@@ -413,6 +413,64 @@ int ed_delete_region(EditorState *ed) {
   return 1;
 }
 
+/* Content bounds [*a,*b) of the sentence around `col` on line `l`: from just
+   after the previous sentence terminator (. ! ?) to just after the next one (or
+   the line ends), with any surrounding spaces / == / ++ markers trimmed off the
+   start so `a` hugs the first word. Returns 0 if there's no sentence text. */
+static int ed_sentence_is_end(char c) { return c == '.' || c == '!' || c == '?'; }
+static int ed_sentence_content(const Line *l, int col, int *a, int *b) {
+  int len = l->len;
+  if (len == 0) return 0;
+  const char *t = l->text;
+  if (col > len) col = len;
+  int e = col;                                   /* end: next terminator, inclusive */
+  while (e < len && !ed_sentence_is_end(t[e])) e++;
+  if (e < len) e++;
+  int s = col;                                   /* start: just after the prev terminator */
+  while (s > 0 && !ed_sentence_is_end(t[s - 1])) s--;
+  while (s < e && (t[s] == ' ' || t[s] == '=' || t[s] == '+')) s++;   /* trim leading to first word */
+  /* Trim trailing spaces/markers too. For a sentence with no terminator (ends at
+     the line end) this drops the closing == so a second toggle detects and
+     removes it instead of stacking another pair; a real .!? terminator isn't a
+     marker, so it's kept. */
+  while (e > s && (t[e - 1] == ' ' || t[e - 1] == '=' || t[e - 1] == '+')) e--;
+  if (s >= e) return 0;
+  *a = s; *b = e;
+  return 1;
+}
+
+/* Cmd-Shift-H: toggle a ==highlight== around the sentence the caret is in. If
+   that sentence is already wrapped in "==", remove the markers; otherwise add
+   them. One undo group; no-op (returns 0) when the caret isn't over a sentence
+   or sits in the read-only Context section. */
+int ed_toggle_sentence_highlight(EditorState *ed) {
+  int ln = ed->cursor_line;
+  if (ed_line_locked(ed, ln)) return 0;
+  Line *l = &ed->lines[ln];
+  int a, b;
+  if (!ed_sentence_content(l, ed->cursor_col, &a, &b)) return 0;
+
+  int wrapped = a >= 2 && b + 2 <= l->len &&
+                l->text[a - 2] == '=' && l->text[a - 1] == '=' &&
+                l->text[b] == '=' && l->text[b + 1] == '=';
+
+  undo_begin_group(ed);
+  if (wrapped) {
+    /* remove the closing "==" first (higher index) so `a` stays valid */
+    ed_kill_range(ed, ln, b, ln, b + 2, 0);
+    ed_kill_range(ed, ln, a - 2, ln, a, 0);      /* leaves the caret at a-2 */
+  } else {
+    ed->cursor_line = ln; ed->cursor_col = b;
+    ed_insert_char(ed, "==");                    /* closer first */
+    ed->cursor_line = ln; ed->cursor_col = a;
+    ed_insert_char(ed, "==");                    /* opener shifts the sentence right by 2 */
+    ed->cursor_col = a + 2;                       /* keep the caret over the sentence */
+  }
+  undo_end_group(ed);
+  ed->cursor_target_col = ed->cursor_col;
+  return 1;
+}
+
 void ed_emacs_forward_word(EditorState *ed) {
   Line *l = &ed->lines[ed->cursor_line];
   while (ed->cursor_col < l->len && l->text[ed->cursor_col] != ' ') ed->cursor_col++;

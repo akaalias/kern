@@ -1,36 +1,81 @@
 #!/bin/sh
-# pre-push — gate every push on the same three checks CI runs, locally, before
-# anything reaches the remote. Any failure aborts the push.
+# pre-push — gate every push on the same checks CI runs, before anything reaches
+# the remote. Any failure aborts the push.
 #
-#   1. Headless core tests   (ASan/UBSan)
-#   2. Core line coverage    (>= 85% floor, same as CI)
+#   1. Headless core tests   (ASan/UBSan; LSan on Linux)
+#   2. Core line coverage    (>= 85% floor, from llvm-cov export JSON)
 #   3. Performance smoke      (--check budgets)
 #
-# Bypass for a single push (e.g. docs-only WIP):  git push --no-verify
-# Override the perf corpus path:                  KERN_PERF_CORPUS=/path git push
+# These run on LINUX in a Docker container that mirrors the CI runner
+# (ubuntu-latest + clang/llvm/libsdl2-dev, see .githooks/ci.Dockerfile) — so
+# Linux-only breakage (missing -lm, glibc-hidden POSIX, LeakSanitizer leaks, SDL
+# header differences) is caught HERE instead of on CI, which a macOS-only gate
+# cannot do. When the Docker daemon isn't running the checks fall back to the
+# host (macOS) with a warning; set KERN_REQUIRE_DOCKER=1 to hard-fail instead.
 #
-# Activated via:  git config core.hooksPath .githooks   (run once per clone)
+# Bypass for a single push:       git push --no-verify
+# Force Docker (no fallback):      KERN_REQUIRE_DOCKER=1 git push
+# Override host corpus path:       KERN_PERF_CORPUS=/path git push   (host fallback)
+# Rebuild the toolchain image:     docker rmi kern-ci
+# Activate once per clone:         git config core.hooksPath .githooks
 set -eu
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "==> pre-push 1/3: headless core tests"
-make -C tests --no-print-directory test
+IMAGE=kern-ci
+DOCKERFILE=.githooks/ci.Dockerfile
 
-echo "==> pre-push 2/3: core coverage (>= 85% lines)"
-# Same target CI runs (tests/Makefile coverage-check) — the floor is enforced
-# from llvm-cov's export JSON, so this mirrors CI exactly and can't drift.
-if ! make -C tests --no-print-directory coverage-check; then
-  echo "pre-push: core coverage below the floor (or build failed) — push aborted" >&2
-  exit 1
-fi
+# Run the three checks on the host (macOS) — the fallback when Docker is off.
+run_host_checks() {
+  echo "==> [host] 1/3: headless core tests"
+  make -C tests --no-print-directory test
+  echo "==> [host] 2/3: core coverage (>= 85% lines)"
+  make -C tests --no-print-directory coverage-check
+  echo "==> [host] 3/3: performance smoke"
+  corpus="${KERN_PERF_CORPUS:-$(pwd)/tests/perf_corpus.txt}"
+  if [ ! -f "$corpus" ]; then
+    echo "   generating 25MB perf corpus (one-time): $corpus"
+    python3 tools/gen_prose.py 25MB "$corpus"
+  fi
+  make -C tests --no-print-directory perf CORPUS="$corpus" PERF_ARGS=--check
+}
 
-echo "==> pre-push 3/3: performance smoke"
-corpus="${KERN_PERF_CORPUS:-$(pwd)/tests/perf_corpus.txt}"
-if [ ! -f "$corpus" ]; then
-  echo "   generating 25MB perf corpus (one-time): $corpus"
-  python3 tools/gen_prose.py 25MB "$corpus"
+# Run the three checks on Linux in the CI-parity container. Mounts a clean
+# `git archive` of the commit being pushed (HEAD) so the container never sees
+# host build artifacts (macOS binaries → "Exec format error") and never leaves
+# Linux binaries in the host tree.
+run_linux_checks() {
+  if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo "   building $IMAGE toolchain image (one-time, ~1 min)…"
+    docker build -t "$IMAGE" - < "$DOCKERFILE"
+  fi
+  tmp=$(mktemp -d /tmp/kern-ci.XXXXXX)   # /tmp: shared by Docker Desktop by default
+  trap 'rm -rf "$tmp"' EXIT
+  git archive HEAD | tar -x -C "$tmp"
+  docker run --rm -v "$tmp":/repo -w /repo/tests "$IMAGE" bash -euc '
+    echo "==> [linux] 1/3: headless core tests (ASan/UBSan/LSan)"
+    make test CC=clang SDL_CFLAGS=
+    echo "==> [linux] 2/3: core coverage (>= 85% lines)"
+    make coverage-check CC=clang SDL_CFLAGS=
+    echo "==> [linux] 3/3: performance smoke"
+    python3 ../tools/gen_prose.py 25MB /tmp/perf_corpus.txt
+    make perf CC=clang SDL_CFLAGS= CORPUS=/tmp/perf_corpus.txt PERF_ARGS=--check
+  '
+}
+
+if docker info >/dev/null 2>&1; then
+  echo "==> pre-push: running CI checks on Linux (Docker · mirrors ci.yml)"
+  run_linux_checks
+else
+  if [ "${KERN_REQUIRE_DOCKER:-0}" = "1" ]; then
+    echo "pre-push: KERN_REQUIRE_DOCKER=1 but the Docker daemon isn't running — push aborted." >&2
+    echo "          Start Docker (open -a Docker) and retry, or unset KERN_REQUIRE_DOCKER." >&2
+    exit 1
+  fi
+  echo "!! pre-push: Docker daemon not running — Linux parity SKIPPED." >&2
+  echo "   Running the checks on macOS instead; start Docker to catch Linux-only" >&2
+  echo "   breakage (e.g. a missing -lm) before it reaches CI." >&2
+  run_host_checks
 fi
-make -C tests --no-print-directory perf CORPUS="$corpus" PERF_ARGS=--check
 
 echo "==> pre-push: all checks passed"

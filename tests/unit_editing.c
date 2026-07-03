@@ -698,6 +698,64 @@ static void test_transpose_equal_chars_is_noop(void) {
   ed_teardown(&ed);
 }
 
+/* Cmd-Shift-H: wrap the caret's sentence in ==…==, and toggle it back off. */
+static void test_toggle_sentence_highlight_wraps(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "The cat sat. The dog ran.");
+  ed.cursor_col = 4;                          /* inside the first sentence */
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "==The cat sat.== The dog ran.");
+  /* toggling again (caret still in the first sentence) removes the markers */
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "The cat sat. The dog ran.");
+  ed_teardown(&ed);
+}
+
+/* Only the caret's sentence is affected, and the wrap is one undo group. */
+static void test_toggle_sentence_highlight_second_sentence_and_undo(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "One. Two.");
+  ed.cursor_col = 6;                          /* inside "Two." */
+  ed_toggle_sentence_highlight(&ed);
+  CHECK_SEQ(LINE(ed, 0), "One. ==Two.==");
+  undo_perform(&ed);                          /* a single undo reverts the whole wrap */
+  CHECK_SEQ(LINE(ed, 0), "One. Two.");
+  ed_teardown(&ed);
+}
+
+/* A wrapped sentence adjacent to plain ones toggles off only its own markers. */
+static void test_toggle_sentence_highlight_unwrap_amid_neighbors(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "==One.== Two.");
+  ed.cursor_col = 3;                          /* inside the highlighted "One." */
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "One. Two.");
+  ed_teardown(&ed);
+}
+
+/* A sentence with no terminator (ends at the line end) wraps, and toggles back
+   off cleanly — the trailing == is trimmed from the sentence bounds so the second
+   toggle removes the markers instead of stacking another pair. */
+static void test_toggle_sentence_highlight_no_terminator(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "Hello world");           /* no . ! ? */
+  ed.cursor_col = 3;
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "==Hello world==");
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 1);
+  CHECK_SEQ(LINE(ed, 0), "Hello world");   /* removed, not doubled */
+  ed_teardown(&ed);
+}
+
+/* No sentence text under the caret (empty line) → no-op. */
+static void test_toggle_sentence_highlight_empty_is_noop(void) {
+  EditorState ed = {0};
+  ed_load(&ed, "");
+  CHECK_IEQ(ed_toggle_sentence_highlight(&ed), 0);
+  CHECK_SEQ(LINE(ed, 0), "");
+  ed_teardown(&ed);
+}
+
 void suite_editing(void) {
   RUN(test_insert_into_empty);
   RUN(test_insert_midline);
@@ -737,6 +795,11 @@ void suite_editing(void) {
   RUN(test_wrap_region_multiline);
   RUN(test_wrap_region_without_mark_is_noop);
   RUN(test_wrap_region_empty_is_noop);
+  RUN(test_toggle_sentence_highlight_wraps);
+  RUN(test_toggle_sentence_highlight_second_sentence_and_undo);
+  RUN(test_toggle_sentence_highlight_unwrap_amid_neighbors);
+  RUN(test_toggle_sentence_highlight_no_terminator);
+  RUN(test_toggle_sentence_highlight_empty_is_noop);
   RUN(test_delete_at_eol_joins_next);
   RUN(test_kill_line_appends_when_consecutive);
   RUN(test_kill_line_at_eol_sets_newline);

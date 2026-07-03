@@ -2590,6 +2590,15 @@ void editor_handle_event(const SDL_Event *ev) {
             sym == SDLK_m) {
           cmd_margin_note(); break;
         }
+        /* Cmd-Shift-H: toggle ==highlight== around the caret's sentence */
+        if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
+            sym == SDLK_h) {
+          if (ed_toggle_sentence_highlight(&g_ed)) {
+            nav_ensure_cursor_visible(&g_ed, &g_vs);
+            nav_status_set(&g_vs, "Toggled sentence highlight");
+          }
+          break;
+        }
         /* Cmd-Shift-T: open (or create) today's daily note */
         if ((e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_SHIFT) &&
             sym == SDLK_t) {

@@ -57,12 +57,16 @@ static void test_bold_full_line(void) {
   CHECK_IEQ(stub_texts[8].style, FONT_REGULAR);  /* '*' */
 }
 
-/* ==highlight== paints a background rect behind each content glyph only. */
-static void test_highlight_draws_bg_per_content_glyph(void) {
+/* ==highlight== draws a yellow rule ABOVE and BELOW each content glyph (two
+   rects/glyph) instead of a full-height fill; delimiters get none. */
+static void test_highlight_draws_over_and_underline_per_content_glyph(void) {
   stub_reset();
   draw_window("==hi==", 0, 6);            /* content = h,i */
-  CHECK_IEQ(stub_rect_count, 2);
+  CHECK_IEQ(stub_rect_count, 4);          /* 2 glyphs × (overline + underline) */
   CHECK_IEQ(stub_text_count, 6);
+  /* the two rects for the first content glyph sit on different rows (over vs
+     under), not stacked as one fill */
+  CHECK(stub_rects[0].rect.y != stub_rects[1].rect.y);
 }
 
 /* ++underline++ draws a rule (one rect) under each content glyph only; the
@@ -72,6 +76,21 @@ static void test_underline_draws_rule_per_content_glyph(void) {
   draw_window("++hi++", 0, 6);            /* content = h,i */
   CHECK_IEQ(stub_rect_count, 2);          /* one underline rule per content glyph */
   CHECK_IEQ(stub_text_count, 6);
+}
+
+/* Nesting: highlight and underline both render when one is inside the other.
+   "==a++b++c==": HL content = a,+,+,b,+,+,c (7 glyphs × 2 yellow rules = 14) plus
+   the nested ++..++ underlining just 'b' (×1) → 15 rects.
+   "++a==b==c++": UL content = 7 glyphs × 1 rule = 7, plus the nested ==..==
+   highlighting 'b' (×2) → 9 rects. Different totals because a highlight draws two
+   rules per glyph and an underline one. */
+static void test_nested_highlight_and_underline(void) {
+  stub_reset();
+  draw_window("==a++b++c==", 0, 11);
+  CHECK_IEQ(stub_rect_count, 15);
+  stub_reset();
+  draw_window("++a==b==c++", 0, 11);
+  CHECK_IEQ(stub_rect_count, 9);
 }
 
 /* A wikilink renders its whole token with a background rect. */
@@ -159,15 +178,15 @@ static void test_full_opacity_keeps_alpha(void) {
   CHECK_IEQ(stub_texts[0].color.a, 255);
 }
 
-/* The dim also fades background rects — here the ==highlight== bg (a=70 → ~28). */
+/* The dim also fades the highlight rules — here the yellow lines (a=235 → 94). */
 static void test_dim_scales_bg_rect_alpha(void) {
   stub_reset();
   md_set_text_opacity(0.4f);
-  draw_window("==hi==", 0, 6);                 /* 2 highlight bg rects */
+  draw_window("==hi==", 0, 6);                 /* 2 glyphs × over+under = 4 rules */
   md_set_text_opacity(1.0f);
-  CHECK_IEQ(stub_rect_count, 2);
+  CHECK_IEQ(stub_rect_count, 4);
   for (int i = 0; i < stub_rect_count; i++)
-    CHECK_IEQ(stub_rects[i].color.a, 28);
+    CHECK_IEQ(stub_rects[i].color.a, 94);      /* 235 × 0.4 */
 }
 
 static int approx(float a, float b) { return fabsf(a - b) < 1e-4f; }
@@ -232,8 +251,9 @@ void suite_md_render(void) {
   RUN(test_bold_carries_into_tail_window);
   RUN(test_markers_use_base_style);
   RUN(test_bold_full_line);
-  RUN(test_highlight_draws_bg_per_content_glyph);
+  RUN(test_highlight_draws_over_and_underline_per_content_glyph);
   RUN(test_underline_draws_rule_per_content_glyph);
+  RUN(test_nested_highlight_and_underline);
   RUN(test_wikilink_draws_bg_for_token);
   RUN(test_col_x_is_linear);
   RUN(test_is_list_item);
