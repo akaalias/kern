@@ -61,9 +61,30 @@ static FontData fonts[FONT_COUNT];
 static int current_font = FONT_REGULAR;
 static float font_size = 16.0f;
 
-static void load_ttf(int style, const char *filename) {
+/* Load a TTF at an exact path into `style`. On failure: exit if `required`,
+   else leave the slot unloaded and return 0 (so an optional font degrades). */
+static int load_ttf_path(int style, const char *path, int required) {
   FontData *fd = &fonts[style];
+  FILE *f = fopen(path, "rb");
+  if (!f) { if (required) { fprintf(stderr, "cannot open font: %s\n", path); exit(1); } return 0; }
+  fseek(f, 0, SEEK_END);
+  long sz = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  fd->file_buf = malloc(sz);
+  if (!fd->file_buf || fread(fd->file_buf, 1, sz, f) != (size_t)sz) {
+    fclose(f); free(fd->file_buf); fd->file_buf = NULL;
+    if (required) exit(1); return 0;
+  }
+  fclose(f);
+  if (!stbtt_InitFont(&fd->info, fd->file_buf, 0)) {
+    if (required) { fprintf(stderr, "stbtt_InitFont failed for %s\n", path); exit(1); }
+    free(fd->file_buf); fd->file_buf = NULL; return 0;
+  }
+  fd->loaded = 1;
+  return 1;
+}
 
+static void load_ttf(int style, const char *filename) {
   /* Resolve the font relative to the app's base path so it works both as a
      bundled .app (base path = Contents/Resources/) and as a plain CLI binary
      (base path = the executable's directory). */
@@ -75,21 +96,7 @@ static void load_ttf(int style, const char *filename) {
   } else {
     snprintf(path, sizeof(path), "%s", filename);
   }
-
-  FILE *f = fopen(path, "rb");
-  if (!f) { fprintf(stderr, "cannot open font: %s\n", path); exit(1); }
-  fseek(f, 0, SEEK_END);
-  long sz = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  fd->file_buf = malloc(sz);
-  fread(fd->file_buf, 1, sz, f);
-  fclose(f);
-
-  if (!stbtt_InitFont(&fd->info, fd->file_buf, 0)) {
-    fprintf(stderr, "stbtt_InitFont failed for %s\n", path);
-    exit(1);
-  }
-  fd->loaded = 1;
+  load_ttf_path(style, path, 1);
 }
 
 /* Rasterize codepoint `cp` at fd->scale into the atlas at the running pen,
@@ -290,6 +297,9 @@ void r_init(void) {
   load_ttf(FONT_BOLD,    "iAWriterQuattroS-Bold.ttf");
   load_ttf(FONT_ITALIC,  "iAWriterQuattroS-Italic.ttf");
   load_ttf(FONT_MONO,    "iAWriterMonoS-Regular.ttf");
+  /* Native system font (San Francisco) for chrome like the publish overlay.
+     Optional: on older macOS / non-mac it just falls back to FONT_REGULAR. */
+  load_ttf_path(FONT_UI, "/System/Library/Fonts/SFNS.ttf", 0);
   rebuild_all_font_atlases();
 
   current_font = FONT_REGULAR;
@@ -301,6 +311,54 @@ void r_init(void) {
 void r_draw_rect(Rect rect, Color color) {
   switch_texture(white_tex);
   push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 0, 1, 1, color);
+}
+
+/* Filled rounded rectangle with anti-aliased edges. Builds a coverage mask from
+   the rounded-rect signed-distance field into a GL_ALPHA texture, then draws it
+   modulated by `color` (same path as glyphs: alpha = coverage × color.a). Small
+   overlay buttons only, so regenerating the mask per call is cheap. */
+static GLuint shape_tex;
+static unsigned char *shape_buf;
+static int shape_bufcap;
+void r_draw_round_rect(Rect dst, int radius, Color color) {
+  if (dst.w <= 0 || dst.h <= 0) return;
+  if (radius < 0) radius = 0;
+  int w = dst.w, h = dst.h;
+  int maxr = (w < h ? w : h) / 2;
+  if (radius > maxr) radius = maxr;
+
+  int n = w * h;
+  if (n > shape_bufcap) { free(shape_buf); shape_buf = malloc(n); shape_bufcap = n; }
+  if (!shape_buf) { r_draw_rect(dst, color); return; }
+
+  double hw = w / 2.0, hh = h / 2.0, r = radius;
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      double px = (x + 0.5) - hw, py = (y + 0.5) - hh;
+      double ax = fabs(px) - (hw - r), ay = fabs(py) - (hh - r);
+      double axc = ax > 0 ? ax : 0, ayc = ay > 0 ? ay : 0;
+      double outside = sqrt(axc * axc + ayc * ayc);
+      double inside = fmin(fmax(ax, ay), 0.0);
+      double sd = outside + inside - r;      /* <0 inside the shape */
+      double cov = 0.5 - sd;                  /* ~1px anti-aliased edge */
+      if (cov < 0) cov = 0; else if (cov > 1) cov = 1;
+      shape_buf[y * w + x] = (unsigned char)(cov * 255.0 + 0.5);
+    }
+  }
+
+  flush();
+  if (!shape_tex) glGenTextures(1, &shape_tex);
+  glBindTexture(GL_TEXTURE_2D, shape_tex);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, w, h, 0, GL_ALPHA, GL_UNSIGNED_BYTE, shape_buf);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  current_tex = shape_tex;
+  push_quad_uv(dst.x, dst.y, w, h, 0, 0, 1, 1, color);
+  flush();
+  switch_texture(white_tex);
 }
 
 /* Gaussian-blur whatever is already drawn under `rect`, in place and clipped to
@@ -393,6 +451,35 @@ void r_clip_mask_use(void) {
 void r_clip_mask_end(void) {
   flush();
   glDisable(GL_STENCIL_TEST);
+}
+
+/* Draw an RGBA image scaled into `dst` as an alpha-blended quad. The caller
+   bakes a smooth circular alpha into the pixels (see KernApp.decodeRGBA), so
+   the round avatar comes out anti-aliased without a 1-bit stencil clip. The
+   texture is (re)uploaded only when the pixel pointer changes, so redrawing the
+   same avatar every frame is cheap. */
+static GLuint image_tex;
+static const unsigned char *image_tex_src;
+void r_draw_image_circle(Rect dst, const unsigned char *rgba, int iw, int ih) {
+  if (!rgba || iw <= 0 || ih <= 0 || dst.w <= 0 || dst.h <= 0) return;
+  flush();
+  if (!image_tex) glGenTextures(1, &image_tex);
+  if (image_tex_src != rgba) {
+    glBindTexture(GL_TEXTURE_2D, image_tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    image_tex_src = rgba;
+  }
+
+  switch_texture(image_tex);
+  Color white = { 255, 255, 255, 255 };   /* modulate: show the image's own colors */
+  push_quad_uv(dst.x, dst.y, dst.w, dst.h, 0, 0, 1, 1, white);
+  flush();
+  switch_texture(white_tex);
 }
 
 
@@ -501,6 +588,10 @@ void r_set_font_style(int style) {
 
 int r_get_font_style(void) {
   return current_font;
+}
+
+int r_ui_font_style(void) {
+  return fonts[FONT_UI].loaded ? FONT_UI : FONT_REGULAR;
 }
 
 

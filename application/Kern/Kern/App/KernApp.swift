@@ -18,6 +18,8 @@ import SwiftUI
 import CryptoKit
 import Network
 import UserNotifications
+import ImageIO
+import CoreGraphics
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -451,14 +453,83 @@ nonisolated final class XAuth {
 
     var isConnected: Bool { tokens != nil }
     var username: String? { tokens?.username }
+    var displayName: String? { tokens?.name }
+
+    // Decoded avatar RGBA, held in stable C-owned memory so kern_x_avatar_rgba
+    // can hand the pointer straight to the GL renderer. Guarded by avatarLock.
+    private let avatarLock = NSLock()
+    private var avatarPtr: UnsafeMutablePointer<UInt8>?
+    private var avatarW = 0, avatarH = 0
 
     private init() {
         _tokens = Keychain.loadTokens()
+        loadAvatarIfNeeded()
     }
 
     /// Re-read tokens from the Keychain (for the Settings "Refresh" button).
     func reload() {
         tokens = Keychain.loadTokens()
+        loadAvatarIfNeeded()
+    }
+
+    // MARK: avatar
+
+    /// Kick off a background download+decode of the profile photo if we have a
+    /// URL but no pixels yet. Safe to call repeatedly (no-op once loaded).
+    func loadAvatarIfNeeded() {
+        avatarLock.lock(); let have = avatarPtr != nil; avatarLock.unlock()
+        guard !have, let urlStr = tokens?.avatarURL, let url = URL(string: urlStr) else { return }
+        Task.detached { [self] in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let (bytes, w, h) = Self.decodeRGBA(data) else { return }
+            avatarLock.lock()
+            free(avatarPtr)
+            let p = UnsafeMutablePointer<UInt8>.allocate(capacity: bytes.count)
+            bytes.withUnsafeBufferPointer { p.update(from: $0.baseAddress!, count: bytes.count) }
+            avatarPtr = p; avatarW = w; avatarH = h
+            avatarLock.unlock()
+        }
+    }
+
+    /// (pointer, width, height) of the decoded avatar, or nil if not loaded.
+    func avatar() -> (UnsafePointer<UInt8>, Int, Int)? {
+        avatarLock.lock(); defer { avatarLock.unlock() }
+        guard let p = avatarPtr else { return nil }
+        return (UnsafePointer(p), avatarW, avatarH)
+    }
+
+    /// Decode image bytes into tightly-packed straight-alpha RGBA (top row
+    /// first), with an anti-aliased circular alpha baked in — so the renderer
+    /// can draw it as a plain alpha-blended quad and, minified to ~48px, the
+    /// circle edge comes out smooth (no 1-bit stencil stair-stepping).
+    private static func decodeRGBA(_ data: Data) -> (bytes: [UInt8], w: Int, h: Int)? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+        let w = img.width, h = img.height
+        guard w > 0, h > 0 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let cs = CGColorSpaceCreateDeviceRGB()
+        // noneSkipLast: opaque RGB, alpha byte unused — we fill alpha ourselves.
+        let info = CGImageAlphaInfo.noneSkipLast.rawValue
+        let ok = bytes.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h,
+                                      bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: cs, bitmapInfo: info) else { return false }
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return nil }
+        // Circular coverage mask with a 1px anti-aliased edge band.
+        let cx = Double(w) / 2, cy = Double(h) / 2
+        let r = Double(min(w, h)) / 2
+        for y in 0..<h {
+            for x in 0..<w {
+                let dx = Double(x) + 0.5 - cx, dy = Double(y) + 0.5 - cy
+                let cov = max(0.0, min(1.0, r - (dx * dx + dy * dy).squareRoot() + 0.5))
+                bytes[(y * w + x) * 4 + 3] = UInt8(cov * 255.0)
+            }
+        }
+        return (bytes, w, h)
     }
 
     // MARK: connect / disconnect
@@ -515,8 +586,11 @@ nonisolated final class XAuth {
 
         reportXStatus("Finishing X sign-in…")
         var fresh = try await exchangeCode(code, verifier: verifier)
-        fresh.username = try? await fetchUsername(accessToken: fresh.accessToken)
+        if let p = try? await fetchProfile(accessToken: fresh.accessToken) {
+            fresh.username = p.username; fresh.name = p.name; fresh.avatarURL = p.avatarURL
+        }
         store(fresh)
+        loadAvatarIfNeeded()
         reportXStatus("Connected to X as @\(fresh.username ?? "account") \u{2713}")
     }
 
@@ -528,7 +602,9 @@ nonisolated final class XAuth {
     // MARK: posting
 
     /// Post `text` as a tweet, refreshing the access token first if needed.
-    func post(text: String) async throws {
+    /// Returns the public URL of the created tweet.
+    @discardableResult
+    func post(text: String) async throws -> String {
         let token = try await validAccessToken()
         var req = URLRequest(url: URL(string: tweetsURL)!)
         req.httpMethod = "POST"
@@ -541,6 +617,10 @@ nonisolated final class XAuth {
         guard http?.statusCode == 201 else {
             throw XError(Self.apiMessage(data) ?? "post failed (HTTP \(http?.statusCode ?? -1))")
         }
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let id = (obj?["data"] as? [String: Any])?["id"] as? String ?? ""
+        let user = tokens?.username ?? "i"
+        return "https://x.com/\(user)/status/\(id)"
     }
 
     // MARK: token plumbing
@@ -569,7 +649,10 @@ nonisolated final class XAuth {
             "grant_type": "refresh_token",
             "client_id": clientID,
         ])
-        fresh.username = tokens?.username   // token response omits it; carry it forward
+        // The token response omits profile fields; carry them forward.
+        fresh.username = tokens?.username
+        fresh.name = tokens?.name
+        fresh.avatarURL = tokens?.avatarURL
         store(fresh)
         return fresh.accessToken
     }
@@ -598,12 +681,20 @@ nonisolated final class XAuth {
                        username: nil)
     }
 
-    private func fetchUsername(accessToken: String) async throws -> String? {
-        var req = URLRequest(url: URL(string: meURL)!)
+    /// Fetch the connected account's handle, display name, and avatar URL from
+    /// /2/users/me (the avatar is upscaled from X's default _normal 48px variant).
+    private func fetchProfile(accessToken: String) async throws
+        -> (username: String?, name: String?, avatarURL: String?) {
+        var comps = URLComponents(string: meURL)!
+        comps.queryItems = [.init(name: "user.fields", value: "name,profile_image_url")]
+        var req = URLRequest(url: comps.url!)
         req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         let (data, _) = try await URLSession.shared.data(for: req)
         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (obj?["data"] as? [String: Any])?["username"] as? String
+        let d = obj?["data"] as? [String: Any]
+        var avatar = d?["profile_image_url"] as? String
+        avatar = avatar?.replacingOccurrences(of: "_normal.", with: "_400x400.")
+        return (d?["username"] as? String, d?["name"] as? String, avatar)
     }
 
     private func store(_ t: XTokens) {
@@ -654,6 +745,8 @@ struct XTokens: Codable {
     var refreshToken: String
     var expiresAt: Date
     var username: String?
+    var name: String?        // display name ("Alexis Rondeau")
+    var avatarURL: String?   // profile_image_url (upscaled to _400x400)
 }
 
 struct XError: LocalizedError {
@@ -798,12 +891,55 @@ public func kern_x_publish(_ ctext: UnsafePointer<CChar>?) {
     let text = String(cString: ctext)
     Task.detached {
         do {
-            try await XAuth.shared.post(text: text)
-            reportXStatus("Posted to X \u{2713}")
+            let url = try await XAuth.shared.post(text: text)
+            // The confirmation overlay applies this on the main-thread tick:
+            // closes, reports success, copies the URL to the clipboard.
+            url.withCString { kern_x_publish_done(1, $0) }
             notifyX("Posted to X \u{2713}", "Your note is live on X.")
         } catch {
-            reportXStatus("X: \(error.localizedDescription)")
+            let msg = "X: \(error.localizedDescription)"
+            msg.withCString { kern_x_publish_done(0, $0) }
             notifyX("X publish failed", error.localizedDescription)
         }
     }
+}
+
+/// Caches a C string so the pointer stays valid across the per-frame calls the
+/// preview overlay makes (rebuilt only when the string changes).
+private final class CStringCache {
+    private let lock = NSLock()
+    private var ptr: UnsafeMutablePointer<CChar>?
+    private var last: String?
+    func get(_ s: String) -> UnsafePointer<CChar>? {
+        lock.lock(); defer { lock.unlock() }
+        if last != s || ptr == nil { free(ptr); ptr = strdup(s); last = s }
+        return UnsafePointer(ptr)
+    }
+}
+private let xNameCache = CStringCache()
+private let xHandleCache = CStringCache()
+
+/// The connected account's display name ("" if unknown). Read every frame by
+/// the tweet-preview overlay.
+@_cdecl("kern_x_display_name")
+public func kern_x_display_name() -> UnsafePointer<CChar>? {
+    xNameCache.get(XAuth.shared.displayName ?? "")
+}
+
+/// The connected account's @handle, without the leading '@' ("" if unknown).
+@_cdecl("kern_x_handle")
+public func kern_x_handle() -> UnsafePointer<CChar>? {
+    xHandleCache.get(XAuth.shared.username ?? "")
+}
+
+/// Tightly-packed RGBA pixels of the profile photo (top row first), or NULL if
+/// it hasn't downloaded yet — the overlay then draws an initials disc.
+@_cdecl("kern_x_avatar_rgba")
+public func kern_x_avatar_rgba(_ w: UnsafeMutablePointer<Int32>?,
+                               _ h: UnsafeMutablePointer<Int32>?) -> UnsafePointer<UInt8>? {
+    guard let (p, aw, ah) = XAuth.shared.avatar() else {
+        w?.pointee = 0; h?.pointee = 0; return nil
+    }
+    w?.pointee = Int32(aw); h?.pointee = Int32(ah)
+    return p
 }

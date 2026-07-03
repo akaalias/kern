@@ -12,6 +12,7 @@
 #include "editor_types.h"
 #include "buffer.h"
 #include "clock_fake.h"
+#include "clipboard.h"
 #include "pos_render.h"
 #include "style_check.h"
 #include "renderer.h"
@@ -21,6 +22,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/* textview.c bridges the app normally reaches from AppKit / Swift. */
+void kern_publish_to_x(void);                     /* title-bar Publish button */
+void kern_x_publish_done(int ok, const char *info);  /* async publish result */
 
 static EditorState *ED;
 static ViewState   *VS;
@@ -615,6 +620,141 @@ static void test_margin_note_normal_mode_with_room(void) {
   stub_set_metrics(10, 20, 800, 600);    /* restore the default window */
 }
 
+/* ---- X publish confirmation overlay (kern_publish_to_x -> preview -> confirm) ---- */
+
+/* Helper: a left mouse click at (x, y). */
+static void click(int x, int y) {
+  SDL_Event e; memset(&e, 0, sizeof e);
+  e.type = SDL_MOUSEBUTTONDOWN;
+  e.button.button = SDL_BUTTON_LEFT;
+  e.button.x = x; e.button.y = y;
+  editor_handle_event(&e);
+}
+
+/* Clicking Publish while connected opens the confirmation overlay with the note
+   snapshotted for preview — it does NOT post yet. */
+static void test_publish_opens_overlay(void) {
+  tv_begin();
+  load("Hello X world");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();                         /* the title-bar button */
+  CHECK_IEQ(tv_test_pub_state(), 1);           /* confirming */
+  CHECK_SEQ(tv_test_pub_text(), "Hello X world");
+  CHECK(kern_test_x_last_publish() == NULL);   /* nothing posted yet */
+}
+
+/* With no account linked, Publish just reports and never opens the overlay. */
+static void test_publish_not_connected_no_overlay(void) {
+  tv_begin();
+  load("Hello");
+  kern_test_set_x_connected(0);
+  kern_publish_to_x();
+  CHECK_IEQ(tv_test_pub_state(), 0);
+  CHECK(kern_test_x_last_publish() == NULL);
+}
+
+/* With a region marked, the overlay previews (and later posts) only the region. */
+static void test_publish_overlay_uses_region(void) {
+  tv_begin();
+  load("keep DROP");
+  kern_test_set_x_connected(1);
+  put_cursor(0, 0);
+  ED->mark_active = 1; ED->mark_line = 0; ED->mark_col = 4;   /* select "keep" */
+  ED->cursor_col = 0;
+  kern_publish_to_x();
+  CHECK_IEQ(tv_test_pub_state(), 1);
+  CHECK_SEQ(tv_test_pub_text(), "keep");
+}
+
+/* Enter (or the Confirm button) posts the snapshotted text and enters "sending". */
+static void test_overlay_confirm_publishes(void) {
+  tv_begin();
+  load("ship it");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);                         /* confirm */
+  CHECK_IEQ(tv_test_pub_state(), 2);           /* sending */
+  CHECK(kern_test_x_last_publish() != NULL);
+  CHECK_SEQ(kern_test_x_last_publish(), "ship it");
+}
+
+/* Esc (or Cancel) closes the overlay without posting. */
+static void test_overlay_cancel_closes(void) {
+  tv_begin();
+  load("nope");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_ESCAPE);
+  CHECK_IEQ(tv_test_pub_state(), 0);
+  CHECK(kern_test_x_last_publish() == NULL);
+}
+
+/* A successful async result copies the tweet URL to the clipboard, reports
+   success, and closes the overlay (consumed on the main-thread tick). */
+static void test_publish_success_copies_url_and_closes(void) {
+  tv_begin();
+  load("done");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  kern_x_publish_done(1, "https://x.com/testuser/status/42");
+  editor_tick();                               /* main thread consumes the result */
+  CHECK_IEQ(tv_test_pub_state(), 0);
+  char *clip = kern_clipboard_get();
+  CHECK_SEQ(clip, "https://x.com/testuser/status/42");
+  kern_clipboard_free(clip);
+  CHECK(strstr(VS->status_msg, "Posted") != NULL);
+}
+
+/* A failed result reports the error and returns the overlay to the confirm
+   state (so the user can retry or cancel) — clipboard untouched. */
+static void test_publish_failure_keeps_overlay(void) {
+  tv_begin();
+  load("oops");
+  kern_test_set_x_connected(1);
+  kern_clipboard_set("PRESERVE");
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  kern_x_publish_done(0, "rate limit exceeded");
+  editor_tick();
+  CHECK_IEQ(tv_test_pub_state(), 1);           /* back to confirming */
+  char *clip = kern_clipboard_get();
+  CHECK_SEQ(clip, "PRESERVE");                  /* not overwritten */
+  kern_clipboard_free(clip);
+  CHECK(strstr(VS->status_msg, "rate limit") != NULL);
+}
+
+/* The overlay swallows ordinary keystrokes — typing while it's open must not
+   reach the buffer. */
+static void test_overlay_swallows_typing(void) {
+  tv_begin();
+  load("body");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  type("XYZ");
+  EXPECT_LINE(0, "body");                        /* buffer untouched */
+}
+
+/* The preview renders the account's display name and @handle. */
+static void test_overlay_renders_identity(void) {
+  tv_begin();
+  load("hi");
+  kern_test_set_x_connected(1);
+  kern_test_set_x_identity("Alexis Rondeau", "SpringStreetNYC");
+  kern_publish_to_x();
+  stub_reset();
+  editor_tick();                                 /* draws the overlay */
+  /* the stub captures only the first 7 bytes of each draw call, so match on
+     truncation-safe prefixes ("Alexis ", "@Spring"). */
+  int saw_name = 0, saw_handle = 0;
+  for (int i = 0; i < stub_text_count; i++) {
+    if (strstr(stub_texts[i].ch, "Alexis")) saw_name = 1;
+    if (strstr(stub_texts[i].ch, "Spring")) saw_handle = 1;
+  }
+  CHECK(saw_name);
+  CHECK(saw_handle);
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -663,6 +803,16 @@ void suite_textview(void) {
   RUN(test_margin_note_escape_cancels);
   RUN(test_margin_note_no_room);
   RUN(test_margin_note_normal_mode_with_room);
+  /* X publish confirmation overlay */
+  RUN(test_publish_opens_overlay);
+  RUN(test_publish_not_connected_no_overlay);
+  RUN(test_publish_overlay_uses_region);
+  RUN(test_overlay_confirm_publishes);
+  RUN(test_overlay_cancel_closes);
+  RUN(test_publish_success_copies_url_and_closes);
+  RUN(test_publish_failure_keeps_overlay);
+  RUN(test_overlay_swallows_typing);
+  RUN(test_overlay_renders_identity);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

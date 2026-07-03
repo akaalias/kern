@@ -38,6 +38,14 @@ static ViewState   g_vs = {0};
 extern void kern_x_publish(const char *text);   /* Swift @_cdecl: async post */
 extern int  kern_x_is_connected(void);          /* Swift @_cdecl: 1 if linked */
 
+/* Account identity for the tweet-preview overlay, fetched from /2/users/me at
+   connect time (Swift @_cdecl). display_name/handle never NULL (empty if
+   unknown); avatar_rgba returns tightly-packed RGBA pixels or NULL if the photo
+   hasn't downloaded yet (the overlay then draws an initials disc). */
+extern const char         *kern_x_display_name(void);
+extern const char         *kern_x_handle(void);
+extern const unsigned char *kern_x_avatar_rgba(int *w, int *h);
+
 /* show/hide the title-bar "Publish to X" button (macos_style.m) */
 extern void kern_titlebar_set_x_connected(int connected);
 
@@ -657,27 +665,91 @@ static char *buffer_dup_all(EditorState *ed, int *len_out) {
   return out;
 }
 
-/* Publish the current note to X (triggered by the title-bar button). If a region
-   is marked, only that is posted; otherwise the whole note goes. The text is
-   handed to the Swift layer, which owns OAuth, the HTTP call, and reporting back
-   via kern_x_set_status(). */
+/* ---- X publish confirmation overlay ----------------------------------------
+   Clicking the title-bar "Publish" button doesn't post immediately: it opens a
+   confirmation overlay (drawn in do_render, part of the main loop — not a macOS
+   sheet) that previews the note as it would look on X. Confirm posts; the async
+   result lands in kern_x_publish_done() and is consumed on the next tick. */
+enum { PUB_NONE = 0, PUB_CONFIRM = 1, PUB_SENDING = 2 };
+static int  pub_state;              /* PUB_* */
+static char pub_text[8192];         /* the snapshotted note/region being previewed */
+
+/* Async result handed back from the Swift publisher (possibly off the main
+   thread). We only stash it here; editor_tick() (main thread) applies it — that
+   keeps the clipboard write + status update off any background thread. */
+static int  pub_result;             /* 0 none, 1 ok, 2 fail */
+static char pub_result_info[1024];  /* ok: tweet URL; fail: error message */
+
+/* Publish the current note to X (title-bar button). If a region is marked, only
+   that is previewed/posted; otherwise the whole note. Opens the confirmation
+   overlay — the actual POST happens on confirm (pub_confirm). */
 static void cmd_publish_to_x(void) {
   if (!kern_x_is_connected()) {
     nav_status_set(&g_vs, "Connect your X account first (Settings \xE2\x80\xBA X)");
     return;
   }
-
   int len = 0;
   char *text = g_ed.mark_active ? ed_region_dup(&g_ed, &len)
                                 : buffer_dup_all(&g_ed, &len);
   if (!text || len == 0) { free(text); nav_status_set(&g_vs, "Nothing to publish"); return; }
 
-  nav_status_set(&g_vs, "Publishing to X\xE2\x80\xA6");
-  kern_x_publish(text);   /* async; the result arrives via kern_x_set_status */
+  snprintf(pub_text, sizeof(pub_text), "%s", text);
   free(text);
+  pub_state = PUB_CONFIRM;
+  pub_result = 0;
+  SDL_StartTextInput();   /* not really needed, but keeps input state sane */
 }
 
-/* Called from the title-bar "Publish to X" button (macos_style.m, main thread). */
+/* Confirm the overlay: hand the snapshotted text to the async Swift publisher
+   and switch to the "sending" state (the result arrives via
+   kern_x_publish_done). */
+static void pub_confirm(void) {
+  if (pub_state != PUB_CONFIRM) return;
+  pub_state = PUB_SENDING;
+  nav_status_set(&g_vs, "Publishing to X\xE2\x80\xA6");
+  kern_x_publish(pub_text);
+}
+
+static void pub_cancel(void) {
+  pub_state = PUB_NONE;
+  nav_status_set(&g_vs, "Publish cancelled");
+}
+
+/* Modal key handling while the overlay is open; consumes every key so nothing
+   reaches the buffer. Enter confirms, Esc cancels. */
+static int handle_publish_key(int sym) {
+  if (sym == SDLK_ESCAPE) { pub_cancel(); return 1; }
+  if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) { pub_confirm(); return 1; }
+  return 1;   /* swallow everything else while modal */
+}
+
+/* Called from the Swift publisher when the POST completes (ok=1 with the tweet
+   URL in `info`, or ok=0 with an error message). Stashed here; applied on the
+   next editor_tick() so the clipboard/status touch happens on the main thread. */
+void kern_x_publish_done(int ok, const char *info) {
+  pub_result = ok ? 1 : 2;
+  snprintf(pub_result_info, sizeof(pub_result_info), "%s", info ? info : "");
+}
+
+/* Main-thread application of a pending publish result (from editor_tick). */
+static void pub_apply_result(void) {
+  if (pub_result == 0) return;
+  if (pub_result == 1) {                    /* success */
+    if (pub_result_info[0]) {
+      kern_clipboard_set(pub_result_info);
+      nav_status_set(&g_vs, "Posted to X \xE2\x9C\x93 \xE2\x80\x94 link copied to clipboard");
+    } else {
+      nav_status_set(&g_vs, "Posted to X \xE2\x9C\x93");
+    }
+    pub_state = PUB_NONE;
+  } else {                                  /* failure */
+    nav_status_set(&g_vs, pub_result_info[0] ? pub_result_info : "X publish failed");
+    if (pub_state == PUB_SENDING) pub_state = PUB_CONFIRM;   /* let the user retry */
+  }
+  pub_result = 0;
+}
+
+/* Called from the title-bar "Publish" button (macos_style.m, main thread). */
 void kern_publish_to_x(void) { cmd_publish_to_x(); }
 
 /* word wrapping, cursor navigation, editing, and markdown rendering
@@ -1949,6 +2021,224 @@ static void draw_status_bar(void) {
   r_set_font_size(g_vs.font_size);
 }
 
+/* ---- X publish confirmation overlay (drawn in do_render) ------------------ */
+
+typedef struct {
+  Rect card;                       /* the whole preview card */
+  int  av_x, av_y, av_d;           /* avatar disc: top-left + diameter */
+  int  name_x, name_y;             /* display-name / @handle baseline row */
+  Rect body;                       /* the (clipped) tweet-text region */
+  Rect confirm, cancel;            /* the two action buttons */
+} PubLayout;
+
+/* Split `text` into paragraphs on '\n' and lay them out with draw_wrapped,
+   returning the total pixel height. With draw=1 it also renders (clipped by the
+   caller). Empty lines advance by a paragraph gap. */
+static int pub_body_layout(const char *text, int x, int y, int maxw, int fh,
+                           Color c, int draw) {
+  int py = y;
+  const char *p = text;
+  char para[1024];
+  for (;;) {
+    const char *nl = strchr(p, '\n');
+    int len = nl ? (int)(nl - p) : (int)strlen(p);
+    if (len > (int)sizeof(para) - 1) len = (int)sizeof(para) - 1;
+    memcpy(para, p, len); para[len] = '\0';
+    if (len == 0) {
+      py += fh;                              /* blank line = paragraph gap */
+    } else {
+      int end_y = py;
+      draw_wrapped(para, x, py, maxw, fh, c, &end_y, draw);
+      py = end_y + fh;
+    }
+    if (!nl) break;
+    p = nl + 1;
+  }
+  return py - y;
+}
+
+/* Compute the overlay geometry. Deterministic from the window size + the body
+   text, so the draw pass and the mouse hit-test agree on every rect. Measures
+   in FONT_REGULAR at the active body size (never changes font size — that would
+   rebuild the atlases every frame). */
+static void pub_layout(PubLayout *L) {
+  int ww = nav_win_w(), wh = nav_win_h();
+  int fh = r_get_text_height();
+  const int P = 22, GAP = 16, BTN_H = 32, BTN_W = 120, BTN_GAP = 12;
+  const int BODY_MAX = 400;
+
+  int av_d = 48, av_gap = 12;
+
+  int card_w = 560;
+  if (card_w > ww - 80) card_w = ww - 80;
+  if (card_w < 300)     card_w = 300;
+
+  /* Twitter layout: the avatar is its own left column; the header row AND the
+     body share the content column to its right (the text never flows under the
+     avatar). */
+  int content_x = P + av_d + av_gap;              /* relative to card left */
+  int content_w = card_w - P - content_x;
+  int name_h = fh, name_gap = 8;
+
+  int saved = r_get_font_style();
+  r_set_font_style(r_ui_font_style());
+  int body_h = pub_text[0] ? pub_body_layout(pub_text, 0, 0, content_w, fh,
+                                             color(0,0,0,0), 0) : fh;
+  r_set_font_style(saved);
+  if (body_h > BODY_MAX) body_h = BODY_MAX;
+
+  int col_h = name_h + name_gap + body_h;         /* right-column height */
+  int content_h = col_h > av_d ? col_h : av_d;    /* card must fit the avatar too */
+  int card_h = P + content_h + GAP + BTN_H + P;
+
+  int card_x = (ww - card_w) / 2;
+  int card_y = (wh - card_h) / 2;
+  if (card_y < 72) card_y = 72;             /* clear the title bar */
+
+  L->card = rect(card_x, card_y, card_w, card_h);
+  L->av_d = av_d;
+  L->av_x = card_x + P;
+  L->av_y = card_y + P;
+  L->name_x = card_x + content_x;
+  L->name_y = card_y + P;                          /* header top-aligned with the avatar */
+  L->body = rect(card_x + content_x, card_y + P + name_h + name_gap, content_w, body_h);
+
+  int btn_y = card_y + card_h - P - BTN_H;
+  L->confirm = rect(card_x + card_w - P - BTN_W, btn_y, BTN_W, BTN_H);
+  L->cancel  = rect(card_x + card_w - P - BTN_W - BTN_GAP - BTN_W, btn_y, BTN_W, BTN_H);
+}
+
+static int pt_in_rect(int x, int y, Rect r) {
+  return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+}
+
+/* Fill a circle centered at (cx,cy) via horizontal scanlines (one r_draw_rect
+   per row). Used for the avatar disc / photo clip. */
+static void draw_filled_circle(int cx, int cy, int rad, Color c) {
+  for (int dy = -rad; dy <= rad; dy++) {
+    int dx = (int)(sqrt((double)(rad * rad - dy * dy)) + 0.5);
+    r_draw_rect(rect(cx - dx, cy + dy, 2 * dx, 1), c);
+  }
+}
+
+/* First letters of up to the first two words of `name`, uppercased — the
+   avatar fallback when no photo is loaded. */
+static void pub_initials(const char *name, char out[3]) {
+  int n = 0;
+  const char *p = name;
+  while (*p && n < 2) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+    char c = *p;
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    out[n++] = c;
+    while (*p && *p != ' ') p++;
+  }
+  out[n] = '\0';
+}
+
+/* Faux-bold: the system UI font (SF) loads as a single regular weight via
+   stb_truetype, so we thicken by over-drawing with a 1px horizontal offset. */
+static void draw_ui_bold(const char *s, int x, int y, Color c) {
+  r_draw_text(s, vec2(x, y), c);
+  r_draw_text(s, vec2(x + 1, y), c);
+}
+
+/* Draw the tweet-preview confirmation overlay: a dimmed/blurred backdrop, a
+   card with the avatar + display name + @handle + the note (clipped to 400px),
+   and Confirm / Cancel buttons. Chrome text uses the native system font. */
+static void draw_publish_overlay(void) {
+  if (pub_state == PUB_NONE) return;
+  int ww = nav_win_w(), wh = nav_win_h();
+  int fh = r_get_text_height();
+  int uif = r_ui_font_style();   /* native SF (or FONT_REGULAR fallback) */
+
+  /* backdrop: blur + darken the whole editor behind the card */
+  r_blur_rect(rect(0, 0, ww, wh), 6);
+  r_draw_rect(rect(0, 0, ww, wh), color(0, 0, 0, 150));
+
+  PubLayout L; pub_layout(&L);
+
+  /* card (X dark theme: near-black with a hairline border on all four sides) */
+  r_draw_rect(L.card, color(22, 24, 28, 255));
+  Color hair = color(60, 63, 70, 255);
+  r_draw_rect(rect(L.card.x, L.card.y, L.card.w, 1), hair);                    /* top */
+  r_draw_rect(rect(L.card.x, L.card.y + L.card.h - 1, L.card.w, 1), hair);     /* bottom */
+  r_draw_rect(rect(L.card.x, L.card.y, 1, L.card.h), hair);                    /* left */
+  r_draw_rect(rect(L.card.x + L.card.w - 1, L.card.y, 1, L.card.h), hair);     /* right */
+
+  /* avatar: real photo (clipped to a circle) if downloaded, else initials disc */
+  int cx = L.av_x + L.av_d / 2, cy = L.av_y + L.av_d / 2, rad = L.av_d / 2;
+  int aw = 0, ah = 0;
+  const unsigned char *rgba = kern_x_avatar_rgba(&aw, &ah);
+  if (rgba && aw > 0 && ah > 0) {
+    r_draw_image_circle(rect(L.av_x, L.av_y, L.av_d, L.av_d), rgba, aw, ah);
+  } else {
+    draw_filled_circle(cx, cy, rad, color(64, 120, 180, 255));
+    const char *dn = kern_x_display_name(); if (!dn) dn = "";
+    char ini[3]; pub_initials(dn, ini);
+    if (ini[0]) {
+      r_set_font_style(uif);
+      int iw = r_get_text_width(ini, strlen(ini));
+      draw_ui_bold(ini, cx - iw / 2, cy - fh / 2, color(255, 255, 255, 255));
+    }
+  }
+
+  /* one identity row: display name (bold) then "@handle · <date>" (dim), just
+     like X — the middot separates the handle from the post date. All chrome
+     text draws in the native system font. */
+  const char *name = kern_x_display_name(); if (!name) name = "";
+  const char *handle = kern_x_handle(); if (!handle) handle = "";
+  char meta[160];
+  {
+    time_t t = time(NULL); struct tm lt; localtime_r(&t, &lt);
+    char mon[8]; strftime(mon, sizeof mon, "%b", &lt);
+    snprintf(meta, sizeof meta, "@%s \xC2\xB7 %s %d", handle, mon, lt.tm_mday);
+  }
+  int saved = r_get_font_style();
+  r_set_font_style(uif);
+  draw_ui_bold(name, L.name_x, L.name_y, color(231, 233, 234, 255));
+  int nw = r_get_text_width(name, strlen(name)) + 1;   /* +1 for the faux-bold overdraw */
+  r_draw_text(meta, vec2(L.name_x + nw + 10, L.name_y), color(113, 118, 123, 255));
+
+  /* body: the note, wrapped, clipped to the (max 400px) body region */
+  r_set_clip_rect(L.body);
+  pub_body_layout(pub_text, L.body.x, L.body.y, L.body.w, fh,
+                  color(231, 233, 234, 255), 1);
+  r_set_clip_rect(rect(0, 0, ww, wh));
+
+  /* buttons: native macOS look — rounded pills, regular-weight labels. Cancel is
+     a gray push button (matching the title-bar Publish button); Confirm is the
+     accent-blue default button. While sending it reads "Posting…" and dims. */
+  int sending = (pub_state == PUB_SENDING);
+  const int RAD = 6;
+  /* Cancel */
+  r_draw_round_rect(L.cancel, RAD, color(94, 96, 102, 255));
+  const char *cl = "Cancel";
+  int clw = r_get_text_width(cl, strlen(cl));
+  r_draw_text(cl, vec2(L.cancel.x + (L.cancel.w - clw) / 2, L.cancel.y + (L.cancel.h - fh) / 2),
+              color(240, 240, 242, 255));
+  /* Confirm (default button) */
+  Color accent = sending ? color(40, 74, 120, 255) : color(0, 122, 255, 255);   /* macOS blue */
+  r_draw_round_rect(L.confirm, RAD, accent);
+  const char *cf = sending ? "Posting\xE2\x80\xA6" : "Confirm";
+  int cfw = r_get_text_width(cf, strlen(cf));
+  r_draw_text(cf, vec2(L.confirm.x + (L.confirm.w - cfw) / 2, L.confirm.y + (L.confirm.h - fh) / 2),
+              color(255, 255, 255, 255));
+  r_set_font_style(saved);
+}
+
+/* Mouse hit-test for the overlay buttons (called from the mouse handler when
+   the overlay is open). Returns 1 if the click was consumed. */
+static int pub_handle_click(int mx, int my) {
+  if (pub_state == PUB_NONE) return 0;
+  PubLayout L; pub_layout(&L);
+  if (pt_in_rect(mx, my, L.cancel))  { pub_cancel();  return 1; }
+  if (pt_in_rect(mx, my, L.confirm)) { pub_confirm(); return 1; }
+  /* clicks anywhere else (incl. the dimmed backdrop) are swallowed while modal */
+  return 1;
+}
+
 static void do_render(void) {
   r_clear(color(30, 30, 32, 255));
   /* Set substitution BEFORE process_frame: it draws the selection/search
@@ -2069,6 +2359,8 @@ static void do_render(void) {
 
   draw_status_bar();
 
+  draw_publish_overlay();   /* the X-publish confirmation, on top of everything */
+
   r_present();
 }
 
@@ -2170,6 +2462,7 @@ void editor_handle_event(const SDL_Event *ev) {
     case SDL_TEXTINPUT:
       if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
       if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
+      if (pub_state != PUB_NONE) break;      /* overlay swallows typing */
       if (mn_active) {                       /* typing a margin note */
         int tlen = strlen(e.text.text);
         if (mn_len + tlen < (int)sizeof(mn_text) - 1) {
@@ -2237,6 +2530,9 @@ void editor_handle_event(const SDL_Event *ev) {
       if (b && e.type == SDL_MOUSEBUTTONDOWN) {
         g_mouse_x = e.button.x; g_mouse_y = e.button.y;
         g_mouse_down |= b; g_mouse_pressed |= b;
+        /* the publish overlay is modal: it consumes left clicks (buttons + the
+           dimmed backdrop) before they can reach the text under it */
+        if (b == MOUSE_LEFT && pub_handle_click(e.button.x, e.button.y)) break;
         if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < nav_win_w() - 12) {
           nav_click_to_cursor(&g_ed, &g_vs, e.button.x, e.button.y);
         }
@@ -2260,6 +2556,7 @@ void editor_handle_event(const SDL_Event *ev) {
         int sym = e.key.keysym.sym;
 
         /* 1. Modal handlers (consume and break) */
+        if (pub_state != PUB_NONE && handle_publish_key(sym)) break;
         if (mn_active && handle_marginnote_key(sym)) break;
         if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
         if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
@@ -2542,6 +2839,8 @@ void editor_tick(void) {
     if (c != g_last_x_conn) { g_last_x_conn = c; kern_titlebar_set_x_connected(c); }
   }
 
+  pub_apply_result();   /* apply a pending X-publish result on the main thread */
+
   do_render();
 }
 
@@ -2764,7 +3063,12 @@ void tv_test_reset(void) {
   g_last_autosave = 0;
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
+  pub_state = PUB_NONE; pub_result = 0; pub_text[0] = '\0'; pub_result_info[0] = '\0';
 }
+
+/* Test accessors for the X-publish confirmation overlay. */
+int         tv_test_pub_state(void) { return pub_state; }
+const char *tv_test_pub_text(void)  { return pub_text; }
 
 /* Test accessor: the recorded predecessor basenames for `path` (raw, unfiltered
    by on-disk existence — that filtering lives in the app-only opened_after_list). */

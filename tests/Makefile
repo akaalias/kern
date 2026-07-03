@@ -75,6 +75,9 @@ test: $(BIN)
 # clang source-based coverage of the testable core (requires clang + llvm-cov).
 # Reports line/function/region/branch coverage for COVCORE only.
 COV_BIN := kern_cov
+# Gated core line-coverage floor (percent). CI and the pre-push hook both enforce
+# it via `coverage-check` so they can never drift.
+COV_FLOOR := 85
 .PHONY: coverage
 coverage:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
@@ -83,6 +86,22 @@ coverage:
 	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
 	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
 	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
+
+# Gated coverage: print the report table AND enforce the line floor from the
+# llvm-cov *export* JSON (data[0].totals.lines.percent), which is stable across
+# platforms/llvm versions — unlike the report table's columns. THE single source
+# of truth for the floor: ci.yml and .githooks/pre-push both just run this.
+.PHONY: coverage-check
+coverage-check:
+	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
+	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
+	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
+	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
+	$(XCRUN) llvm-cov export -summary-only ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE) > $(COV_BIN).json
+	@python3 cov_floor.py $(COV_BIN).json $(COV_FLOOR); rc=$$?; \
+	  rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata $(COV_BIN).json; \
+	  exit $$rc
 
 # Non-gated: coverage of textview.c's event/dispatch layer (unit_textview.c).
 # The uncovered remainder is the do_render/process_frame GL chrome + the
@@ -120,4 +139,4 @@ perf: $(PERF_BIN)
 
 clean:
 	rm -rf $(BIN) $(BIN).dSYM $(PERF_BIN) $(PERF_BIN).dSYM \
-	       $(COV_BIN) $(COV_BIN).dSYM *.profraw *.profdata
+	       $(COV_BIN) $(COV_BIN).dSYM *.profraw *.profdata $(COV_BIN).json

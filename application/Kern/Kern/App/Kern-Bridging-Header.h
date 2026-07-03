@@ -14,6 +14,12 @@ void editor_set_documents_dir(const char *path);
    possibly off the main thread. */
 void kern_x_set_status(const char *msg);
 
+/* Deliver the async publish result to the confirmation overlay. ok=1 with the
+   tweet URL in `info` (copied to the clipboard); ok=0 with an error message.
+   Implemented in textview.c; called from the Swift publisher (any thread) and
+   applied on the next editor tick. */
+void kern_x_publish_done(int ok, const char *info);
+
 /* Open the documents folder in Finder. Implemented in Platform/macos_style.m;
    invoked from the Window menu item (runs on the main thread during tracking). */
 void kern_open_documents_folder(void);

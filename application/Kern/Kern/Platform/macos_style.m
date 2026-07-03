@@ -155,21 +155,27 @@ void macos_style_window(SDL_Window *sdl_window) {
                                        @"Publish this note to X",
                                        @selector(publishToX:),
                                        NSZeroRect);
+  /* An actual labelled button: icon + "Publish", a rounded pill in the title
+     bar (was an icon-only glyph). */
+  g_publish_btn.title = @"Publish";
+  g_publish_btn.bordered = YES;
+  g_publish_btn.bezelStyle = NSBezelStyleRounded;
+  g_publish_btn.imagePosition = NSImageLeft;
   g_publish_btn.hidden = (kern_x_is_connected() == 0);   /* until/unless connected */
 
   /* AppKit stretches the accessory view to the full (toolbar-tall) title bar
-     height. Pin the publish button to its vertical center via Auto Layout so it
-     lines up with the window title instead of sinking to the bottom edge.
-     (The keyboard-shortcuts and documents-folder buttons moved to the Settings
-     window and the Window menu respectively.) */
-  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 48, 30)];
+     height, its top-right flush with the window corner. Pin the publish button
+     16pt from the top and 16pt from the trailing edge so its distance from the
+     top window edge matches its distance from the right window edge; width is
+     intrinsic (icon + "Publish"). (The keyboard-shortcuts and documents-folder
+     buttons moved to the Settings window and the Window menu respectively.) */
+  NSView *buttons = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 130, 44)];
   g_publish_btn.translatesAutoresizingMaskIntoConstraints = NO;
   [buttons addSubview:g_publish_btn];
   [NSLayoutConstraint activateConstraints:@[
-    [g_publish_btn.widthAnchor constraintEqualToConstant:32],
     [g_publish_btn.heightAnchor constraintEqualToConstant:24],
-    [g_publish_btn.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-8],
-    [g_publish_btn.centerYAnchor constraintEqualToAnchor:buttons.centerYAnchor],
+    [g_publish_btn.trailingAnchor constraintEqualToAnchor:buttons.trailingAnchor constant:-16],
+    [g_publish_btn.topAnchor constraintEqualToAnchor:buttons.topAnchor constant:16],
   ]];
 
   NSTitlebarAccessoryViewController *acc = [[NSTitlebarAccessoryViewController alloc] init];

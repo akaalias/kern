@@ -63,6 +63,7 @@ int  r_has_glyph(const char *utf8, int byte_len) {
 /* ---- font style ---- */
 void r_set_font_style(int style) { s_style = style; }
 int  r_get_font_style(void)      { return s_style; }
+int  r_ui_font_style(void)       { return FONT_REGULAR; }  /* no system font headless */
 void r_set_font_size(float size) { (void)size; }
 
 /* ---- draw capture ---- */
@@ -96,6 +97,13 @@ void r_draw_rect(Rect rect, Color color) {
 }
 
 /* ---- unused by the headless layout paths: no-ops ---- */
+void r_draw_image_circle(Rect rect, const unsigned char *rgba, int iw, int ih) {
+  (void)rect; (void)rgba; (void)iw; (void)ih;
+}
+/* headless: no AA, just record the fill as a plain rect */
+void r_draw_round_rect(Rect rect, int radius, Color color) {
+  (void)radius; r_draw_rect(rect, color);
+}
 void r_blur_rect(Rect rect, int radius)     { (void)rect; (void)radius; }
 void r_clip_mask_begin(void)                   {}
 void r_clip_mask_use(void)                     {}

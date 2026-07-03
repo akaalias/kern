@@ -21,6 +21,10 @@ const char *kern_test_x_last_publish(void);
 /* Last value passed to kern_titlebar_set_x_connected() (-1 = never called). */
 int kern_test_x_titlebar_state(void);
 
+/* Set the account identity the tweet-preview overlay reads (display name +
+ * @handle). Defaults to "Test User" / "testuser" after a reset. */
+void kern_test_set_x_identity(const char *name, const char *handle);
+
 /* Reset all stub state (modstate, connection, recorded publish/titlebar). */
 void kern_test_platform_reset(void);
 

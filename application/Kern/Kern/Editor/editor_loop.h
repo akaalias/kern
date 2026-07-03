@@ -27,6 +27,10 @@ ViewState   *tv_test_vs(void);
 void         tv_test_reset(void);
 /* The recorded "Opened after" predecessor basenames for `path` (see textview.c). */
 int          tv_test_opened_after(const char *path, char out[][256], int max);
+/* X-publish confirmation overlay state: 0 = closed, 1 = confirming, 2 = sending. */
+int          tv_test_pub_state(void);
+/* The text snapshotted for the pending publish (the tweet-preview body). */
+const char  *tv_test_pub_text(void);
 #endif
 
 #endif /* EDITOR_LOOP_H */
