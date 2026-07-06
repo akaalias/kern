@@ -27,6 +27,8 @@
 void kern_publish_to_x(void);                     /* title-bar Publish button */
 void kern_x_publish_done(int ok, const char *info);  /* async publish result */
 void kern_x_feed_done(int ok, const char *text);     /* async news-feed result */
+int  kern_feed_skip_post(const char *text);          /* news-feed noise filter */
+void kern_feed_quote_text(const char *text, char *out, int outsz);  /* "> " prefixer */
 
 static EditorState *ED;
 static ViewState   *VS;
@@ -762,8 +764,8 @@ static void test_cx_n_requests_feed(void) {
   CHECK(strstr(VS->status_msg, "Fetching") != NULL);
 }
 
-/* A successful fetch writes a time-stamped News-… note to the documents dir
-   and opens it: a title heading on top, the feed entries below. */
+/* A successful fetch writes a time-stamped Twitter-Home-Newsfeed-… note to the
+   documents dir and opens it: a title heading on top, the feed entries below. */
 static void test_feed_result_opens_news_note(void) {
   tv_begin();
   char docs[256]; fresh_docs_dir(docs, sizeof docs);
@@ -777,8 +779,8 @@ static void test_feed_result_opens_news_note(void) {
     "Frank Smith (@frank) \xE2\x80\x94 2026-07-06 14:32\n"
     "https://x.com/frank/status/42\n");
   editor_tick();                                   /* main thread lands the feed */
-  CHECK(strstr(ED->filepath, "News-") != NULL);
-  CHECK(strncmp(ED->lines[0].text, "# X News", 8) == 0);
+  CHECK(strstr(ED->filepath, "Twitter-Home-Newsfeed-") != NULL);
+  CHECK(strncmp(ED->lines[0].text, "# Twitter Home Newsfeed", 23) == 0);
   int saw_entry = 0, saw_url = 0;
   for (int i = 0; i < ED->line_count; i++) {
     if (strstr(ED->lines[i].text, "(@frank)")) saw_entry = 1;
@@ -790,6 +792,52 @@ static void test_feed_result_opens_news_note(void) {
   CHECK(f != NULL);
   if (f) fclose(f);
   buf_set_documents_dir("");
+}
+
+/* The feed filter drops posts that are only link(s) — e.g. an image post whose
+   whole text is its t.co media URL. */
+static void test_feed_skip_link_only_posts(void) {
+  tv_begin();
+  CHECK_IEQ(kern_feed_skip_post("https://t.co/AbC123"), 1);
+  CHECK_IEQ(kern_feed_skip_post("https://t.co/a https://t.co/b"), 1);   /* two images */
+  CHECK_IEQ(kern_feed_skip_post("  https://t.co/AbC123  "), 1);        /* padded */
+  CHECK_IEQ(kern_feed_skip_post("http://t.co/x\nhttps://t.co/y"), 1);  /* links on two lines */
+  CHECK_IEQ(kern_feed_skip_post(""), 1);
+  CHECK_IEQ(kern_feed_skip_post(NULL), 1);
+}
+
+/* …and posts that are just a single line (with or without a trailing media
+   link), while keeping multi-line posts even when they contain links. */
+static void test_feed_skip_single_line_posts(void) {
+  tv_begin();
+  CHECK_IEQ(kern_feed_skip_post("gm everybody"), 1);
+  CHECK_IEQ(kern_feed_skip_post("look at this https://t.co/xyz"), 1);  /* one-liner + image */
+  CHECK_IEQ(kern_feed_skip_post("just one line\n"), 1);                /* trailing \n is not a 2nd line */
+  CHECK_IEQ(kern_feed_skip_post("line one\nline two"), 0);             /* real content: keep */
+  CHECK_IEQ(kern_feed_skip_post("a thread:\nhttps://t.co/link\nmore text"), 0);
+}
+
+/* Post text is rendered as a markdown blockquote: every line gets a "> "
+   prefix (bare ">" on empty lines so the quote reads as one block); a trailing
+   newline doesn't grow a dangling ">". */
+static void test_feed_quote_text(void) {
+  tv_begin();
+  char out[256];
+  kern_feed_quote_text("one line", out, sizeof out);
+  CHECK_SEQ(out, "> one line");
+  kern_feed_quote_text("a\nb", out, sizeof out);
+  CHECK_SEQ(out, "> a\n> b");
+  kern_feed_quote_text("a\n\nb", out, sizeof out);          /* empty line stays quoted */
+  CHECK_SEQ(out, "> a\n>\n> b");
+  kern_feed_quote_text("a\n", out, sizeof out);             /* no dangling ">" */
+  CHECK_SEQ(out, "> a\n");
+  kern_feed_quote_text("", out, sizeof out);
+  CHECK_SEQ(out, "");
+  kern_feed_quote_text(NULL, out, sizeof out);
+  CHECK_SEQ(out, "");
+  char tiny[6];                                             /* truncation is NUL-safe */
+  kern_feed_quote_text("abcdef", tiny, sizeof tiny);
+  CHECK_SEQ(tiny, "> abc");
 }
 
 /* A failed fetch reports the error and leaves the current buffer alone. */
@@ -910,6 +958,9 @@ void suite_textview(void) {
   RUN(test_cx_n_not_connected);
   RUN(test_cx_n_requests_feed);
   RUN(test_feed_result_opens_news_note);
+  RUN(test_feed_skip_link_only_posts);
+  RUN(test_feed_skip_single_line_posts);
+  RUN(test_feed_quote_text);
   RUN(test_feed_failure_reports_error);
 
   /* leave globals clean for any later suite */

@@ -26,6 +26,17 @@ void kern_x_publish_done(int ok, const char *info);
    applied on the next editor tick (written to a time-stamped News note). */
 void kern_x_feed_done(int ok, const char *text);
 
+/* News-feed noise filter: 1 to leave a post out of the news note (link-only
+   posts — e.g. bare image posts — and one-liners). Implemented in textview.c
+   (pure string logic, headless-tested); called per post by the Swift feed
+   formatter. */
+int kern_feed_skip_post(const char *text);
+
+/* Blockquote a post's text into `out`: "> " at the start of every line (">"
+   alone on empty lines), truncation-safe and always NUL-terminated. Implemented
+   in textview.c (headless-tested); called per post by the Swift formatter. */
+void kern_feed_quote_text(const char *text, char *out, int outsz);
+
 /* Open the documents folder in Finder. Implemented in Platform/macos_style.m;
    invoked from the Window menu item (runs on the main thread during tracking). */
 void kern_open_documents_folder(void);

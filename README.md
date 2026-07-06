@@ -129,9 +129,11 @@ failure banner) and in the editor's status bar. The button is hidden until you
 link an account.
 
 The connection also works the other way: `C-x n` downloads your **home feed**
-into a time-stamped `News-YYYY-MM-DD-HHMM.md` note — one `##` entry per post
-(author, date, first words), with the full text, byline, and URL below it, so
-you can mark up a post and `Cmd-Shift-N` it into a note of its own. (Reading
+into a time-stamped `Twitter-Home-Newsfeed-YYYY-MM-DD-HHMM.md` note — one
+`## author — date at time` entry per post, with the text as a `>` blockquote
+(rendered in italics), the byline, and the URL below it, so you can mark up a
+post and `Cmd-Shift-N` it into a note of its own. Image-only posts (just a
+media link) and one-liners are filtered out. (Reading
 the timeline uses X's `timelines/reverse_chronological` endpoint, which needs
 an API tier that includes read access.)
 

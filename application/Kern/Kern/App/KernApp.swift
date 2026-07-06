@@ -766,25 +766,37 @@ nonisolated final class XAuth {
         isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let iso = ISO8601DateFormatter()
         let dayFmt = DateFormatter(); dayFmt.dateFormat = "yyyy-MM-dd"
+        let hmFmt = DateFormatter(); hmFmt.dateFormat = "HH:mm"
         let stampFmt = DateFormatter(); stampFmt.dateFormat = "yyyy-MM-dd HH:mm"
 
         var out = ""
         for t in tweets {
             let text = unescapeEntities((t["text"] as? String) ?? "")
+            // Skip the noise: image/link-only posts and one-liners
+            // (kern_feed_skip_post, the headless-tested C filter).
+            if text.withCString({ kern_feed_skip_post($0) }) != 0 { continue }
             let tid = (t["id"] as? String) ?? ""
             let author = users[(t["author_id"] as? String) ?? ""] ?? ("Unknown", "unknown")
-            var day = "", stamp = ""
+            var day = "", hm = "", stamp = ""
             if let created = t["created_at"] as? String,
                let d = isoFrac.date(from: created) ?? iso.date(from: created) {
-                day = dayFmt.string(from: d); stamp = stampFmt.string(from: d)
+                day = dayFmt.string(from: d)
+                hm = hmFmt.string(from: d)
+                stamp = stampFmt.string(from: d)
             }
-            // header snippet: the first 10 words, single-line
-            let words = text.split(whereSeparator: { $0.isWhitespace })
-            var snippet = words.prefix(10).joined(separator: " ")
-            if words.count > 10 { snippet += "…" }
 
-            out += "## \(author.name) — \(day) — \(snippet)\n\n"
-            out += text + "\n\n"
+            out += day.isEmpty ? "## \(author.name)\n\n"
+                               : "## \(author.name) — \(day) at \(hm)\n\n"
+            // The post text renders as a markdown blockquote — every line gets
+            // a "> " prefix (kern_feed_quote_text, the headless-tested C helper).
+            var quoted = [CChar](repeating: 0, count: text.utf8.count * 3 + 16)
+            let n = quoted.count
+            text.withCString { src in
+                quoted.withUnsafeMutableBufferPointer { buf in
+                    kern_feed_quote_text(src, buf.baseAddress, Int32(n))
+                }
+            }
+            out += String(cString: quoted) + "\n\n"
             out += "\(author.name) (@\(author.handle)) — \(stamp)\n"
             out += "https://x.com/\(author.handle)/status/\(tid)\n\n"
         }
@@ -1043,7 +1055,7 @@ public func kern_x_fetch_feed() {
         do {
             let md = try await XAuth.shared.homeTimeline()
             if md.isEmpty {
-                "Your X home feed came back empty".withCString { kern_x_feed_done(0, $0) }
+                "No substantial posts in your feed right now".withCString { kern_x_feed_done(0, $0) }
             } else {
                 md.withCString { kern_x_feed_done(1, $0) }
             }

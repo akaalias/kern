@@ -788,9 +788,9 @@ static void feed_apply_result(void) {
   }
 
   time_t t = time(NULL); struct tm lt; localtime_r(&t, &lt);
-  char fname[64], heading[96];
-  strftime(fname, sizeof(fname), "News-%Y-%m-%d-%H%M.md", &lt);
-  strftime(heading, sizeof(heading), "# X News \xE2\x80\x94 %A, %B %d, %Y %H:%M", &lt);
+  char fname[64], heading[112];
+  strftime(fname, sizeof(fname), "Twitter-Home-Newsfeed-%Y-%m-%d-%H%M.md", &lt);
+  strftime(heading, sizeof(heading), "# Twitter Home Newsfeed \xE2\x80\x94 %A, %B %d, %Y %H:%M", &lt);
 
   size_t total = strlen(heading) + 2 + strlen(feed_result_text) + 1;
   char *doc = malloc(total);
@@ -806,6 +806,51 @@ static void feed_apply_result(void) {
   save_if_dirty();               /* leaving the current buffer, like C-x b */
   open_or_create_file(fname);
   nav_status_set(&g_vs, "X feed downloaded \xE2\x9C\x93");
+}
+
+/* Should a feed post be left out of the news note? 1 to skip: posts whose text
+   is nothing but link(s) — e.g. an image post, whose whole text is its t.co
+   media URL — and one-liner posts (no line break in the trimmed text; a media
+   link doesn't count as content). Pure string logic, so it lives here in C
+   where it's headless-testable; the Swift formatter calls it per post via the
+   bridging header. */
+int kern_feed_skip_post(const char *text) {
+  if (!text) return 1;
+  size_t a = 0, b = strlen(text);
+  while (a < b && (unsigned char)text[a] <= ' ') a++;   /* trim both ends */
+  while (b > a && (unsigned char)text[b-1] <= ' ') b--;
+  int has_newline = 0, has_content = 0;
+  size_t i = a;
+  while (i < b) {
+    unsigned char c = text[i];
+    if (c == '\n') { has_newline = 1; i++; continue; }
+    if (c <= ' ') { i++; continue; }
+    int is_link = (strncmp(text + i, "https://", 8) == 0 ||
+                   strncmp(text + i, "http://", 7) == 0);
+    if (!is_link) has_content = 1;
+    while (i < b && (unsigned char)text[i] > ' ') i++;   /* to end of token */
+  }
+  return (!has_content || !has_newline) ? 1 : 0;
+}
+
+/* Render a post's text as a markdown blockquote into `out`: "> " at the start
+   of every line (">" alone on empty lines so the quote reads as one block); a
+   trailing newline doesn't grow a dangling ">". Truncation-safe, always
+   NUL-terminated. Like kern_feed_skip_post, called per post by the Swift feed
+   formatter via the bridging header; pure C so it's headless-testable. */
+void kern_feed_quote_text(const char *text, char *out, int outsz) {
+  if (outsz <= 0) return;
+  int o = 0, at_bol = 1;
+  for (const char *p = text ? text : ""; *p && o < outsz - 1; p++) {
+    if (at_bol) {
+      if (o < outsz - 1) out[o++] = '>';
+      if (*p != '\n' && o < outsz - 1) out[o++] = ' ';
+      at_bol = 0;
+    }
+    if (o < outsz - 1) out[o++] = *p;
+    if (*p == '\n') at_bol = 1;
+  }
+  out[o] = '\0';
 }
 
 /* C-x n: fetch the home feed into a news note. */

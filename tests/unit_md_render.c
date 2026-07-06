@@ -239,8 +239,59 @@ static void test_syntax_isolate_mutes_ground(void) {
   freeline(&l);
 }
 
+/* A "> " blockquote line renders in italic (classic quote styling); the line's
+   inline spans still layer on top (bold stays bold). */
+static void test_blockquote_renders_italic(void) {
+  stub_reset();
+  draw_window("> quoted", 0, 8);
+  CHECK_IEQ(stub_text_count, 8);
+  CHECK_IEQ(stub_texts[2].style, FONT_ITALIC);   /* 'q' */
+  CHECK_IEQ(stub_texts[7].style, FONT_ITALIC);   /* 'd' */
+  stub_reset();
+  draw_window("> **hi** there", 0, 14);
+  CHECK_IEQ(stub_texts[4].style, FONT_BOLD);     /* 'h' — bold wins inside the quote */
+  CHECK_IEQ(stub_texts[9].style, FONT_ITALIC);   /* 't' — back to the quote italic */
+}
+
+/* The "> " marker itself dims like other markdown delimiters; the quoted text
+   keeps the base color. A non-quote line with a '>' mid-text is untouched. */
+static void test_blockquote_marker_dims(void) {
+  stub_reset();
+  draw_window("> q", 0, 3);
+  CHECK_IEQ(stub_texts[0].color.r, 80);          /* '>' dimmed */
+  CHECK_IEQ(stub_texts[2].color.r, 200);         /* 'q' keeps base */
+  stub_reset();
+  draw_window("a > b", 0, 5);
+  CHECK_IEQ(stub_texts[0].style, FONT_REGULAR);  /* not a quote line */
+  CHECK_IEQ(stub_texts[2].color.r, 200);         /* '>' mid-line not dimmed */
+}
+
+static void test_is_blockquote(void) {
+  Line l = mkline("> hi");   CHECK_IEQ(md_is_blockquote(&l), 1); freeline(&l);
+  l = mkline(">");           CHECK_IEQ(md_is_blockquote(&l), 1); freeline(&l);
+  l = mkline(">no space");   CHECK_IEQ(md_is_blockquote(&l), 0); freeline(&l);
+  l = mkline("a > b");       CHECK_IEQ(md_is_blockquote(&l), 0); freeline(&l);
+  l = mkline("");            CHECK_IEQ(md_is_blockquote(&l), 0); freeline(&l);
+}
+
+/* Caret/click parity on a quote line when italic glyphs measure wider than
+   regular: the click walk must use the same italic base style as the draw. */
+static void test_blockquote_click_parity(void) {
+  stub_reset();
+  stub_set_style_extra(FONT_ITALIC, 3);          /* italic wider than regular */
+  Line l = mkline("> quoted text");
+  int x7 = md_col_x(&l, 0, l.len, 0, 0, 7);
+  CHECK_IEQ(md_x_to_col(&l, 0, l.len, 0, 0, x7 + 1), 7);
+  stub_set_style_extra(FONT_ITALIC, 0);
+  freeline(&l);
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
+  RUN(test_blockquote_renders_italic);
+  RUN(test_blockquote_marker_dims);
+  RUN(test_is_blockquote);
+  RUN(test_blockquote_click_parity);
   RUN(test_syntax_isolate_mutes_ground);
   RUN(test_focus_opacity_settled);
   RUN(test_focus_opacity_start_of_transition);

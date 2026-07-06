@@ -40,6 +40,19 @@ int md_is_list_item(Line *l) {
   return md_list_marker_end(l) != 0;
 }
 
+/* A "> " blockquote line (or a bare ">" — an empty quoted line inside a
+   multi-paragraph quote). The quoted text renders italic; the marker dims. */
+int md_is_blockquote(Line *l) {
+  if (l->len >= 2) return l->text[0] == '>' && l->text[1] == ' ';
+  return l->len == 1 && l->text[0] == '>';
+}
+
+/* byte length of the "> " marker (1 for a bare ">"), 0 if not a blockquote */
+static int md_blockquote_prefix_len(Line *l) {
+  if (!md_is_blockquote(l)) return 0;
+  return l->len >= 2 ? 2 : 1;
+}
+
 int md_is_heading(Line *l) {
   if (l->len < 2) return 0;
   int i = 0;
@@ -287,7 +300,10 @@ float md_draw_text(Line *l, int start, int end,
   const char *text = l->text;
   float op = g_text_opacity;
   int saved_style = r_get_font_style();
-  int base_style  = heading ? FONT_BOLD : FONT_REGULAR;
+  /* a blockquote line takes italic as its base — classic quote styling; inline
+     spans (bold/mono) still override per glyph via md_span_style */
+  int quote_pfx   = heading ? 0 : md_blockquote_prefix_len(l);
+  int base_style  = heading ? FONT_BOLD : (quote_pfx ? FONT_ITALIC : FONT_REGULAR);
   int font_h      = r_get_text_height();
 
   Color dim     = color(80, 80, 80, 255);
@@ -331,6 +347,7 @@ float md_draw_text(Line *l, int start, int end,
        overlays (dec_hl/dec_ul), so they aren't set here. */
     int style = md_span_style(spans, span_count, si, i, base_style, heading);
     Color fg = base_color;
+    if (i < quote_pfx) fg = dim;   /* the "> " marker dims like other delimiters */
     int bg = 0;   /* 0 none, 1 link */
     if (si < span_count && i >= spans[si].open && i < spans[si].end) {
       const struct MdSpan *s = &spans[si];
@@ -467,7 +484,9 @@ int md_row_indent(Line *l, int row_start) {
    drift on token width or reveal state. */
 int md_x_to_col(Line *l, int start, int end, int x0, int heading, int target_x) {
   const char *text = l->text;
-  int base_style = heading ? FONT_BOLD : FONT_REGULAR;
+  /* mirror md_draw_text's blockquote-italic base so clicks can't drift */
+  int base_style = heading ? FONT_BOLD
+                           : (md_is_blockquote(l) ? FONT_ITALIC : FONT_REGULAR);
   int saved_style = r_get_font_style();
 
   const struct MdSpan *spans;

@@ -18,6 +18,10 @@ int md_is_list_item(Line *l);
 /* check if a logical line is a heading (starts with # ) */
 int md_is_heading(Line *l);
 
+/* whether a line is a "> " blockquote (or a bare ">") — rendered with an italic
+   base style, the marker dimmed */
+int md_is_blockquote(Line *l);
+
 /* length of a heading's "### " prefix (hashes + the single space), or 0 if not
    a heading. The prefix is rendered hanging in the right margin, not in flow. */
 int md_heading_prefix_len(Line *l);
