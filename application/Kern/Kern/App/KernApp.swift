@@ -447,7 +447,7 @@ nonisolated final class XAuth {
     private let tokenURL = "https://api.x.com/2/oauth2/token"
     private let tweetsURL = "https://api.x.com/2/tweets"
     private let meURL = "https://api.x.com/2/users/me"
-    private let usersURL = "https://api.x.com/2/users"   // …/{id}/reverse_chronological_timeline
+    private let usersURL = "https://api.x.com/2/users"   // …/{id}/timelines/reverse_chronological
 
     private let lock = NSLock()
     private var _tokens: XTokens?
@@ -727,7 +727,7 @@ nonisolated final class XAuth {
     func homeTimeline(maxResults: Int = 50) async throws -> String {
         let token = try await validAccessToken()
         let id = try await userID(token: token)
-        var comps = URLComponents(string: "\(usersURL)/\(id)/reverse_chronological_timeline")!
+        var comps = URLComponents(string: "\(usersURL)/\(id)/timelines/reverse_chronological")!
         comps.queryItems = [
             .init(name: "max_results", value: "\(maxResults)"),
             .init(name: "tweet.fields", value: "created_at,author_id"),

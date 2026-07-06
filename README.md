@@ -132,8 +132,8 @@ The connection also works the other way: `C-x n` downloads your **home feed**
 into a time-stamped `News-YYYY-MM-DD-HHMM.md` note — one `##` entry per post
 (author, date, first words), with the full text, byline, and URL below it, so
 you can mark up a post and `Cmd-Shift-N` it into a note of its own. (Reading
-the timeline uses X's `reverse_chronological_timeline` endpoint, which needs an
-API tier that includes read access.)
+the timeline uses X's `timelines/reverse_chronological` endpoint, which needs
+an API tier that includes read access.)
 
 **One-time setup**
 
