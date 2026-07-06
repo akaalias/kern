@@ -26,6 +26,7 @@
 /* textview.c bridges the app normally reaches from AppKit / Swift. */
 void kern_publish_to_x(void);                     /* title-bar Publish button */
 void kern_x_publish_done(int ok, const char *info);  /* async publish result */
+void kern_x_feed_done(int ok, const char *text);     /* async news-feed result */
 
 static EditorState *ED;
 static ViewState   *VS;
@@ -738,6 +739,71 @@ static void test_overlay_swallows_typing(void) {
   EXPECT_LINE(0, "body");                        /* buffer untouched */
 }
 
+/* ---- X news feed (C-x n -> async fetch -> time-stamped News note) ---- */
+
+/* With no account linked, C-x n reports and never asks Swift for the feed. */
+static void test_cx_n_not_connected(void) {
+  tv_begin(); load("hi");
+  kern_test_set_x_connected(0);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_n);
+  CHECK_IEQ(kern_test_x_feed_requested(), 0);
+  CHECK(strstr(VS->status_msg, "Connect") != NULL);
+}
+
+/* Connected, C-x n kicks off the async fetch and says so. */
+static void test_cx_n_requests_feed(void) {
+  tv_begin(); load("hi");
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_n);
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);                /* prefix consumed */
+  CHECK_IEQ(kern_test_x_feed_requested(), 1);
+  CHECK(strstr(VS->status_msg, "Fetching") != NULL);
+}
+
+/* A successful fetch writes a time-stamped News-… note to the documents dir
+   and opens it: a title heading on top, the feed entries below. */
+static void test_feed_result_opens_news_note(void) {
+  tv_begin();
+  char docs[256]; fresh_docs_dir(docs, sizeof docs);
+  load("hi");
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_n);
+  kern_x_feed_done(1,
+    "## Frank Smith \xE2\x80\x94 2026-07-06 \xE2\x80\x94 Hello world this is a post\n\n"
+    "Hello world this is a post\n\n"
+    "Frank Smith (@frank) \xE2\x80\x94 2026-07-06 14:32\n"
+    "https://x.com/frank/status/42\n");
+  editor_tick();                                   /* main thread lands the feed */
+  CHECK(strstr(ED->filepath, "News-") != NULL);
+  CHECK(strncmp(ED->lines[0].text, "# X News", 8) == 0);
+  int saw_entry = 0, saw_url = 0;
+  for (int i = 0; i < ED->line_count; i++) {
+    if (strstr(ED->lines[i].text, "(@frank)")) saw_entry = 1;
+    if (strstr(ED->lines[i].text, "https://x.com/frank/status/42")) saw_url = 1;
+  }
+  CHECK(saw_entry);
+  CHECK(saw_url);
+  FILE *f = fopen(ED->filepath, "rb");             /* saved to disk, not scratch */
+  CHECK(f != NULL);
+  if (f) fclose(f);
+  buf_set_documents_dir("");
+}
+
+/* A failed fetch reports the error and leaves the current buffer alone. */
+static void test_feed_failure_reports_error(void) {
+  tv_begin(); load("keep me");
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_n);
+  kern_x_feed_done(0, "X: rate limit exceeded");
+  editor_tick();
+  CHECK(strstr(VS->status_msg, "rate limit") != NULL);
+  EXPECT_LINE(0, "keep me");
+}
+
 /* The preview renders the account's display name and @handle. */
 static void test_overlay_renders_identity(void) {
   tv_begin();
@@ -841,6 +907,10 @@ void suite_textview(void) {
   RUN(test_publish_failure_keeps_overlay);
   RUN(test_overlay_swallows_typing);
   RUN(test_overlay_renders_identity);
+  RUN(test_cx_n_not_connected);
+  RUN(test_cx_n_requests_feed);
+  RUN(test_feed_result_opens_news_note);
+  RUN(test_feed_failure_reports_error);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

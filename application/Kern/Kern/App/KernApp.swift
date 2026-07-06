@@ -184,6 +184,7 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Autocomplete a link", "[["),
         B("Extract selection to a new note", "Cmd-S-N"),
         B("Today's note", "Cmd-S-T"),
+        B("Download your X news feed", "C-x n"),
         B("Go back", "Cmd-S-Left"), B("Go forward", "Cmd-S-Right"),
     ]),
     ShortcutGroup(title: "Files", bindings: [
@@ -446,6 +447,7 @@ nonisolated final class XAuth {
     private let tokenURL = "https://api.x.com/2/oauth2/token"
     private let tweetsURL = "https://api.x.com/2/tweets"
     private let meURL = "https://api.x.com/2/users/me"
+    private let usersURL = "https://api.x.com/2/users"   // …/{id}/reverse_chronological_timeline
 
     private let lock = NSLock()
     private var _tokens: XTokens?
@@ -592,6 +594,7 @@ nonisolated final class XAuth {
         var fresh = try await exchangeCode(code, verifier: verifier)
         if let p = try? await fetchProfile(accessToken: fresh.accessToken) {
             fresh.username = p.username; fresh.name = p.name; fresh.avatarURL = p.avatarURL
+            fresh.userID = p.id
         }
         store(fresh)
         loadAvatarIfNeeded()
@@ -657,6 +660,7 @@ nonisolated final class XAuth {
         fresh.username = tokens?.username
         fresh.name = tokens?.name
         fresh.avatarURL = tokens?.avatarURL
+        fresh.userID = tokens?.userID
         store(fresh)
         return fresh.accessToken
     }
@@ -685,10 +689,11 @@ nonisolated final class XAuth {
                        username: nil)
     }
 
-    /// Fetch the connected account's handle, display name, and avatar URL from
-    /// /2/users/me (the avatar is upscaled from X's default _normal 48px variant).
+    /// Fetch the connected account's handle, display name, avatar URL, and
+    /// numeric user id from /2/users/me (the avatar is upscaled from X's
+    /// default _normal 48px variant; the id is what the timeline endpoint keys on).
     private func fetchProfile(accessToken: String) async throws
-        -> (username: String?, name: String?, avatarURL: String?) {
+        -> (username: String?, name: String?, avatarURL: String?, id: String?) {
         var comps = URLComponents(string: meURL)!
         comps.queryItems = [.init(name: "user.fields", value: "name,profile_image_url")]
         var req = URLRequest(url: comps.url!)
@@ -698,7 +703,99 @@ nonisolated final class XAuth {
         let d = obj?["data"] as? [String: Any]
         var avatar = d?["profile_image_url"] as? String
         avatar = avatar?.replacingOccurrences(of: "_normal.", with: "_400x400.")
-        return (d?["username"] as? String, d?["name"] as? String, avatar)
+        return (d?["username"] as? String, d?["name"] as? String, avatar,
+                d?["id"] as? String)
+    }
+
+    // MARK: home timeline (news feed)
+
+    /// The account's numeric user id, resolved lazily: accounts connected before
+    /// the news feature have no stored id, so fall back to /2/users/me once and
+    /// persist it for next time.
+    private func userID(token: String) async throws -> String {
+        if let id = tokens?.userID, !id.isEmpty { return id }
+        guard let id = try await fetchProfile(accessToken: token).id else {
+            throw XError("couldn't resolve your X user id")
+        }
+        if var t = tokens { t.userID = id; store(t) }
+        return id
+    }
+
+    /// Fetch the reverse-chronological home timeline and format it as markdown —
+    /// one "## author — date — snippet" entry per post, with the full text,
+    /// byline, and public URL below (the shape Kern's news note wants).
+    func homeTimeline(maxResults: Int = 50) async throws -> String {
+        let token = try await validAccessToken()
+        let id = try await userID(token: token)
+        var comps = URLComponents(string: "\(usersURL)/\(id)/reverse_chronological_timeline")!
+        comps.queryItems = [
+            .init(name: "max_results", value: "\(maxResults)"),
+            .init(name: "tweet.fields", value: "created_at,author_id"),
+            .init(name: "expansions", value: "author_id"),
+            .init(name: "user.fields", value: "name,username"),
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            throw XError(Self.apiMessage(data) ?? "feed fetch failed (HTTP \(status))")
+        }
+        return Self.feedMarkdown(data)
+    }
+
+    /// Render the timeline JSON into markdown entries. Empty string if the
+    /// feed has no posts (the caller reports that as a non-error).
+    private static func feedMarkdown(_ data: Data) -> String {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tweets = obj["data"] as? [[String: Any]], !tweets.isEmpty
+        else { return "" }
+
+        // author_id -> (display name, @handle) from the expanded includes
+        var users: [String: (name: String, handle: String)] = [:]
+        if let inc = obj["includes"] as? [String: Any],
+           let us = inc["users"] as? [[String: Any]] {
+            for u in us {
+                guard let uid = u["id"] as? String else { continue }
+                users[uid] = ((u["name"] as? String) ?? "Unknown",
+                              (u["username"] as? String) ?? "unknown")
+            }
+        }
+
+        let isoFrac = ISO8601DateFormatter()
+        isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let iso = ISO8601DateFormatter()
+        let dayFmt = DateFormatter(); dayFmt.dateFormat = "yyyy-MM-dd"
+        let stampFmt = DateFormatter(); stampFmt.dateFormat = "yyyy-MM-dd HH:mm"
+
+        var out = ""
+        for t in tweets {
+            let text = unescapeEntities((t["text"] as? String) ?? "")
+            let tid = (t["id"] as? String) ?? ""
+            let author = users[(t["author_id"] as? String) ?? ""] ?? ("Unknown", "unknown")
+            var day = "", stamp = ""
+            if let created = t["created_at"] as? String,
+               let d = isoFrac.date(from: created) ?? iso.date(from: created) {
+                day = dayFmt.string(from: d); stamp = stampFmt.string(from: d)
+            }
+            // header snippet: the first 10 words, single-line
+            let words = text.split(whereSeparator: { $0.isWhitespace })
+            var snippet = words.prefix(10).joined(separator: " ")
+            if words.count > 10 { snippet += "…" }
+
+            out += "## \(author.name) — \(day) — \(snippet)\n\n"
+            out += text + "\n\n"
+            out += "\(author.name) (@\(author.handle)) — \(stamp)\n"
+            out += "https://x.com/\(author.handle)/status/\(tid)\n\n"
+        }
+        return out
+    }
+
+    /// The v2 API HTML-escapes &, <, > in tweet text; undo that for the note.
+    private static func unescapeEntities(_ s: String) -> String {
+        s.replacingOccurrences(of: "&lt;", with: "<")
+         .replacingOccurrences(of: "&gt;", with: ">")
+         .replacingOccurrences(of: "&amp;", with: "&")
     }
 
     private func store(_ t: XTokens) {
@@ -751,6 +848,7 @@ struct XTokens: Codable {
     var username: String?
     var name: String?        // display name ("Alexis Rondeau")
     var avatarURL: String?   // profile_image_url (upscaled to _400x400)
+    var userID: String?      // numeric id, keys the home-timeline endpoint
 }
 
 struct XError: LocalizedError {
@@ -934,6 +1032,26 @@ public func kern_x_display_name() -> UnsafePointer<CChar>? {
 @_cdecl("kern_x_handle")
 public func kern_x_handle() -> UnsafePointer<CChar>? {
     xHandleCache.get(XAuth.shared.username ?? "")
+}
+
+/// Fire-and-forget home-timeline fetch (C-x n). Returns immediately; the feed
+/// (formatted as markdown entries) or an error lands in kern_x_feed_done(),
+/// which the editor applies on its next main-thread tick.
+@_cdecl("kern_x_fetch_feed")
+public func kern_x_fetch_feed() {
+    Task.detached {
+        do {
+            let md = try await XAuth.shared.homeTimeline()
+            if md.isEmpty {
+                "Your X home feed came back empty".withCString { kern_x_feed_done(0, $0) }
+            } else {
+                md.withCString { kern_x_feed_done(1, $0) }
+            }
+        } catch {
+            let msg = "X: \(error.localizedDescription)"
+            msg.withCString { kern_x_feed_done(0, $0) }
+        }
+    }
 }
 
 /// Tightly-packed RGBA pixels of the profile photo (top row first), or NULL if

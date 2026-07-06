@@ -21,6 +21,9 @@ const char *kern_test_x_last_publish(void);
 /* Last value passed to kern_titlebar_set_x_connected() (-1 = never called). */
 int kern_test_x_titlebar_state(void);
 
+/* 1 if kern_x_fetch_feed() has been called since the last reset (C-x n). */
+int kern_test_x_feed_requested(void);
+
 /* Set the account identity the tweet-preview overlay reads (display name +
  * @handle). Defaults to "Test User" / "testuser" after a reset. */
 void kern_test_set_x_identity(const char *name, const char *handle);

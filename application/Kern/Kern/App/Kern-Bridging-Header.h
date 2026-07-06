@@ -20,6 +20,12 @@ void kern_x_set_status(const char *msg);
    applied on the next editor tick. */
 void kern_x_publish_done(int ok, const char *info);
 
+/* Deliver the async home-timeline fetch (C-x n). ok=1 with the feed already
+   formatted as markdown entries in `text`; ok=0 with an error message.
+   Implemented in textview.c; called from the Swift fetcher (any thread) and
+   applied on the next editor tick (written to a time-stamped News note). */
+void kern_x_feed_done(int ok, const char *text);
+
 /* Open the documents folder in Finder. Implemented in Platform/macos_style.m;
    invoked from the Window menu item (runs on the main thread during tracking). */
 void kern_open_documents_folder(void);

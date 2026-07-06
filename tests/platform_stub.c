@@ -13,6 +13,7 @@ static int        g_x_has_publish    = 0;
 static int        g_x_titlebar       = -1;
 static char       g_x_name[128]      = "Test User";
 static char       g_x_handle[64]     = "testuser";
+static int        g_x_feed_requested = 0;
 
 /* ---- SDL input stubs (no real SDL runtime is linked) ---- */
 SDL_Keymod SDL_GetModState(void) { return g_mod; }
@@ -26,6 +27,7 @@ void kern_x_publish(const char *text) {
   g_x_has_publish = 1;
 }
 void kern_titlebar_set_x_connected(int connected) { g_x_titlebar = connected; }
+void kern_x_fetch_feed(void) { g_x_feed_requested = 1; }
 
 /* Account identity for the tweet-preview overlay (Swift fetches these from
    /2/users/me in the app). No avatar pixels headlessly -> the initials path. */
@@ -40,6 +42,7 @@ void kern_test_set_modstate(SDL_Keymod mod) { g_mod = mod; }
 void kern_test_set_x_connected(int connected) { g_x_connected = connected; }
 const char *kern_test_x_last_publish(void) { return g_x_has_publish ? g_x_last_publish : NULL; }
 int  kern_test_x_titlebar_state(void) { return g_x_titlebar; }
+int  kern_test_x_feed_requested(void) { return g_x_feed_requested; }
 void kern_test_set_x_identity(const char *name, const char *handle) {
   snprintf(g_x_name, sizeof(g_x_name), "%s", name ? name : "");
   snprintf(g_x_handle, sizeof(g_x_handle), "%s", handle ? handle : "");
@@ -51,6 +54,7 @@ void kern_test_platform_reset(void) {
   g_x_has_publish = 0;
   g_x_last_publish[0] = '\0';
   g_x_titlebar = -1;
+  g_x_feed_requested = 0;
   snprintf(g_x_name, sizeof(g_x_name), "Test User");
   snprintf(g_x_handle, sizeof(g_x_handle), "testuser");
 }

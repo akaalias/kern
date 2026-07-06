@@ -758,6 +758,66 @@ static void pub_apply_result(void) {
 /* Called from the title-bar "Publish" button (macos_style.m, main thread). */
 void kern_publish_to_x(void) { cmd_publish_to_x(); }
 
+/* ---- X news feed (C-x n) ----------------------------------------------------
+   Downloads the account's home timeline via the Swift bridge and lands it in a
+   time-stamped "News-…" note, one "## author — date — snippet" entry per post
+   (formatted in Swift, where the JSON lives). kern_x_fetch_feed() is async; the
+   markdown (or an error) comes back through kern_x_feed_done() from any thread,
+   stashed here and applied on the next editor_tick() so the file write and the
+   buffer switch stay on the main thread. */
+extern void kern_x_fetch_feed(void);   /* Swift @_cdecl: async home-timeline GET */
+
+static int   feed_result;              /* 0 none, 1 ok, 2 fail */
+static char *feed_result_text;         /* ok: markdown entries; fail: error message */
+
+void kern_x_feed_done(int ok, const char *text) {
+  free(feed_result_text);
+  feed_result_text = strdup(text ? text : "");
+  feed_result = ok ? 1 : 2;
+}
+
+/* Main-thread application of a fetched feed (from editor_tick): write the
+   markdown to a fresh time-stamped note in the documents dir and open it. */
+static void feed_apply_result(void) {
+  if (feed_result == 0 || !feed_result_text) return;
+  int ok = (feed_result == 1);
+  feed_result = 0;
+  if (!ok) {
+    nav_status_set(&g_vs, feed_result_text[0] ? feed_result_text : "X feed fetch failed");
+    return;
+  }
+
+  time_t t = time(NULL); struct tm lt; localtime_r(&t, &lt);
+  char fname[64], heading[96];
+  strftime(fname, sizeof(fname), "News-%Y-%m-%d-%H%M.md", &lt);
+  strftime(heading, sizeof(heading), "# X News \xE2\x80\x94 %A, %B %d, %Y %H:%M", &lt);
+
+  size_t total = strlen(heading) + 2 + strlen(feed_result_text) + 1;
+  char *doc = malloc(total);
+  if (!doc) { nav_status_set(&g_vs, "Out of memory"); return; }
+  snprintf(doc, total, "%s\n\n%s", heading, feed_result_text);
+
+  char path[1024];
+  buf_resolve_path(fname, path, sizeof(path));
+  int rc = buf_save_text(path, doc, (int)strlen(doc));
+  free(doc);
+  if (rc != 0) { nav_status_set(&g_vs, "Couldn't write the news note"); return; }
+
+  save_if_dirty();               /* leaving the current buffer, like C-x b */
+  open_or_create_file(fname);
+  nav_status_set(&g_vs, "X feed downloaded \xE2\x9C\x93");
+}
+
+/* C-x n: fetch the home feed into a news note. */
+static void cmd_fetch_news(void) {
+  if (!kern_x_is_connected()) {
+    nav_status_set(&g_vs, "Connect your X account first (Settings \xE2\x80\xBA X)");
+    return;
+  }
+  nav_status_set(&g_vs, "Fetching your X feed\xE2\x80\xA6");
+  kern_x_fetch_feed();
+}
+
 /* word wrapping, cursor navigation, editing, and markdown rendering
    now in navigation.c, editing.c, md_render.c (accessed via shims above) */
 
@@ -1423,6 +1483,11 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     g_vs.page_furniture_hidden = !g_vs.page_furniture_hidden;
     nav_status_set(&g_vs, g_vs.page_furniture_hidden ? "Page borders hidden" : "Page borders shown");
     g_vs.suppress_next_text = 1;   /* swallow the "p" text event */
+    return 1;
+  }
+  if (!ctrl && sym == SDLK_n) {                                       /* C-x n */
+    cmd_fetch_news();
+    g_vs.suppress_next_text = 1;   /* swallow the "n" text event */
     return 1;
   }
   return 1; /* consume even if unrecognized — prefix is cleared */
@@ -2871,6 +2936,7 @@ void editor_tick(void) {
   }
 
   pub_apply_result();   /* apply a pending X-publish result on the main thread */
+  feed_apply_result();  /* land a fetched X news feed in a note, ditto */
 
   do_render();
 }
@@ -3098,6 +3164,7 @@ void tv_test_reset(void) {
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
   pub_state = PUB_NONE; pub_result = 0; pub_text[0] = '\0'; pub_result_info[0] = '\0';
+  feed_result = 0; free(feed_result_text); feed_result_text = NULL;
 }
 
 /* Test accessors for the X-publish confirmation overlay. */

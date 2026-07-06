@@ -117,6 +117,7 @@ section at the bottom listing backlinks and notes created the same day.
 | `Cmd-Shift-←` / `Cmd-Shift-→` | Back / forward through note history               |
 | `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
 | `Cmd-Shift-T`                 | Open (or create) today's daily note               |
+| `C-x n`                       | Download your X home feed into a time-stamped news note |
 
 ## Publishing to X (Twitter)
 
@@ -126,6 +127,13 @@ you're viewing — or the marked region, if one is active — straight to your X
 timeline. The result shows up both as a macOS notification (`Posted to X ✓` / a
 failure banner) and in the editor's status bar. The button is hidden until you
 link an account.
+
+The connection also works the other way: `C-x n` downloads your **home feed**
+into a time-stamped `News-YYYY-MM-DD-HHMM.md` note — one `##` entry per post
+(author, date, first words), with the full text, byline, and URL below it, so
+you can mark up a post and `Cmd-Shift-N` it into a note of its own. (Reading
+the timeline uses X's `reverse_chronological_timeline` endpoint, which needs an
+API tier that includes read access.)
 
 **One-time setup**
 
