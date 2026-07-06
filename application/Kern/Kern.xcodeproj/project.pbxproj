@@ -279,7 +279,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 8.1;
+				MARKETING_VERSION = 8.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/lib/libSDL2.a",
@@ -355,7 +355,7 @@
 					"@executable_path/../Frameworks",
 				);
 				LIBRARY_SEARCH_PATHS = "$(inherited)";
-				MARKETING_VERSION = 8.1;
+				MARKETING_VERSION = 8.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"$(SRCROOT)/Vendor/SDL2/lib/libSDL2.a",
