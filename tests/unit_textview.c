@@ -510,6 +510,43 @@ static void test_follow_wikilink_none_at_cursor(void) {
   CHECK_SEQ(VS->status_msg, "No wikilink at cursor");
 }
 
+/* Cmd-Enter over an http(s):// URL opens it in the browser (instead of the
+   wikilink follow) — caret left-of, inside, and right-of the URL all count. */
+static void test_follow_url_opens_browser(void) {
+  const char *url = "https://blabla.com";
+
+  /* caret inside the URL */
+  tv_begin();
+  load("see https://blabla.com here");
+  put_cursor(0, 10);
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK_SEQ(kern_test_last_opened_url(), url);
+
+  /* caret at the left edge (on the first char) */
+  tv_begin();
+  load("see https://blabla.com here");
+  put_cursor(0, 4);
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK_SEQ(kern_test_last_opened_url(), url);
+
+  /* caret just past the last char (right edge) */
+  tv_begin();
+  load("see https://blabla.com here");
+  put_cursor(0, 22);
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK_SEQ(kern_test_last_opened_url(), url);
+}
+
+/* Cmd-Enter away from any URL still falls through to the wikilink follow. */
+static void test_follow_url_absent_falls_through_to_wikilink(void) {
+  tv_begin();
+  load("no link here");
+  put_cursor(0, 0);
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK(kern_test_last_opened_url() == NULL);
+  CHECK_SEQ(VS->status_msg, "No wikilink at cursor");
+}
+
 static void test_wikilink_dropdown_accept(void) {
   char dir[256]; fresh_docs_dir(dir, sizeof dir);
   char path[512]; snprintf(path, sizeof path, "%s/Project.md", dir);
@@ -1098,6 +1135,8 @@ void suite_textview(void) {
   /* wikilink nav */
   RUN(test_follow_wikilink_and_history);
   RUN(test_follow_wikilink_none_at_cursor);
+  RUN(test_follow_url_opens_browser);
+  RUN(test_follow_url_absent_falls_through_to_wikilink);
   RUN(test_wikilink_dropdown_accept);
   RUN(test_wikilink_dropdown_escape_dismisses);
   /* autosave */

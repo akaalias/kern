@@ -57,6 +57,9 @@ extern void kern_menus_sync(void);
 /* marketing version string (macos_style.m) — used only for the dev-build label */
 extern const char *kern_app_version(void);
 
+/* open a URL in the user's default browser (macos_style.m → NSWorkspace) */
+extern void kern_open_url(const char *url);
+
 /* Swift calls this (possibly off the main thread) to report a publish result.
    We only stash a string + timestamp; the 250ms event-loop tick repaints it,
    so no synthetic SDL event is needed. */
@@ -480,6 +483,34 @@ static int wikilink_at_cursor(char *out, int outsz) {
   return 0;
 }
 
+/* If the caret is on, inside, or immediately to the right of an http(s):// URL
+   on the current line, copy the URL to `out` and return 1. The URL runs from
+   its scheme up to the next whitespace, with trailing sentence punctuation
+   trimmed off. */
+static int url_at_cursor(char *out, int outsz) {
+  Line *l = &g_ed.lines[g_ed.cursor_line];
+  const char *t = l->text;
+  int n = l->len, c = g_ed.cursor_col;
+  for (int i = 0; i < n; i++) {
+    int is_http  = (i + 7 <= n && strncmp(t + i, "http://",  7) == 0);
+    int is_https = (i + 8 <= n && strncmp(t + i, "https://", 8) == 0);
+    if (!is_http && !is_https) continue;
+    int start = i, end = i;
+    while (end < n && t[end] != ' ' && t[end] != '\t') end++;
+    while (end > start && strchr(".,;:!?)]}>\"'", t[end - 1])) end--;
+    /* caret left-of (== start), inside, or right-of (== end) the URL */
+    if (c >= start && c <= end) {
+      int len = end - start;
+      if (len <= 0 || len >= outsz) return 0;
+      memcpy(out, t + start, len);
+      out[len] = '\0';
+      return 1;
+    }
+    i = end;   /* skip past this URL */
+  }
+  return 0;
+}
+
 /* Flush the open buffer to disk if it has unsaved changes and a real path —
    the guard run before leaving the current file (wikilink jump, buffer switch,
    daily-note, quit). */
@@ -488,6 +519,12 @@ static void save_if_dirty(void) {
 }
 
 static void cmd_follow_wikilink(void) {   /* Cmd-Enter */
+  char url[2048];
+  if (url_at_cursor(url, sizeof(url))) {
+    kern_open_url(url);
+    nav_status_set(&g_vs, "Opening URL in browser");
+    return;
+  }
   char target[1024];
   if (!wikilink_at_cursor(target, sizeof(target))) {
     nav_status_set(&g_vs, "No wikilink at cursor");

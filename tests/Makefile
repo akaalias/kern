@@ -6,15 +6,41 @@
 # Built under AddressSanitizer + UndefinedBehaviorSanitizer; LeakSanitizer
 # activates automatically on Linux.
 
-CC      ?= cc
 ROOT    := ..
 APP     := $(ROOT)/application/Kern/Kern
 VENDOR  := $(ROOT)/application/Kern/Vendor
 
-# On macOS the LLVM coverage tools live behind xcrun; on Linux they're direct.
+# Toolchain selection.
+#   Linux CI: plain `cc` + LLVM tools straight off PATH.
+#   macOS <=15: Apple `cc` + xcrun-fronted LLVM tools.
+#   macOS 26+: Apple clang 17's AddressSanitizer runtime DEADLOCKS at process
+#     startup — dyld's shared-cache iteration now mallocs during ASan init,
+#     which re-enters ASan's own malloc interceptor and spins forever on the
+#     init lock (visible as `make test` hanging with zero output; `sample` shows
+#     __asan::AsanInitInternal -> ... -> sched_yield). Homebrew LLVM ships a
+#     fixed compiler-rt, so when it's installed we use its clang AND its
+#     matching llvm-profdata/llvm-cov (profraw versions must agree). Override
+#     any of this with `make CC=... LLVM_PREFIX=...`.
+# `$(LLVM_PREFIX)llvm-profdata` expands to a runnable command in all three
+# cases: a Homebrew bin path, `xcrun ` (note the trailing space, built via
+# $(_sp) since Make strips literal trailing spaces), or empty on Linux.
+_empty :=
+_sp := $(_empty) $(_empty)
+LLVM_PREFIX ?=
 ifeq ($(shell uname),Darwin)
-  XCRUN := xcrun
+  BREW_LLVM := $(firstword $(wildcard /opt/homebrew/opt/llvm /usr/local/opt/llvm))
+  ifneq ($(BREW_LLVM),)
+    # Override only Make's built-in `cc` default (origin `default`); a real
+    # `make CC=...` or an exported $CC still wins.
+    ifeq ($(origin CC),default)
+      CC := $(BREW_LLVM)/bin/clang
+    endif
+    LLVM_PREFIX := $(BREW_LLVM)/bin/
+  else
+    LLVM_PREFIX := xcrun$(_sp)
+  endif
 endif
+CC      ?= cc
 
 # SDL is needed for headers only (typedefs via editor_types.h), never linked.
 # Defaults to the macOS-configured vendored headers; CI overrides this with
@@ -87,8 +113,8 @@ coverage:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
 	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC) $(MATHLIB)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
-	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
-	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
+	$(LLVM_PREFIX)llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(LLVM_PREFIX)llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
 	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
 
 # Gated coverage: print the report table AND enforce the line floor from the
@@ -100,9 +126,9 @@ coverage-check:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
 	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC) $(MATHLIB)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
-	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
-	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
-	$(XCRUN) llvm-cov export -summary-only ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE) > $(COV_BIN).json
+	$(LLVM_PREFIX)llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(LLVM_PREFIX)llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE)
+	$(LLVM_PREFIX)llvm-cov export -summary-only ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(COVCORE) > $(COV_BIN).json
 	@python3 cov_floor.py $(COV_BIN).json $(COV_FLOOR); rc=$$?; \
 	  rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata $(COV_BIN).json; \
 	  exit $$rc
@@ -115,8 +141,8 @@ coverage-textview:
 	$(CC) -std=c11 -D_GNU_SOURCE -DKERN_HEADLESS_TEST -O0 \
 	  -fprofile-instr-generate -fcoverage-mapping $(INCS) -o $(COV_BIN) $(SRC)
 	LLVM_PROFILE_FILE=$(COV_BIN).profraw ./$(COV_BIN) >/dev/null
-	$(XCRUN) llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
-	$(XCRUN) llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(APP)/Editor/textview.c
+	$(LLVM_PREFIX)llvm-profdata merge -sparse $(COV_BIN).profraw -o $(COV_BIN).profdata
+	$(LLVM_PREFIX)llvm-cov report ./$(COV_BIN) -instr-profile=$(COV_BIN).profdata $(APP)/Editor/textview.c
 	@rm -f $(COV_BIN) $(COV_BIN).profraw $(COV_BIN).profdata
 
 # ---- performance harness ----

@@ -810,8 +810,8 @@ nonisolated final class XAuth {
     }
 
     /// Fetch the reverse-chronological home timeline and format it as markdown —
-    /// one "## author — date — snippet" entry per post, with the full text,
-    /// byline, and public URL below (the shape Kern's news note wants).
+    /// one "## author — date — snippet" entry per post, with the full text
+    /// and public URL below (the shape Kern's news note wants).
     func homeTimeline(maxResults: Int = 50) async throws -> String {
         let token = try await validAccessToken()
         let id = try await userID(token: token)
@@ -900,7 +900,6 @@ nonisolated final class XAuth {
         let iso = ISO8601DateFormatter()
         let dayFmt = DateFormatter(); dayFmt.dateFormat = "yyyy-MM-dd"
         let hmFmt = DateFormatter(); hmFmt.dateFormat = "HH:mm"
-        let stampFmt = DateFormatter(); stampFmt.dateFormat = "yyyy-MM-dd HH:mm"
 
         var out = ""
         for t in tweets {
@@ -910,12 +909,11 @@ nonisolated final class XAuth {
             if filterNoise, text.withCString({ kern_feed_skip_post($0) }) != 0 { continue }
             let tid = (t["id"] as? String) ?? ""
             let author = users[(t["author_id"] as? String) ?? ""] ?? ("Unknown", "unknown")
-            var day = "", hm = "", stamp = ""
+            var day = "", hm = ""
             if let created = t["created_at"] as? String,
                let d = isoFrac.date(from: created) ?? iso.date(from: created) {
                 day = dayFmt.string(from: d)
                 hm = hmFmt.string(from: d)
-                stamp = stampFmt.string(from: d)
             }
 
             out += day.isEmpty ? "## \(author.name)\n\n"
@@ -930,7 +928,6 @@ nonisolated final class XAuth {
                 }
             }
             out += String(cString: quoted) + "\n\n"
-            out += "\(author.name) (@\(author.handle)) — \(stamp)\n"
             out += "https://x.com/\(author.handle)/status/\(tid)\n\n"
         }
         return out

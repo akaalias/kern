@@ -286,12 +286,35 @@ static void test_blockquote_click_parity(void) {
   freeline(&l);
 }
 
+/* A wrapped blockquote's continuation rows hang under the quoted text (past the
+   "> " marker), like a list item — measured in the italic base the marker draws
+   in, so the indent matches the render exactly. */
+static void test_blockquote_continuation_hangs(void) {
+  stub_reset();
+  stub_set_style_extra(FONT_ITALIC, 3);          /* italic wider than regular */
+  Line l = mkline("> quoted words that wrap");
+  CHECK_IEQ(md_row_indent(&l, 0), 0);            /* first row flush at the margin */
+  CHECK_IEQ(md_row_indent(&l, 1), 26);           /* hang == italic "> " = 2*(10+3) */
+  stub_set_style_extra(FONT_ITALIC, 0);
+  freeline(&l);
+  /* a bare ">" (empty quoted line) hangs by its single-char italic marker */
+  stub_reset();
+  Line b = mkline(">");
+  CHECK_IEQ(md_row_indent(&b, 1), 10);
+  freeline(&b);
+  /* a plain line still hangs by nothing */
+  Line p = mkline("plain text");
+  CHECK_IEQ(md_row_indent(&p, 1), 0);
+  freeline(&p);
+}
+
 void suite_md_render(void) {
   GREY = color(200, 200, 200, 255);
   RUN(test_blockquote_renders_italic);
   RUN(test_blockquote_marker_dims);
   RUN(test_is_blockquote);
   RUN(test_blockquote_click_parity);
+  RUN(test_blockquote_continuation_hangs);
   RUN(test_syntax_isolate_mutes_ground);
   RUN(test_focus_opacity_settled);
   RUN(test_focus_opacity_start_of_transition);

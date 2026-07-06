@@ -14,6 +14,8 @@ static int        g_x_titlebar       = -1;
 static char       g_x_name[128]      = "Test User";
 static char       g_x_handle[64]     = "testuser";
 static int        g_x_feed_requested = 0;
+static char       g_last_opened_url[2048];
+static int        g_has_opened_url   = 0;
 
 /* ---- SDL input stubs (no real SDL runtime is linked) ---- */
 SDL_Keymod SDL_GetModState(void) { return g_mod; }
@@ -43,7 +45,16 @@ const unsigned char *kern_x_avatar_rgba(int *w, int *h) {
   if (w) *w = 0; if (h) *h = 0; return 0;
 }
 
+/* ---- open-in-browser bridge (NSWorkspace in the app) ---- */
+void kern_open_url(const char *url) {
+  snprintf(g_last_opened_url, sizeof(g_last_opened_url), "%s", url ? url : "");
+  g_has_opened_url = 1;
+}
+
 /* ---- test controls ---- */
+const char *kern_test_last_opened_url(void) {
+  return g_has_opened_url ? g_last_opened_url : NULL;
+}
 void kern_test_set_modstate(SDL_Keymod mod) { g_mod = mod; }
 void kern_test_set_x_connected(int connected) { g_x_connected = connected; }
 const char *kern_test_x_last_publish(void) { return g_x_has_publish ? g_x_last_publish : NULL; }
@@ -63,6 +74,8 @@ void kern_test_platform_reset(void) {
   g_x_feed_requested = 0;
   g_x_bookmarks_requested = 0;
   g_view_menu_syncs = 0;
+  g_has_opened_url = 0;
+  g_last_opened_url[0] = '\0';
   snprintf(g_x_name, sizeof(g_x_name), "Test User");
   snprintf(g_x_handle, sizeof(g_x_handle), "testuser");
 }

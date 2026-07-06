@@ -36,6 +36,10 @@ void kern_test_set_x_identity(const char *name, const char *handle);
  * rebuild race). */
 int kern_test_view_menu_syncs(void);
 
+/* Last URL handed to kern_open_url() (Cmd-Enter over a URL), or NULL if none
+ * since the last reset. */
+const char *kern_test_last_opened_url(void);
+
 /* Reset all stub state (modstate, connection, recorded publish/titlebar). */
 void kern_test_platform_reset(void);
 

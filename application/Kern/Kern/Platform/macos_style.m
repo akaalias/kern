@@ -33,6 +33,16 @@ void kern_open_documents_folder(void) {
   [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path isDirectory:YES]];
 }
 
+/* Open a URL in the user's default browser (Cmd-Enter over a link in the text).
+   NSWorkspace launches it asynchronously, so this is safe to call inline on the
+   main thread during event handling. */
+void kern_open_url(const char *url) {
+  if (!url || !*url) return;
+  NSString *s = [NSString stringWithUTF8String:url];
+  NSURL *u = [NSURL URLWithString:s];
+  if (u) [[NSWorkspace sharedWorkspace] openURL:u];
+}
+
 /* CFBundleShortVersionString (the marketing version), for the dev-build label. */
 const char *kern_app_version(void) {
   static char buf[32];

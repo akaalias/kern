@@ -53,6 +53,20 @@ static int md_blockquote_prefix_len(Line *l) {
   return l->len >= 2 ? 2 : 1;
 }
 
+/* pixel width of the "> " marker, measured in the italic base the quote draws
+   in — so wrapped continuation rows hang under the quoted text, not the marker.
+   0 if not a blockquote. Measured explicitly in FONT_ITALIC (not the ambient
+   style) so the wrap pass (FONT_REGULAR) and the render agree. */
+static int md_blockquote_marker_width(Line *l) {
+  int pfx = md_blockquote_prefix_len(l);
+  if (!pfx) return 0;
+  int saved = r_get_font_style();
+  r_set_font_style(FONT_ITALIC);
+  int w = r_get_text_width(l->text, pfx);
+  r_set_font_style(saved);
+  return w;
+}
+
 int md_is_heading(Line *l) {
   if (l->len < 2) return 0;
   int i = 0;
@@ -472,8 +486,12 @@ int md_col_x(Line *l, int start, int end, int x0, int heading, int col) {
 
 int md_row_indent(Line *l, int row_start) {
   int indent = md_list_indent(l);
-  /* continuation rows hang under the item text, not the marker */
-  if (row_start > 0) indent += md_list_marker_width(l);
+  /* continuation rows hang under the item / quoted text, not the marker (a line
+     is either a list item or a blockquote, so only one term is ever non-zero) */
+  if (row_start > 0) {
+    indent += md_list_marker_width(l);
+    indent += md_blockquote_marker_width(l);
+  }
   return indent;
 }
 
