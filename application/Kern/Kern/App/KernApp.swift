@@ -696,16 +696,22 @@ nonisolated final class XAuth {
 
     // MARK: posting
 
-    /// Post `text` as a tweet, refreshing the access token first if needed.
-    /// Returns the public URL of the created tweet.
+    /// Post `text` as a tweet — or, with `replyTo`, as a reply to that tweet id
+    /// (POST /2/tweets body: reply.in_reply_to_tweet_id; scopes tweet.read +
+    /// tweet.write, both already granted). Refreshes the access token first if
+    /// needed. Returns the public URL of the created tweet.
     @discardableResult
-    func post(text: String) async throws -> String {
+    func post(text: String, replyTo: String? = nil) async throws -> String {
         let token = try await validAccessToken()
         var req = URLRequest(url: URL(string: tweetsURL)!)
         req.httpMethod = "POST"
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text])
+        var body: [String: Any] = ["text": text]
+        if let replyTo, !replyTo.isEmpty {
+            body["reply"] = ["in_reply_to_tweet_id": replyTo]
+        }
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
         let http = resp as? HTTPURLResponse
@@ -1129,17 +1135,26 @@ public func kern_x_is_connected() -> Int32 {
 
 /// Fire-and-forget publish. Returns immediately; the result is reported back to
 /// the editor's status bar via kern_x_set_status() once the network call lands.
+/// `creply` is a tweet id to reply to (NULL/empty = a plain post).
 @_cdecl("kern_x_publish")
-public func kern_x_publish(_ ctext: UnsafePointer<CChar>?) {
+public func kern_x_publish(_ ctext: UnsafePointer<CChar>?, _ creply: UnsafePointer<CChar>?) {
     guard let ctext else { return }
     let text = String(cString: ctext)
+    let replyTo: String? = creply.flatMap {
+        let s = String(cString: $0)
+        return s.isEmpty ? nil : s
+    }
     Task.detached {
         do {
-            let url = try await XAuth.shared.post(text: text)
+            let url = try await XAuth.shared.post(text: text, replyTo: replyTo)
             // The confirmation overlay applies this on the main-thread tick:
             // closes, reports success, copies the URL to the clipboard.
             url.withCString { kern_x_publish_done(1, $0) }
-            notifyX("Posted to X \u{2713}", "Your note is live on X.")
+            if replyTo != nil {
+                notifyX("Replied on X \u{2713}", "Your reply is live on X.")
+            } else {
+                notifyX("Posted to X \u{2713}", "Your note is live on X.")
+            }
         } catch {
             let msg = "X: \(error.localizedDescription)"
             msg.withCString { kern_x_publish_done(0, $0) }

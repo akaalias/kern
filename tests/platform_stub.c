@@ -23,10 +23,15 @@ void       SDL_StartTextInput(void) {}
 void       SDL_StopTextInput(void)  {}
 
 /* ---- X publishing bridge (Swift owns these in the app) ---- */
+static char g_x_last_reply[32];
+static int  g_x_has_reply = 0;
 int  kern_x_is_connected(void) { return g_x_connected; }
-void kern_x_publish(const char *text) {
+void kern_x_publish(const char *text, const char *in_reply_to) {
   snprintf(g_x_last_publish, sizeof(g_x_last_publish), "%s", text ? text : "");
   g_x_has_publish = 1;
+  g_x_has_reply = (in_reply_to && in_reply_to[0]);
+  snprintf(g_x_last_reply, sizeof(g_x_last_reply), "%s",
+           g_x_has_reply ? in_reply_to : "");
 }
 void kern_titlebar_set_x_connected(int connected) { g_x_titlebar = connected; }
 static int g_view_menu_syncs = 0;
@@ -58,6 +63,7 @@ const char *kern_test_last_opened_url(void) {
 void kern_test_set_modstate(SDL_Keymod mod) { g_mod = mod; }
 void kern_test_set_x_connected(int connected) { g_x_connected = connected; }
 const char *kern_test_x_last_publish(void) { return g_x_has_publish ? g_x_last_publish : NULL; }
+const char *kern_test_x_last_reply_id(void) { return g_x_has_reply ? g_x_last_reply : NULL; }
 int  kern_test_x_titlebar_state(void) { return g_x_titlebar; }
 int  kern_test_x_feed_requested(void) { return g_x_feed_requested; }
 void kern_test_set_x_identity(const char *name, const char *handle) {
@@ -70,6 +76,8 @@ void kern_test_platform_reset(void) {
   g_x_connected = 0;
   g_x_has_publish = 0;
   g_x_last_publish[0] = '\0';
+  g_x_has_reply = 0;
+  g_x_last_reply[0] = '\0';
   g_x_titlebar = -1;
   g_x_feed_requested = 0;
   g_x_bookmarks_requested = 0;

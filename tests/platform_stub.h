@@ -18,6 +18,10 @@ void kern_test_set_x_connected(int connected);
 /* Last text handed to kern_x_publish(), or NULL if none since the last reset. */
 const char *kern_test_x_last_publish(void);
 
+/* Reply target of the last kern_x_publish(): the tweet-id string when it was a
+ * reply, NULL when it was a plain post (or nothing was published yet). */
+const char *kern_test_x_last_reply_id(void);
+
 /* Last value passed to kern_titlebar_set_x_connected() (-1 = never called). */
 int kern_test_x_titlebar_state(void);
 

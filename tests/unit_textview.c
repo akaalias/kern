@@ -46,6 +46,7 @@ void kern_x_feed_done(int ok, const char *text);     /* async news-feed result *
 void kern_x_bookmarks_done(int ok, const char *text);   /* async bookmarks result */
 int  kern_feed_skip_post(const char *text);          /* news-feed noise filter */
 void kern_feed_quote_text(const char *text, char *out, int outsz);  /* "> " prefixer */
+/* kern_reply_scan + KernReplyTarget come from editor_loop.h */
 
 static EditorState *ED;
 static ViewState   *VS;
@@ -795,6 +796,122 @@ static void test_overlay_swallows_typing(void) {
   EXPECT_LINE(0, "body");                        /* buffer untouched */
 }
 
+/* ---- Publish-as-reply: a note holding an X status URL followed by commentary
+   posts the commentary as a REPLY to that tweet (POST /2/tweets with
+   reply.in_reply_to_tweet_id). ---- */
+
+/* kern_reply_scan finds the last x.com/<handle>/status/<id> URL and returns
+   the trimmed commentary after it, extracting the tweet id + author handle —
+   plus, from the feed-entry structure above the URL, the author display name,
+   date, and the quoted text (for the original-post preview in the overlay). */
+static void test_reply_scan_extracts_target_and_commentary(void) {
+  KernReplyTarget t; int clen = 0;
+  const char *c = kern_reply_scan(
+      "## signull \xE2\x80\x94 2026-07-06 at 16:55\n\n"
+      "> any numbers game you play makes you either the gambler or the house.\n"
+      ">\n"
+      "> at that point, which side are you on?\n\n"
+      "https://x.com/signulll/status/2074145302907441169\n\n"
+      "which is why the house always publishes\nthe odds.\n",
+      &t, &clen);
+  CHECK(c != NULL);
+  CHECK_SEQ(t.id, "2074145302907441169");
+  CHECK_SEQ(t.handle, "signulll");
+  CHECK_SEQ(t.author, "signull");
+  CHECK_SEQ(t.date, "Jul 6");                  /* 2026-07-06 prettified */
+  CHECK_SEQ(t.quote, "any numbers game you play makes you either the gambler "
+                     "or the house.\n\nat that point, which side are you on?");
+  CHECK_IEQ(strncmp(c, "which is why", 12), 0);
+  /* trimmed both ends: ends at "odds." (no trailing newline) */
+  CHECK_IEQ(c[clen - 1], '.');
+  CHECK_IEQ(strncmp(c + clen - 5, "odds.", 5), 0);
+}
+
+/* A hand-written URL with none of the feed structure above it still replies —
+   just with no quoted-tweet preview (author/date/quote empty). */
+static void test_reply_scan_bare_url_no_quote(void) {
+  KernReplyTarget t; int clen = 0;
+  const char *c = kern_reply_scan(
+      "some intro text\nhttps://x.com/someone/status/555\nmy take",
+      &t, &clen);
+  CHECK(c != NULL);
+  CHECK_SEQ(t.id, "555");
+  CHECK_SEQ(t.author, "");
+  CHECK_SEQ(t.quote, "");
+}
+
+/* twitter.com URLs work too, and with several entries the LAST URL is the
+   reply target (text between entries belongs to the next entry, not us). */
+static void test_reply_scan_last_url_wins(void) {
+  KernReplyTarget t; int clen = 0;
+  const char *c = kern_reply_scan(
+      "https://twitter.com/first/status/111\n\nnot commentary, next entry\n\n"
+      "https://twitter.com/second/status/222\n\nactual commentary",
+      &t, &clen);
+  CHECK(c != NULL);
+  CHECK_SEQ(t.id, "222");
+  CHECK_SEQ(t.handle, "second");
+  CHECK_IEQ(strncmp(c, "actual commentary", clen), 0);
+}
+
+/* Nothing after the URL -> not a reply (nothing to say). */
+static void test_reply_scan_no_commentary(void) {
+  KernReplyTarget t; int clen = 0;
+  CHECK(kern_reply_scan("look at this\nhttps://x.com/a/status/99\n\n",
+                        &t, &clen) == NULL);
+}
+
+/* No status URL at all -> not a reply. */
+static void test_reply_scan_no_url(void) {
+  KernReplyTarget t; int clen = 0;
+  CHECK(kern_reply_scan("just a note about x.com and twitter",
+                        &t, &clen) == NULL);
+}
+
+/* Publishing a note that ends URL-then-commentary opens the overlay in reply
+   mode: the preview is ONLY the commentary, and the reply target — id plus
+   the quoted-tweet fields for the original-post preview — is stashed. */
+static void test_publish_detects_reply(void) {
+  tv_begin();
+  load("## someone \xE2\x80\x94 today\n\n> quoted post\n\n"
+       "https://x.com/someone/status/12345\n\nmy reply text");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK_IEQ(tv_test_pub_state(), 1);
+  CHECK_SEQ(tv_test_pub_text(), "my reply text");
+  CHECK_SEQ(tv_test_pub_reply_id(), "12345");
+  CHECK_SEQ(tv_test_pub_quote_author(), "someone");
+  CHECK_SEQ(tv_test_pub_quote_text(), "quoted post");
+}
+
+/* Confirming a reply hands both the commentary and the tweet id to the Swift
+   publisher. */
+static void test_overlay_confirm_posts_reply(void) {
+  tv_begin();
+  load("https://x.com/someone/status/777\n\nwell said");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  CHECK_IEQ(tv_test_pub_state(), 2);
+  CHECK_SEQ(kern_test_x_last_publish(), "well said");
+  CHECK(kern_test_x_last_reply_id() != NULL);
+  CHECK_SEQ(kern_test_x_last_reply_id(), "777");
+}
+
+/* A note with no status URL publishes exactly as before: whole note, no reply
+   id anywhere. */
+static void test_publish_without_url_is_normal_post(void) {
+  tv_begin();
+  load("plain note");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK_SEQ(tv_test_pub_text(), "plain note");
+  CHECK_SEQ(tv_test_pub_reply_id(), "");
+  key(0, SDLK_RETURN);
+  CHECK_SEQ(kern_test_x_last_publish(), "plain note");
+  CHECK(kern_test_x_last_reply_id() == NULL);   /* posted as a plain tweet */
+}
+
 /* ---- X news feed (C-x n -> async fetch -> time-stamped News note) ---- */
 
 /* With no account linked, C-x n reports and never asks Swift for the feed. */
@@ -1159,6 +1276,14 @@ void suite_textview(void) {
   RUN(test_publish_failure_keeps_overlay);
   RUN(test_overlay_swallows_typing);
   RUN(test_overlay_renders_identity);
+  RUN(test_reply_scan_extracts_target_and_commentary);
+  RUN(test_reply_scan_bare_url_no_quote);
+  RUN(test_reply_scan_last_url_wins);
+  RUN(test_reply_scan_no_commentary);
+  RUN(test_reply_scan_no_url);
+  RUN(test_publish_detects_reply);
+  RUN(test_overlay_confirm_posts_reply);
+  RUN(test_publish_without_url_is_normal_post);
   RUN(test_cx_n_not_connected);
   RUN(test_cx_n_requests_feed);
   RUN(test_feed_result_opens_news_note);
