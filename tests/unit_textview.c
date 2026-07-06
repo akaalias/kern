@@ -27,6 +27,7 @@
 void kern_publish_to_x(void);                     /* title-bar Publish button */
 void kern_x_publish_done(int ok, const char *info);  /* async publish result */
 void kern_x_feed_done(int ok, const char *text);     /* async news-feed result */
+void kern_x_bookmarks_done(int ok, const char *text);   /* async bookmarks result */
 int  kern_feed_skip_post(const char *text);          /* news-feed noise filter */
 void kern_feed_quote_text(const char *text, char *out, int outsz);  /* "> " prefixer */
 
@@ -840,6 +841,54 @@ static void test_feed_quote_text(void) {
   CHECK_SEQ(tiny, "> abc");
 }
 
+/* ---- X bookmarks (C-x m -> paginated fetch -> Twitter-Bookmarks note) ---- */
+
+/* With no account linked, C-x m reports and never asks Swift for bookmarks. */
+static void test_cx_m_not_connected(void) {
+  tv_begin(); load("hi");
+  kern_test_set_x_connected(0);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_m);
+  CHECK_IEQ(kern_test_x_bookmarks_requested(), 0);
+  CHECK(strstr(VS->status_msg, "Connect") != NULL);
+}
+
+/* Connected, C-x m kicks off the async bookmarks fetch. */
+static void test_cx_m_requests_bookmarks(void) {
+  tv_begin(); load("hi");
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_m);
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);
+  CHECK_IEQ(kern_test_x_bookmarks_requested(), 1);
+  CHECK(strstr(VS->status_msg, "bookmarks") != NULL);
+}
+
+/* A successful bookmarks fetch lands in its own Twitter-Bookmarks-… note with
+   a matching title heading — same result plumbing as the news feed, different
+   name so the two kinds of notes don't collide. */
+static void test_bookmarks_result_opens_note(void) {
+  tv_begin();
+  char docs[256]; fresh_docs_dir(docs, sizeof docs);
+  load("hi");
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_m);
+  kern_x_bookmarks_done(1,
+    "## Frank Smith \xE2\x80\x94 2026-07-06 at 14:32\n\n"
+    "> a bookmarked gem\n> second line\n\n"
+    "Frank Smith (@frank) \xE2\x80\x94 2026-07-06 14:32\n"
+    "https://x.com/frank/status/42\n");
+  editor_tick();
+  CHECK(strstr(ED->filepath, "Twitter-Bookmarks-") != NULL);
+  CHECK(strncmp(ED->lines[0].text, "# Twitter Bookmarks", 19) == 0);
+  int saw = 0;
+  for (int i = 0; i < ED->line_count; i++)
+    if (strstr(ED->lines[i].text, "a bookmarked gem")) saw = 1;
+  CHECK(saw);
+  buf_set_documents_dir("");
+}
+
 /* A failed fetch reports the error and leaves the current buffer alone. */
 static void test_feed_failure_reports_error(void) {
   tv_begin(); load("keep me");
@@ -961,6 +1010,9 @@ void suite_textview(void) {
   RUN(test_feed_skip_link_only_posts);
   RUN(test_feed_skip_single_line_posts);
   RUN(test_feed_quote_text);
+  RUN(test_cx_m_not_connected);
+  RUN(test_cx_m_requests_bookmarks);
+  RUN(test_bookmarks_result_opens_note);
   RUN(test_feed_failure_reports_error);
 
   /* leave globals clean for any later suite */

@@ -185,6 +185,7 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Extract selection to a new note", "Cmd-S-N"),
         B("Today's note", "Cmd-S-T"),
         B("Download your X news feed", "C-x n"),
+        B("Download all your X bookmarks", "C-x m"),
         B("Go back", "Cmd-S-Left"), B("Go forward", "Cmd-S-Right"),
     ]),
     ShortcutGroup(title: "Files", bindings: [
@@ -441,7 +442,9 @@ nonisolated final class XAuth {
     // This must exactly match a Callback URI registered in the X portal.
     private let loopbackPort: UInt16 = 8123
     private var redirectURI: String { "http://127.0.0.1:\(loopbackPort)/callback" }
-    private let scopes = "tweet.read tweet.write users.read offline.access"
+    // bookmark.read gates GET /2/users/:id/bookmarks (C-x m). Accounts
+    // connected before it was added must disconnect + reconnect to grant it.
+    private let scopes = "tweet.read tweet.write users.read bookmark.read offline.access"
 
     private let authorizeURL = "https://x.com/i/oauth2/authorize"
     private let tokenURL = "https://api.x.com/2/oauth2/token"
@@ -744,9 +747,54 @@ nonisolated final class XAuth {
         return Self.feedMarkdown(data)
     }
 
+    /// Fetch ALL bookmarks — GET /2/users/:id/bookmarks, paginated with
+    /// pagination_token until meta.next_token runs out — formatted like the
+    /// news feed but with NOTHING filtered: every bookmark was marked
+    /// deliberately, so link-only posts and one-liners stay in. If a later
+    /// page fails after some were collected (e.g. a rate limit), the partial
+    /// result is returned with a note rather than thrown away.
+    func bookmarks() async throws -> String {
+        let token = try await validAccessToken()
+        let id = try await userID(token: token)
+        var out = ""
+        var pageToken: String? = nil
+        for page in 1...80 {                    // safety cap: 80 pages = 4,000 bookmarks
+            reportXStatus("Fetching your X bookmarks… page \(page)")
+            var comps = URLComponents(string: "\(usersURL)/\(id)/bookmarks")!
+            var items: [URLQueryItem] = [
+                // NOT 100: the bookmarks endpoint silently truncates and drops
+                // meta.next_token at max_results=100 (one ~100-entry page, no
+                // pagination). 50 is the highest batch size that pages reliably.
+                .init(name: "max_results", value: "50"),
+                .init(name: "tweet.fields", value: "created_at,author_id"),
+                .init(name: "expansions", value: "author_id"),
+                .init(name: "user.fields", value: "name,username"),
+            ]
+            if let pageToken { items.append(.init(name: "pagination_token", value: pageToken)) }
+            comps.queryItems = items
+            var req = URLRequest(url: comps.url!)
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            guard status == 200 else {
+                let msg = Self.apiMessage(data) ?? "bookmarks fetch failed (HTTP \(status))"
+                if out.isEmpty { throw XError(msg) }
+                out += "…stopped early (\(msg)) — the bookmarks above were fetched before the error.\n"
+                return out
+            }
+            out += Self.feedMarkdown(data, filterNoise: false)
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            pageToken = (obj?["meta"] as? [String: Any])?["next_token"] as? String
+            if pageToken == nil { break }
+        }
+        return out
+    }
+
     /// Render the timeline JSON into markdown entries. Empty string if the
     /// feed has no posts (the caller reports that as a non-error).
-    private static func feedMarkdown(_ data: Data) -> String {
+    /// filterNoise applies the news feed's skip rules (image-only posts,
+    /// one-liners) — off for bookmarks, which are kept verbatim.
+    private static func feedMarkdown(_ data: Data, filterNoise: Bool = true) -> String {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tweets = obj["data"] as? [[String: Any]], !tweets.isEmpty
         else { return "" }
@@ -774,7 +822,7 @@ nonisolated final class XAuth {
             let text = unescapeEntities((t["text"] as? String) ?? "")
             // Skip the noise: image/link-only posts and one-liners
             // (kern_feed_skip_post, the headless-tested C filter).
-            if text.withCString({ kern_feed_skip_post($0) }) != 0 { continue }
+            if filterNoise, text.withCString({ kern_feed_skip_post($0) }) != 0 { continue }
             let tid = (t["id"] as? String) ?? ""
             let author = users[(t["author_id"] as? String) ?? ""] ?? ("Unknown", "unknown")
             var day = "", hm = "", stamp = ""
@@ -1062,6 +1110,26 @@ public func kern_x_fetch_feed() {
         } catch {
             let msg = "X: \(error.localizedDescription)"
             msg.withCString { kern_x_feed_done(0, $0) }
+        }
+    }
+}
+
+/// Fire-and-forget bookmarks fetch (C-x m). Returns immediately; every page of
+/// bookmarks (formatted as markdown entries) or an error lands in
+/// kern_x_bookmarks_done(), applied on the editor's next main-thread tick.
+@_cdecl("kern_x_fetch_bookmarks")
+public func kern_x_fetch_bookmarks() {
+    Task.detached {
+        do {
+            let md = try await XAuth.shared.bookmarks()
+            if md.isEmpty {
+                "No bookmarks found".withCString { kern_x_bookmarks_done(0, $0) }
+            } else {
+                md.withCString { kern_x_bookmarks_done(1, $0) }
+            }
+        } catch {
+            let msg = "X: \(error.localizedDescription)"
+            msg.withCString { kern_x_bookmarks_done(0, $0) }
         }
     }
 }

@@ -118,6 +118,7 @@ section at the bottom listing backlinks and notes created the same day.
 | `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
 | `Cmd-Shift-T`                 | Open (or create) today's daily note               |
 | `C-x n`                       | Download your X home feed into a time-stamped news note |
+| `C-x m`                       | Download ALL your X bookmarks into a time-stamped note |
 
 ## Publishing to X (Twitter)
 
@@ -133,7 +134,13 @@ into a time-stamped `Twitter-Home-Newsfeed-YYYY-MM-DD-HHMM.md` note — one
 `## author — date at time` entry per post, with the text as a `>` blockquote
 (rendered in italics), the byline, and the URL below it, so you can mark up a
 post and `Cmd-Shift-N` it into a note of its own. Image-only posts (just a
-media link) and one-liners are filtered out. (Reading
+media link) and one-liners are filtered out.
+
+`C-x m` does the same for your **bookmarks**: every bookmarked post (paginated
+through the whole list, nothing filtered — you marked them for a reason) lands
+in a `Twitter-Bookmarks-YYYY-MM-DD-HHMM.md` note in the same format. Requires
+the `bookmark.read` scope — accounts connected before this feature must
+disconnect and reconnect once in Settings → X. (Reading
 the timeline uses X's `timelines/reverse_chronological` endpoint, which needs
 an API tier that includes read access.)
 

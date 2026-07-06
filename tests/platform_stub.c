@@ -28,6 +28,9 @@ void kern_x_publish(const char *text) {
 }
 void kern_titlebar_set_x_connected(int connected) { g_x_titlebar = connected; }
 void kern_x_fetch_feed(void) { g_x_feed_requested = 1; }
+static int g_x_bookmarks_requested = 0;
+void kern_x_fetch_bookmarks(void) { g_x_bookmarks_requested = 1; }
+int  kern_test_x_bookmarks_requested(void) { return g_x_bookmarks_requested; }
 
 /* Account identity for the tweet-preview overlay (Swift fetches these from
    /2/users/me in the app). No avatar pixels headlessly -> the initials path. */
@@ -55,6 +58,7 @@ void kern_test_platform_reset(void) {
   g_x_last_publish[0] = '\0';
   g_x_titlebar = -1;
   g_x_feed_requested = 0;
+  g_x_bookmarks_requested = 0;
   snprintf(g_x_name, sizeof(g_x_name), "Test User");
   snprintf(g_x_handle, sizeof(g_x_handle), "testuser");
 }

@@ -26,6 +26,10 @@ void kern_x_publish_done(int ok, const char *info);
    applied on the next editor tick (written to a time-stamped News note). */
 void kern_x_feed_done(int ok, const char *text);
 
+/* Deliver the async bookmarks fetch (C-x m) — same contract as
+   kern_x_feed_done, landing in a Twitter-Bookmarks note instead. */
+void kern_x_bookmarks_done(int ok, const char *text);
+
 /* News-feed noise filter: 1 to leave a post out of the news note (link-only
    posts — e.g. bare image posts — and one-liners). Implemented in textview.c
    (pure string logic, headless-tested); called per post by the Swift feed
