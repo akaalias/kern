@@ -44,6 +44,12 @@ const char *kern_reply_scan(const char *text, KernReplyTarget *t, int *len_out);
    multi-entry feed note), or no commentary all decline. Pure C. */
 const char *kern_quote_scan(const char *text, KernReplyTarget *t, int *len_out);
 
+/* Append an error entry (## <context> — <date time> + blockquoted detail) to
+   the "Kern-Errors.md" note in the documents dir, newest entry on top — where
+   a long async failure (X publish/feed) can be read after the 3-second status
+   bar fades. No-op when no documents dir is set. */
+void kern_error_log(const char *context, const char *detail);
+
 #ifdef KERN_HEADLESS_TEST
 /* Test-only seam: reach the textview.c singletons and reset all mutable
    state (g_ed/g_vs + the modal file-statics) so each test starts clean. */

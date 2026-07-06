@@ -788,6 +788,92 @@ static void test_publish_failure_keeps_overlay(void) {
   CHECK(strstr(VS->status_msg, "rate limit") != NULL);
 }
 
+/* ---- Error log: async X failures are written to a Kern-Errors.md note in
+   the documents dir (newest entry on top, blockquoted detail) so a long API
+   error outlives the 3-second status bar and can be read in the editor. ---- */
+
+/* slurp <docs>/Kern-Errors.md; NULL if absent */
+static char *read_error_note(const char *docs) {
+  char path[1024]; snprintf(path, sizeof(path), "%s/Kern-Errors.md", docs);
+  FILE *f = fopen(path, "rb");
+  if (!f) return NULL;
+  static char buf[8192];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+  buf[n] = '\0'; fclose(f);
+  return buf;
+}
+
+static void test_publish_failure_logs_error_note(void) {
+  tv_begin(); load("oops");
+  char docs[512]; fresh_docs_dir(docs, sizeof(docs));
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  kern_x_publish_done(0, "403 Forbidden: your tier lacks access\nsecond detail line");
+  editor_tick();
+  char *note = read_error_note(docs);
+  CHECK(note != NULL);
+  if (note) {
+    CHECK(strncmp(note, "# Kern Errors", 13) == 0);
+    CHECK(strstr(note, "## X publish failed \xE2\x80\x94 ") != NULL);
+    /* multi-line detail is blockquoted line by line */
+    CHECK(strstr(note, "> 403 Forbidden: your tier lacks access\n> second detail line") != NULL);
+  }
+  buf_set_documents_dir("");
+}
+
+/* A second failure lands ABOVE the first (newest-first), under one title. */
+static void test_error_log_newest_entry_first(void) {
+  tv_begin(); load("x");
+  char docs[512]; fresh_docs_dir(docs, sizeof(docs));
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  kern_x_publish_done(0, "older error"); editor_tick();
+  key(0, SDLK_RETURN);                       /* overlay is back at confirm; retry */
+  kern_x_publish_done(0, "newer error"); editor_tick();
+  char *note = read_error_note(docs);
+  CHECK(note != NULL);
+  if (note) {
+    char *newer = strstr(note, "newer error"), *older = strstr(note, "older error");
+    CHECK(newer != NULL && older != NULL && newer < older);
+    CHECK(strstr(note + 1, "# Kern Errors") == NULL);   /* title not duplicated */
+  }
+  buf_set_documents_dir("");
+}
+
+/* Feed / bookmarks fetch failures log too, each under its own context. */
+static void test_feed_failure_logs_error_note(void) {
+  tv_begin(); load("keep");
+  char docs[512]; fresh_docs_dir(docs, sizeof(docs));
+  kern_test_set_x_connected(1);
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_n);
+  kern_x_feed_done(0, "X: rate limit exceeded");
+  editor_tick();
+  char *note = read_error_note(docs);
+  CHECK(note != NULL);
+  if (note) {
+    CHECK(strstr(note, "## X feed download failed \xE2\x80\x94 ") != NULL);
+    CHECK(strstr(note, "> X: rate limit exceeded") != NULL);
+  }
+  buf_set_documents_dir("");
+}
+
+/* Without a documents dir (bare CLI/test build) nothing is written. */
+static void test_error_log_noop_without_documents_dir(void) {
+  tv_begin(); load("x");
+  buf_set_documents_dir("");
+  unlink("Kern-Errors.md");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  kern_x_publish_done(0, "boom"); editor_tick();
+  FILE *f = fopen("Kern-Errors.md", "rb");
+  CHECK(f == NULL);
+  if (f) fclose(f);
+}
+
 /* The overlay swallows ordinary keystrokes — typing while it's open must not
    reach the buffer. */
 static void test_overlay_swallows_typing(void) {
@@ -1444,6 +1530,10 @@ void suite_textview(void) {
   RUN(test_overlay_cancel_closes);
   RUN(test_publish_success_copies_url_and_closes);
   RUN(test_publish_failure_keeps_overlay);
+  RUN(test_publish_failure_logs_error_note);
+  RUN(test_error_log_newest_entry_first);
+  RUN(test_feed_failure_logs_error_note);
+  RUN(test_error_log_noop_without_documents_dir);
   RUN(test_overlay_swallows_typing);
   RUN(test_overlay_renders_identity);
   RUN(test_reply_scan_extracts_target_and_commentary);

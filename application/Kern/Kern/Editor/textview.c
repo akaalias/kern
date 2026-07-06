@@ -1020,6 +1020,61 @@ void kern_x_publish_done(int ok, const char *info) {
   snprintf(pub_result_info, sizeof(pub_result_info), "%s", info ? info : "");
 }
 
+/* Append an error to the "Kern-Errors.md" note in the documents dir — a
+   `## <context> — <date time>` heading plus the detail as a blockquote,
+   inserted right under the `# Kern Errors` title so the newest failure is on
+   top when the note is opened. The status bar truncates and fades after three
+   seconds (and is blurred under the publish overlay's backdrop), so this note
+   is where a long API error can actually be read — in the editor, like any
+   other note. Guarded on the documents dir being set (the app always sets it;
+   headless tests opt in with a temp dir), so a bare CLI run writes nothing. */
+void kern_feed_quote_text(const char *text, char *out, int outsz);  /* defined below */
+
+void kern_error_log(const char *context, const char *detail) {
+  static const char title[] = "# Kern Errors\n";
+  if (!buf_get_documents_dir()[0]) return;
+  if (!detail || !detail[0]) detail = "(no detail)";
+
+  char when[64];
+  time_t t = time(NULL); struct tm lt; localtime_r(&t, &lt);
+  strftime(when, sizeof(when), "%A, %B %d, %Y %H:%M", &lt);
+
+  size_t qcap = 2 * strlen(detail) + 16;      /* "> " per line, worst case */
+  char *quoted = malloc(qcap);
+  if (!quoted) return;
+  kern_feed_quote_text(detail, quoted, (int)qcap);
+
+  char path[1024];
+  buf_resolve_path("Kern-Errors.md", path, sizeof(path));
+
+  /* previous entries: the existing file minus its title line */
+  char *old = NULL; long oldlen = 0;
+  FILE *f = fopen(path, "rb");
+  if (f) {
+    fseek(f, 0, SEEK_END); oldlen = ftell(f); fseek(f, 0, SEEK_SET);
+    if (oldlen > 0 && (old = malloc((size_t)oldlen + 1)) != NULL) {
+      oldlen = (long)fread(old, 1, (size_t)oldlen, f);
+      old[oldlen] = '\0';
+    }
+    fclose(f);
+  }
+  const char *rest = old ? old : "";
+  if (strncmp(rest, title, sizeof(title) - 1) == 0) rest += sizeof(title) - 1;
+  while (*rest == '\n') rest++;
+
+  size_t cap = sizeof(title) + strlen(context ? context : "error") + sizeof(when)
+             + strlen(quoted) + strlen(rest) + 32;
+  char *doc = malloc(cap);
+  if (doc) {
+    int n = snprintf(doc, cap, "%s\n## %s \xE2\x80\x94 %s\n\n%s\n\n%s",
+                     title, context ? context : "error", when, quoted, rest);
+    if (n > 0) buf_save_text(path, doc, n);
+    free(doc);
+  }
+  free(quoted);
+  free(old);
+}
+
 /* Main-thread application of a pending publish result (from editor_tick). */
 static void pub_apply_result(void) {
   if (pub_result == 0) return;
@@ -1033,6 +1088,7 @@ static void pub_apply_result(void) {
     pub_state = PUB_NONE;
   } else {                                  /* failure */
     nav_status_set(&g_vs, pub_result_info[0] ? pub_result_info : "X publish failed");
+    kern_error_log("X publish failed", pub_result_info);
     if (pub_state == PUB_SENDING) pub_state = PUB_CONFIRM;   /* let the user retry */
   }
   pub_result = 0;
@@ -1112,6 +1168,9 @@ static void feed_apply_result(void) {
   feed_result = 0;
   if (!ok) {
     nav_status_set(&g_vs, feed_result_text[0] ? feed_result_text : "X feed fetch failed");
+    kern_error_log(feed_result_kind == FEED_BOOKMARKS ? "X bookmarks download failed"
+                                                      : "X feed download failed",
+                   feed_result_text);
     return;
   }
 
