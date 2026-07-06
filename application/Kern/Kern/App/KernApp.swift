@@ -881,6 +881,92 @@ nonisolated final class XAuth {
         return out
     }
 
+    // MARK: reply-target lookup
+
+    // The reply-target author's avatar, downloaded with fetchTweet — same
+    // stable-C-memory scheme as the connected account's photo above.
+    private let replyAvatarLock = NSLock()
+    private var replyAvatarPtr: UnsafeMutablePointer<UInt8>?
+    private var replyAvatarW = 0, replyAvatarH = 0
+
+    /// (pointer, width, height) of the reply author's avatar, or nil.
+    func replyAvatar() -> (UnsafePointer<UInt8>, Int, Int)? {
+        replyAvatarLock.lock(); defer { replyAvatarLock.unlock() }
+        guard let p = replyAvatarPtr else { return nil }
+        return (UnsafePointer(p), replyAvatarW, replyAvatarH)
+    }
+
+    /// Drop the cached reply-author avatar (called when a new lookup starts,
+    /// so a stale photo never shows against a different tweet).
+    func clearReplyAvatar() {
+        replyAvatarLock.lock(); defer { replyAvatarLock.unlock() }
+        free(replyAvatarPtr); replyAvatarPtr = nil
+        replyAvatarW = 0; replyAvatarH = 0
+    }
+
+    /// Look up the reply-target tweet — GET /2/tweets/:id with the author
+    /// expanded (needs tweet.read + users.read, both in `scopes`). Returns the
+    /// author's display name + @handle, the post date ("Jul 6"), and the full
+    /// text (note_tweet.text for long posts, else text). Also kicks off a
+    /// download of the author's profile photo into `replyAvatar`.
+    func fetchTweet(id: String)
+        async throws -> (name: String, handle: String, date: String, text: String) {
+        let token = try await validAccessToken()
+        var comps = URLComponents(string: "\(tweetsURL)/\(id)")!
+        comps.queryItems = [
+            .init(name: "expansions", value: "author_id"),
+            .init(name: "tweet.fields", value: "created_at,note_tweet"),
+            .init(name: "user.fields", value: "name,username,profile_image_url"),
+        ]
+        var req = URLRequest(url: comps.url!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200 else {
+            throw XError(Self.apiMessage(data) ?? "tweet lookup failed (HTTP \(status))")
+        }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tweet = obj["data"] as? [String: Any] else {
+            throw XError("tweet lookup: malformed response")
+        }
+        // Long posts carry the full text in note_tweet; `text` is truncated.
+        let noteText = (tweet["note_tweet"] as? [String: Any])?["text"] as? String
+        let text = Self.unescapeEntities(noteText ?? (tweet["text"] as? String) ?? "")
+
+        var date = ""
+        if let created = tweet["created_at"] as? String {
+            let isoFrac = ISO8601DateFormatter()
+            isoFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let iso = ISO8601DateFormatter()
+            if let d = isoFrac.date(from: created) ?? iso.date(from: created) {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "MMM d"
+                date = f.string(from: d)
+            }
+        }
+
+        var name = "", handle = ""
+        if let inc = obj["includes"] as? [String: Any],
+           let user = (inc["users"] as? [[String: Any]])?.first {
+            name = (user["name"] as? String) ?? ""
+            handle = (user["username"] as? String) ?? ""
+            if let av = user["profile_image_url"] as? String, let url = URL(string: av) {
+                Task.detached { [self] in
+                    guard let (d, _) = try? await URLSession.shared.data(from: url),
+                          let (bytes, w, h) = Self.decodeRGBA(d) else { return }
+                    replyAvatarLock.lock()
+                    free(replyAvatarPtr)
+                    let p = UnsafeMutablePointer<UInt8>.allocate(capacity: bytes.count)
+                    bytes.withUnsafeBufferPointer { p.update(from: $0.baseAddress!, count: bytes.count) }
+                    replyAvatarPtr = p; replyAvatarW = w; replyAvatarH = h
+                    replyAvatarLock.unlock()
+                }
+            }
+        }
+        return (name, handle, date, text)
+    }
+
     /// Render the timeline JSON into markdown entries. Empty string if the
     /// feed has no posts (the caller reports that as a non-error).
     /// filterNoise applies the news feed's skip rules (image-only posts,
@@ -1229,6 +1315,49 @@ public func kern_x_fetch_bookmarks() {
             msg.withCString { kern_x_bookmarks_done(0, $0) }
         }
     }
+}
+
+/// Fire-and-forget lookup of the reply-target tweet for the confirmation
+/// overlay. The result crosses back via kern_x_tweet_done (any thread; the
+/// editor applies it on the main-thread tick). Failures are reported with
+/// ok=0 and simply leave the note-parsed preview in place.
+@_cdecl("kern_x_fetch_tweet")
+public func kern_x_fetch_tweet(_ cid: UnsafePointer<CChar>?) {
+    guard let cid else { return }
+    let id = String(cString: cid)
+    XAuth.shared.clearReplyAvatar()   // never show a stale photo for a new target
+    Task.detached {
+        do {
+            let t = try await XAuth.shared.fetchTweet(id: id)
+            id.withCString { i in
+                t.name.withCString { n in
+                    t.handle.withCString { h in
+                        t.date.withCString { d in
+                            t.text.withCString { x in
+                                kern_x_tweet_done(1, i, n, h, d, x)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch {
+            id.withCString { i in
+                "".withCString { e in kern_x_tweet_done(0, i, e, e, e, e) }
+            }
+        }
+    }
+}
+
+/// Tightly-packed RGBA pixels of the reply-target author's photo, or NULL if
+/// not (yet) downloaded — the overlay then falls back to an initials disc.
+@_cdecl("kern_x_reply_avatar_rgba")
+public func kern_x_reply_avatar_rgba(_ w: UnsafeMutablePointer<Int32>?,
+                                     _ h: UnsafeMutablePointer<Int32>?) -> UnsafePointer<UInt8>? {
+    guard let (p, aw, ah) = XAuth.shared.replyAvatar() else {
+        w?.pointee = 0; h?.pointee = 0; return nil
+    }
+    w?.pointee = Int32(aw); h?.pointee = Int32(ah)
+    return p
 }
 
 /// Tightly-packed RGBA pixels of the profile photo (top row first), or NULL if

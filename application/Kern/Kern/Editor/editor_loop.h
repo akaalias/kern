@@ -37,6 +37,13 @@ typedef struct {
    `t` filled in, or NULL when the note is a plain post. Pure C. */
 const char *kern_reply_scan(const char *text, KernReplyTarget *t, int *len_out);
 
+/* Scan `text` for QUOTE shape: plain commentary ABOVE a single feed entry
+   (heading + blockquote + status URL) with nothing after the URL. Returns
+   the commentary start (trimmed; *len_out = length) with `t` filled in, or
+   NULL — text below the URL (that's a reply), another entry above (a
+   multi-entry feed note), or no commentary all decline. Pure C. */
+const char *kern_quote_scan(const char *text, KernReplyTarget *t, int *len_out);
+
 #ifdef KERN_HEADLESS_TEST
 /* Test-only seam: reach the textview.c singletons and reset all mutable
    state (g_ed/g_vs + the modal file-statics) so each test starts clean. */
@@ -47,6 +54,8 @@ void         tv_test_reset(void);
 int          tv_test_opened_after(const char *path, char out[][256], int max);
 /* X-publish confirmation overlay state: 0 = closed, 1 = confirming, 2 = sending. */
 int          tv_test_pub_state(void);
+/* What the pending publish is: 0 = plain post, 1 = reply, 2 = quote. */
+int          tv_test_pub_kind(void);
 /* The text snapshotted for the pending publish (the tweet-preview body). */
 const char  *tv_test_pub_text(void);
 /* The reply-target tweet id of the pending publish ("" = a plain post). */
@@ -54,6 +63,7 @@ const char  *tv_test_pub_reply_id(void);
 /* The quoted-tweet preview fields of the pending reply ("" when absent). */
 const char  *tv_test_pub_quote_author(void);
 const char  *tv_test_pub_quote_text(void);
+const char  *tv_test_pub_reply_handle(void);
 #endif
 
 #endif /* EDITOR_LOOP_H */

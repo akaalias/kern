@@ -38,6 +38,20 @@ static int g_view_menu_syncs = 0;
 void kern_menus_sync(void) { g_view_menu_syncs++; }
 int  kern_test_view_menu_syncs(void) { return g_view_menu_syncs; }
 void kern_x_fetch_feed(void) { g_x_feed_requested = 1; }
+static char g_x_tweet_fetch_id[32];
+static int  g_x_tweet_fetch = 0;
+void kern_x_fetch_tweet(const char *id) {
+  snprintf(g_x_tweet_fetch_id, sizeof(g_x_tweet_fetch_id), "%s", id ? id : "");
+  g_x_tweet_fetch = 1;
+}
+const char *kern_test_x_tweet_fetch_id(void) {
+  return g_x_tweet_fetch ? g_x_tweet_fetch_id : NULL;
+}
+/* Reply-author avatar (Swift downloads it with the tweet fetch in the app);
+   never available headlessly -> the initials path. */
+const unsigned char *kern_x_reply_avatar_rgba(int *w, int *h) {
+  if (w) *w = 0; if (h) *h = 0; return 0;
+}
 static int g_x_bookmarks_requested = 0;
 void kern_x_fetch_bookmarks(void) { g_x_bookmarks_requested = 1; }
 int  kern_test_x_bookmarks_requested(void) { return g_x_bookmarks_requested; }
@@ -78,6 +92,8 @@ void kern_test_platform_reset(void) {
   g_x_last_publish[0] = '\0';
   g_x_has_reply = 0;
   g_x_last_reply[0] = '\0';
+  g_x_tweet_fetch = 0;
+  g_x_tweet_fetch_id[0] = '\0';
   g_x_titlebar = -1;
   g_x_feed_requested = 0;
   g_x_bookmarks_requested = 0;

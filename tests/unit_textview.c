@@ -42,6 +42,9 @@ void kern_menu_search_fwd(void);
 void kern_menu_extract_note(void);
 void kern_menu_fetch_news(void);
 void kern_x_publish_done(int ok, const char *info);  /* async publish result */
+void kern_x_tweet_done(int ok, const char *id, const char *name,
+                       const char *handle, const char *date,
+                       const char *text);            /* async tweet-fetch result */
 void kern_x_feed_done(int ok, const char *text);     /* async news-feed result */
 void kern_x_bookmarks_done(int ok, const char *text);   /* async bookmarks result */
 int  kern_feed_skip_post(const char *text);          /* news-feed noise filter */
@@ -884,6 +887,172 @@ static void test_publish_detects_reply(void) {
   CHECK_SEQ(tv_test_pub_quote_text(), "quoted post");
 }
 
+/* ---- Quote posts: commentary ABOVE the feed entry (heading + blockquote +
+   URL, nothing after the URL) publishes as a quote of that tweet — the text
+   posts with the tweet URL appended, which X renders as a quote card. ---- */
+
+/* kern_quote_scan: plain text above the entry structure is the quote
+   commentary; the entry itself fills the target (id/handle/author/quote). */
+static void test_quote_scan_extracts_commentary_above(void) {
+  KernReplyTarget t; int clen = 0;
+  const char *c = kern_quote_scan(
+      "This bears repeating,\nin case you haven't seen it:\n\n"
+      "## karpathy \xE2\x80\x94 2026-03-07 at 09:00\n\n"
+      "> I packaged up the autoresearch project.\n\n"
+      "https://x.com/karpathy/status/888\n\n",
+      &t, &clen);
+  CHECK(c != NULL);
+  CHECK_IEQ(strncmp(c, "This bears repeating,", 21), 0);
+  CHECK_IEQ(c[clen - 1], ':');                 /* trimmed at the last line */
+  CHECK_SEQ(t.id, "888");
+  CHECK_SEQ(t.handle, "karpathy");
+  CHECK_SEQ(t.author, "karpathy");
+  CHECK_SEQ(t.quote, "I packaged up the autoresearch project.");
+}
+
+/* Commentary below the URL means REPLY — quote scan must not also match. */
+static void test_quote_scan_rejects_text_below_url(void) {
+  KernReplyTarget t; int clen = 0;
+  CHECK(kern_quote_scan("my take\n\nhttps://x.com/a/status/1\n\nreply text",
+                        &t, &clen) == NULL);
+}
+
+/* A multi-entry feed note (another status URL or blockquote above the last
+   entry) is ambiguous — not a quote. */
+static void test_quote_scan_rejects_multi_entry_notes(void) {
+  KernReplyTarget t; int clen = 0;
+  CHECK(kern_quote_scan(
+      "https://x.com/first/status/1\n\n"
+      "## second \xE2\x80\x94 today\n\n> post\n\nhttps://x.com/second/status/2\n",
+      &t, &clen) == NULL);
+  CHECK(kern_quote_scan(
+      "> stray quoted line\n\nhttps://x.com/a/status/1\n",
+      &t, &clen) == NULL);
+}
+
+/* Nothing above the entry -> nothing to say -> not a quote. */
+static void test_quote_scan_nothing_above(void) {
+  KernReplyTarget t; int clen = 0;
+  CHECK(kern_quote_scan(
+      "## a \xE2\x80\x94 today\n\n> post\n\nhttps://x.com/a/status/1\n",
+      &t, &clen) == NULL);
+}
+
+/* Publishing a quote-shaped note opens the overlay in quote mode: preview is
+   only the commentary, the target is stashed, and the tweet fetch fires. */
+static void test_publish_detects_quote(void) {
+  tv_begin();
+  load("worth a read\n\n## someone \xE2\x80\x94 today\n\n> original post\n\n"
+       "https://x.com/someone/status/321\n");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK_IEQ(tv_test_pub_state(), 1);
+  CHECK_IEQ(tv_test_pub_kind(), 2);            /* quote */
+  CHECK_SEQ(tv_test_pub_text(), "worth a read");
+  CHECK_SEQ(tv_test_pub_reply_id(), "321");
+  CHECK_SEQ(tv_test_pub_quote_text(), "original post");
+  CHECK_SEQ(kern_test_x_tweet_fetch_id(), "321");
+}
+
+/* Confirming a quote posts the commentary with the tweet URL appended (X
+   renders a trailing permalink as the quote card) — as a PLAIN post, no
+   reply id (quote_tweet_id is Enterprise-gated on the API). */
+static void test_quote_confirm_appends_url(void) {
+  tv_begin();
+  load("worth a read\n\n## someone \xE2\x80\x94 today\n\n> original post\n\n"
+       "https://x.com/someone/status/321\n");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_RETURN);
+  CHECK_SEQ(kern_test_x_last_publish(),
+            "worth a read\n\nhttps://x.com/someone/status/321");
+  CHECK(kern_test_x_last_reply_id() == NULL);
+}
+
+/* Text both above AND below the URL: the reply wins (writing under the URL is
+   the deliberate act; the text above stays out of the post). */
+static void test_reply_wins_over_quote(void) {
+  tv_begin();
+  load("note to self above\n\n## someone \xE2\x80\x94 today\n\n> post\n\n"
+       "https://x.com/someone/status/77\n\nthe actual reply");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK_IEQ(tv_test_pub_kind(), 1);            /* reply */
+  CHECK_SEQ(tv_test_pub_text(), "the actual reply");
+}
+
+/* Opening a reply overlay also kicks off an async API fetch of the target
+   tweet (GET /2/tweets/:id) — the note-parsed preview shows instantly, the
+   authoritative content replaces it when the fetch lands. */
+static void test_publish_reply_requests_tweet_fetch(void) {
+  tv_begin();
+  load("https://x.com/someone/status/424242\n\nmy take");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK(kern_test_x_tweet_fetch_id() != NULL);
+  CHECK_SEQ(kern_test_x_tweet_fetch_id(), "424242");
+}
+
+/* A successful tweet fetch (applied on the main-thread tick) replaces the
+   note-parsed preview fields with the API truth — author, handle, date, and
+   the full text. */
+static void test_tweet_result_updates_preview(void) {
+  tv_begin();
+  load("## someone \xE2\x80\x94 today\n\n> parsed quote\n\n"
+       "https://x.com/someone/status/12345\n\nmy reply");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  CHECK_SEQ(tv_test_pub_quote_text(), "parsed quote");   /* instant fallback */
+  kern_x_tweet_done(1, "12345", "Real Name", "realhandle", "Jul 6",
+                    "the real full text from the API");
+  editor_tick();
+  CHECK_SEQ(tv_test_pub_quote_author(), "Real Name");
+  CHECK_SEQ(tv_test_pub_quote_text(), "the real full text from the API");
+  CHECK_SEQ(tv_test_pub_reply_handle(), "realhandle");
+  CHECK_SEQ(tv_test_pub_reply_id(), "12345");             /* target unchanged */
+}
+
+/* A failed fetch keeps the note-parsed preview (it's still a fine preview —
+   e.g. accounts on the write-only API tier can't read tweets). */
+static void test_tweet_result_failure_keeps_parsed(void) {
+  tv_begin();
+  load("## someone \xE2\x80\x94 today\n\n> parsed quote\n\n"
+       "https://x.com/someone/status/12345\n\nmy reply");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  kern_x_tweet_done(0, "12345", "", "", "", "no read access");
+  editor_tick();
+  CHECK_SEQ(tv_test_pub_quote_author(), "someone");
+  CHECK_SEQ(tv_test_pub_quote_text(), "parsed quote");
+}
+
+/* A fetch result for a DIFFERENT id than the pending reply target is stale
+   (a re-publish raced it) — ignored. */
+static void test_tweet_result_stale_id_ignored(void) {
+  tv_begin();
+  load("## someone \xE2\x80\x94 today\n\n> parsed quote\n\n"
+       "https://x.com/someone/status/12345\n\nmy reply");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  kern_x_tweet_done(1, "99999", "Wrong", "wrong", "Jan 1", "wrong tweet");
+  editor_tick();
+  CHECK_SEQ(tv_test_pub_quote_author(), "someone");
+  CHECK_SEQ(tv_test_pub_quote_text(), "parsed quote");
+}
+
+/* A result arriving after the overlay was cancelled is dropped. */
+static void test_tweet_result_after_cancel_ignored(void) {
+  tv_begin();
+  load("https://x.com/someone/status/12345\n\nmy reply");
+  kern_test_set_x_connected(1);
+  kern_publish_to_x();
+  key(0, SDLK_ESCAPE);
+  kern_x_tweet_done(1, "12345", "Late", "late", "Jul 6", "late text");
+  editor_tick();
+  CHECK_IEQ(tv_test_pub_state(), 0);
+  CHECK_SEQ(tv_test_pub_quote_author(), "");   /* not applied */
+}
+
 /* Confirming a reply hands both the commentary and the tweet id to the Swift
    publisher. */
 static void test_overlay_confirm_posts_reply(void) {
@@ -910,6 +1079,7 @@ static void test_publish_without_url_is_normal_post(void) {
   key(0, SDLK_RETURN);
   CHECK_SEQ(kern_test_x_last_publish(), "plain note");
   CHECK(kern_test_x_last_reply_id() == NULL);   /* posted as a plain tweet */
+  CHECK(kern_test_x_tweet_fetch_id() == NULL);  /* and no tweet fetch either */
 }
 
 /* ---- X news feed (C-x n -> async fetch -> time-stamped News note) ---- */
@@ -1282,6 +1452,18 @@ void suite_textview(void) {
   RUN(test_reply_scan_no_commentary);
   RUN(test_reply_scan_no_url);
   RUN(test_publish_detects_reply);
+  RUN(test_quote_scan_extracts_commentary_above);
+  RUN(test_quote_scan_rejects_text_below_url);
+  RUN(test_quote_scan_rejects_multi_entry_notes);
+  RUN(test_quote_scan_nothing_above);
+  RUN(test_publish_detects_quote);
+  RUN(test_quote_confirm_appends_url);
+  RUN(test_reply_wins_over_quote);
+  RUN(test_publish_reply_requests_tweet_fetch);
+  RUN(test_tweet_result_updates_preview);
+  RUN(test_tweet_result_failure_keeps_parsed);
+  RUN(test_tweet_result_stale_id_ignored);
+  RUN(test_tweet_result_after_cancel_ignored);
   RUN(test_overlay_confirm_posts_reply);
   RUN(test_publish_without_url_is_normal_post);
   RUN(test_cx_n_not_connected);

@@ -22,6 +22,10 @@ const char *kern_test_x_last_publish(void);
  * reply, NULL when it was a plain post (or nothing was published yet). */
 const char *kern_test_x_last_reply_id(void);
 
+/* Id handed to kern_x_fetch_tweet() (the reply-target lookup), or NULL if no
+ * fetch was requested since the last reset. */
+const char *kern_test_x_tweet_fetch_id(void);
+
 /* Last value passed to kern_titlebar_set_x_connected() (-1 = never called). */
 int kern_test_x_titlebar_state(void);
 

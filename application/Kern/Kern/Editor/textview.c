@@ -36,6 +36,8 @@ static ViewState   g_vs = {0};
 /* ---- X / Twitter publishing bridge (the network + OAuth half lives in Swift,
    KernApp.swift) ---------------------------------------------------------- */
 extern void kern_x_publish(const char *text, const char *in_reply_to);   /* Swift @_cdecl: async post (in_reply_to = tweet id for a reply, NULL for a plain post) */
+extern void kern_x_fetch_tweet(const char *id);   /* Swift @_cdecl: async GET /2/tweets/:id for the reply preview */
+extern const unsigned char *kern_x_reply_avatar_rgba(int *w, int *h);   /* reply author's photo, NULL until fetched */
 extern int  kern_x_is_connected(void);          /* Swift @_cdecl: 1 if linked */
 
 /* Account identity for the tweet-preview overlay, fetched from /2/users/me at
@@ -719,9 +721,11 @@ static char *buffer_dup_all(EditorState *ed, int *len_out) {
    sheet) that previews the note as it would look on X. Confirm posts; the async
    result lands in kern_x_publish_done() and is consumed on the next tick. */
 enum { PUB_NONE = 0, PUB_CONFIRM = 1, PUB_SENDING = 2 };
+enum { PUBK_POST = 0, PUBK_REPLY = 1, PUBK_QUOTE = 2 };
 static int  pub_state;              /* PUB_* */
+static int  pub_kind;               /* PUBK_* — what the pending publish is */
 static char pub_text[8192];         /* the snapshotted note/region being previewed */
-static KernReplyTarget pub_reply;   /* reply target (.id[0] == 0 = plain post) */
+static KernReplyTarget pub_reply;   /* reply/quote target (.id[0] == 0 = plain post) */
 
 static int reply_word_ch(char c) {
   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -762,9 +766,13 @@ static void reply_pretty_date(const char *raw, int rawlen, char *out, int cap) {
 /* Fill t->author/date/quote from the feed-entry structure above the URL line
    starting at `url_line`: upwards — blank lines, a "> " blockquote block,
    blank lines, a "## <name> — <date>" heading. Any missing piece leaves its
-   fields "" (a hand-written URL still replies, just without the preview). */
+   fields "" (a hand-written URL still replies, just without the preview).
+   *top_out (optional) gets the start of the entry's topmost line — the
+   heading if found, else the first blockquote line, else the URL line —
+   which is where quote-post commentary above the entry ends. */
 static void reply_scan_quote(const char *text, const char *url_line,
-                             KernReplyTarget *t) {
+                             KernReplyTarget *t, const char **top_out) {
+  if (top_out) *top_out = url_line;
   const char *qlines[64]; int qlens[64]; int qn = 0;
   const char *ls = url_line; int len = 0;
   /* skip blank lines above the URL */
@@ -775,6 +783,7 @@ static void reply_scan_quote(const char *text, const char *url_line,
     ls = reply_prev_line(text, ls, &len);
   }
   if (qn > 0) {
+    if (top_out) *top_out = qlines[qn - 1];   /* topmost blockquote line */
     /* join in document order, stripping the "> " / ">" prefixes */
     int p = 0;
     for (int i = qn - 1; i >= 0; i--) {
@@ -792,6 +801,7 @@ static void reply_scan_quote(const char *text, const char *url_line,
   /* skip blanks above the quote, then expect the "## <name> — <date>" heading */
   while (ls && reply_blank_line(ls, len)) ls = reply_prev_line(text, ls, &len);
   if (ls && len > 3 && strncmp(ls, "## ", 3) == 0) {
+    if (top_out) *top_out = ls;
     const char *name = ls + 3; int nlen = len - 3;
     /* split on the first " — " (em dash) */
     const char *dash = NULL;
@@ -855,7 +865,70 @@ const char *kern_reply_scan(const char *text, KernReplyTarget *t, int *len_out) 
   snprintf(t->handle, sizeof(t->handle), "%.*s", best_h_len, best_h);
   const char *url_line = best_url;
   while (url_line > text && url_line[-1] != '\n') url_line--;
-  reply_scan_quote(text, url_line, t);
+  reply_scan_quote(text, url_line, t, NULL);
+  if (len_out) *len_out = len;
+  return c;
+}
+
+/* Scan `text` for QUOTE-POST shape: plain commentary ABOVE a single feed
+   entry (heading + blockquote + status URL) with nothing but whitespace after
+   the URL. The commentary is what gets posted (with the tweet URL appended —
+   X renders a trailing permalink as a quote card). Declines when text follows
+   the URL (that's a reply), when nothing precedes the entry, or when the text
+   above contains another entry (a second status URL or blockquote line — a
+   multi-entry feed note is ambiguous). Pure C, headless-tested. */
+const char *kern_quote_scan(const char *text, KernReplyTarget *t, int *len_out) {
+  KernReplyTarget probe;
+  const char *tail = kern_reply_scan(text, &probe, NULL);
+  if (tail) { memset(t, 0, sizeof *t); return NULL; }   /* reply shape wins */
+
+  /* re-find the last URL ourselves (reply scan declined: nothing after it) */
+  memset(t, 0, sizeof *t);
+  const char *best_id = NULL, *best_h = NULL, *best_url = NULL;
+  int best_id_len = 0, best_h_len = 0;
+  const char *p = text;
+  while ((p = strstr(p, "/status/")) != NULL) {
+    const char *id = p + 8, *e = id;
+    while (*e >= '0' && *e <= '9') e++;
+    if (e == id) { p = id; continue; }
+    const char *h = p;
+    while (h > text && reply_word_ch(h[-1])) h--;
+    int ok = h < p && h > text && h[-1] == '/';
+    if (ok) {
+      const char *host_end = h - 1;
+      ok = (host_end - text >= 5  && strncmp(host_end - 5,  "x.com", 5)  == 0) ||
+           (host_end - text >= 11 && strncmp(host_end - 11, "twitter.com", 11) == 0);
+    }
+    if (ok) {
+      best_id = id; best_id_len = (int)(e - id);
+      best_h = h;   best_h_len = (int)(p - h);
+      best_url = h;
+    }
+    p = e;
+  }
+  if (!best_url) return NULL;
+  snprintf(t->id, sizeof(t->id), "%.*s", best_id_len, best_id);
+  snprintf(t->handle, sizeof(t->handle), "%.*s", best_h_len, best_h);
+
+  const char *url_line = best_url;
+  while (url_line > text && url_line[-1] != '\n') url_line--;
+  const char *top = url_line;
+  reply_scan_quote(text, url_line, t, &top);
+
+  /* commentary = the text above the entry's topmost line, trimmed */
+  const char *c = text;
+  int len = (int)(top - text);
+  while (len > 0 && (c[len-1] == ' ' || c[len-1] == '\t' ||
+                     c[len-1] == '\n' || c[len-1] == '\r')) len--;
+  while (len > 0 && (*c == ' ' || *c == '\t' || *c == '\n' || *c == '\r')) { c++; len--; }
+  if (len == 0) { memset(t, 0, sizeof *t); return NULL; }
+
+  /* guard: another entry inside the commentary makes the note multi-entry */
+  for (const char *q = c; q + 8 <= c + len; q++)
+    if (memcmp(q, "/status/", 8) == 0) { memset(t, 0, sizeof *t); return NULL; }
+  for (const char *q = c; q < c + len; q++)
+    if (*q == '>' && (q == text || q[-1] == '\n')) { memset(t, 0, sizeof *t); return NULL; }
+
   if (len_out) *len_out = len;
   return c;
 }
@@ -879,10 +952,17 @@ static void cmd_publish_to_x(void) {
                                 : buffer_dup_all(&g_ed, &len);
   if (!text || len == 0) { free(text); nav_status_set(&g_vs, "Nothing to publish"); return; }
 
-  /* Reply detection: text after the last X status URL is commentary on that
-     post — preview/post only the commentary, as a reply to the linked tweet. */
+  /* What is this? Text after the last X status URL -> a REPLY to that tweet
+     (post only the trailing commentary). Otherwise commentary above a single
+     feed entry -> a QUOTE of it (post the leading commentary + the URL).
+     Neither -> a plain post of the whole note/region. */
   int clen = 0;
   const char *comment = kern_reply_scan(text, &pub_reply, &clen);
+  pub_kind = comment ? PUBK_REPLY : PUBK_POST;
+  if (!comment) {
+    comment = kern_quote_scan(text, &pub_reply, &clen);
+    if (comment) pub_kind = PUBK_QUOTE;
+  }
   if (comment)
     snprintf(pub_text, sizeof(pub_text), "%.*s", clen, comment);
   else
@@ -890,6 +970,10 @@ static void cmd_publish_to_x(void) {
   free(text);
   pub_state = PUB_CONFIRM;
   pub_result = 0;
+  /* Reply/quote mode: also look the target tweet up via the API — the
+     note-parsed preview shows instantly, the authoritative content (real
+     author/date/full text) replaces it when the fetch lands (kern_x_tweet_done). */
+  if (pub_reply.id[0]) kern_x_fetch_tweet(pub_reply.id);
   SDL_StartTextInput();   /* not really needed, but keeps input state sane */
 }
 
@@ -899,9 +983,20 @@ static void cmd_publish_to_x(void) {
 static void pub_confirm(void) {
   if (pub_state != PUB_CONFIRM) return;
   pub_state = PUB_SENDING;
-  nav_status_set(&g_vs, pub_reply.id[0] ? "Replying on X\xE2\x80\xA6"
-                                        : "Publishing to X\xE2\x80\xA6");
-  kern_x_publish(pub_text, pub_reply.id[0] ? pub_reply.id : NULL);
+  if (pub_kind == PUBK_QUOTE) {
+    /* A quote posts as PLAIN text with the tweet URL appended — X renders a
+       trailing permalink as the quote card. (The API's quote_tweet_id field
+       is Enterprise-gated, so it's deliberately not used.) */
+    static char msg[sizeof(pub_text) + 96];
+    snprintf(msg, sizeof(msg), "%s\n\nhttps://x.com/%s/status/%s",
+             pub_text, pub_reply.handle, pub_reply.id);
+    nav_status_set(&g_vs, "Quoting on X\xE2\x80\xA6");
+    kern_x_publish(msg, NULL);
+    return;
+  }
+  nav_status_set(&g_vs, pub_kind == PUBK_REPLY ? "Replying on X\xE2\x80\xA6"
+                                               : "Publishing to X\xE2\x80\xA6");
+  kern_x_publish(pub_text, pub_kind == PUBK_REPLY ? pub_reply.id : NULL);
 }
 
 static void pub_cancel(void) {
@@ -941,6 +1036,43 @@ static void pub_apply_result(void) {
     if (pub_state == PUB_SENDING) pub_state = PUB_CONFIRM;   /* let the user retry */
   }
   pub_result = 0;
+}
+
+/* ---- reply-target tweet lookup (async, Swift) -------------------------------
+   Opening a reply overlay kicks off GET /2/tweets/:id; the result lands here
+   (any thread), is stashed, and pub_apply_tweet() (main-thread tick) swaps the
+   note-parsed preview for the API truth. A failure or a stale id (the user
+   cancelled and re-published something else) is simply dropped — the parsed
+   preview is a fine fallback. */
+static int  tweet_result;                   /* 0 none, 1 ok (failures are dropped at once) */
+static KernReplyTarget tweet_fetched;       /* .id doubles as the staleness check */
+
+void kern_x_tweet_done(int ok, const char *id, const char *name,
+                       const char *handle, const char *date, const char *text) {
+  if (!ok) return;                          /* keep the note-parsed preview */
+  memset(&tweet_fetched, 0, sizeof tweet_fetched);
+  snprintf(tweet_fetched.id,     sizeof(tweet_fetched.id),     "%s", id ? id : "");
+  snprintf(tweet_fetched.author, sizeof(tweet_fetched.author), "%s", name ? name : "");
+  snprintf(tweet_fetched.handle, sizeof(tweet_fetched.handle), "%s", handle ? handle : "");
+  snprintf(tweet_fetched.date,   sizeof(tweet_fetched.date),   "%s", date ? date : "");
+  snprintf(tweet_fetched.quote,  sizeof(tweet_fetched.quote),  "%s", text ? text : "");
+  tweet_result = 1;
+}
+
+/* Main-thread application of a pending tweet-fetch result (from editor_tick). */
+static void pub_apply_tweet(void) {
+  if (tweet_result == 0) return;
+  tweet_result = 0;
+  if (pub_state == PUB_NONE) return;                        /* overlay closed */
+  if (strcmp(tweet_fetched.id, pub_reply.id) != 0) return;  /* stale target */
+  if (tweet_fetched.author[0])
+    snprintf(pub_reply.author, sizeof(pub_reply.author), "%s", tweet_fetched.author);
+  if (tweet_fetched.handle[0])
+    snprintf(pub_reply.handle, sizeof(pub_reply.handle), "%s", tweet_fetched.handle);
+  if (tweet_fetched.date[0])
+    snprintf(pub_reply.date, sizeof(pub_reply.date), "%s", tweet_fetched.date);
+  if (tweet_fetched.quote[0])
+    snprintf(pub_reply.quote, sizeof(pub_reply.quote), "%s", tweet_fetched.quote);
 }
 
 /* Called from the title-bar "Publish" button (macos_style.m, main thread). */
@@ -2366,8 +2498,9 @@ static void draw_status_bar(void) {
 typedef struct {
   Rect card;                       /* the whole preview card */
   int  reply_x, reply_y;           /* "Replying to @handle" caption (reply mode) */
-  int  has_quote;                  /* 1 = the original post renders above the reply */
-  int  qav_x, qav_y;               /* quoted-tweet avatar disc (same diameter) */
+  int  has_quote;                  /* 1 = the original post renders in the preview */
+  Rect qcard;                      /* quote mode: the bordered inner card (else 0-sized) */
+  int  qav_x, qav_y, qav_d;        /* quoted-tweet avatar disc */
   int  qname_x, qname_y;           /* quoted-tweet identity row */
   Rect qbody;                      /* the (clipped) quoted-tweet text region */
   int  av_x, av_y, av_d;           /* avatar disc: top-left + diameter */
@@ -2439,18 +2572,23 @@ static void pub_layout(PubLayout *L) {
   if (quote_h > QUOTE_MAX) quote_h = QUOTE_MAX;
 
   /* reply mode adds a "Replying to @handle" caption row above the tweet */
-  int reply_h = pub_reply.id[0] ? fh + 10 : 0;
+  int reply_h = (pub_kind == PUBK_REPLY && pub_reply.id[0]) ? fh + 10 : 0;
 
-  /* the quoted original post (when the note had the feed structure): its own
-     avatar + identity row + clipped text block, above the reply */
-  L->has_quote = pub_reply.id[0] && pub_reply.quote[0];
-  int qcol_h = 0, qgap = 18;
-  if (L->has_quote) {
+  /* the quoted original post (when the note had the feed structure, or after
+     the API lookup landed). Reply mode: full-size block ABOVE the reply.
+     Quote mode: a bordered inner card BELOW the post, X-style. */
+  L->has_quote = pub_reply.id[0] && (pub_reply.quote[0] || pub_reply.author[0]);
+  int qcol_h = 0, qgap = 18;                 /* reply mode: block above */
+  int qcard_h = 0; const int QP = 12, qav_small = 28;   /* quote mode: card below */
+  if (L->has_quote && pub_kind == PUBK_REPLY) {
     int qh = name_h + name_gap + quote_h;
     qcol_h = (qh > av_d ? qh : av_d) + qgap;
   }
+  if (L->has_quote && pub_kind == PUBK_QUOTE)
+    qcard_h = QP + name_h + name_gap + quote_h + QP;
 
   int col_h = name_h + name_gap + body_h;         /* right-column height */
+  if (qcard_h) col_h += qgap + qcard_h;           /* quote card sits under the body */
   int content_h = col_h > av_d ? col_h : av_d;    /* card must fit the avatar too */
   int card_h = P + reply_h + qcol_h + content_h + GAP + BTN_H + P;
 
@@ -2461,12 +2599,6 @@ static void pub_layout(PubLayout *L) {
   L->card = rect(card_x, card_y, card_w, card_h);
   L->reply_x = card_x + P;
   L->reply_y = card_y + P;
-  L->qav_x = card_x + P;
-  L->qav_y = card_y + P + reply_h;
-  L->qname_x = card_x + content_x;
-  L->qname_y = L->qav_y;
-  L->qbody = rect(card_x + content_x, L->qav_y + name_h + name_gap,
-                  content_w, quote_h);
   L->av_d = av_d;
   L->av_x = card_x + P;
   L->av_y = card_y + P + reply_h + qcol_h;
@@ -2474,6 +2606,28 @@ static void pub_layout(PubLayout *L) {
   L->name_y = L->av_y;                             /* header top-aligned with the avatar */
   L->body = rect(card_x + content_x, L->av_y + name_h + name_gap,
                  content_w, body_h);
+  if (pub_kind == PUBK_QUOTE) {
+    /* inner card under the body: small avatar inline with the identity row,
+       the quoted text spanning the card width below it */
+    L->qcard = rect(card_x + content_x, L->body.y + body_h + qgap,
+                    content_w, qcard_h);
+    L->qav_d = qav_small;
+    L->qav_x = L->qcard.x + QP;
+    L->qav_y = L->qcard.y + QP;
+    L->qname_x = L->qav_x + qav_small + 8;
+    L->qname_y = L->qav_y + (qav_small - fh) / 2;
+    L->qbody = rect(L->qcard.x + QP, L->qav_y + name_h + name_gap,
+                    content_w - 2 * QP, quote_h);
+  } else {
+    L->qcard = rect(0, 0, 0, 0);
+    L->qav_d = av_d;
+    L->qav_x = card_x + P;
+    L->qav_y = card_y + P + reply_h;
+    L->qname_x = card_x + content_x;
+    L->qname_y = L->qav_y;
+    L->qbody = rect(card_x + content_x, L->qav_y + name_h + name_gap,
+                    content_w, quote_h);
+  }
 
   int btn_y = card_y + card_h - P - BTN_H;
   L->confirm = rect(card_x + card_w - P - BTN_W, btn_y, BTN_W, BTN_H);
@@ -2514,6 +2668,49 @@ static void pub_initials(const char *name, char out[3]) {
 static void draw_ui_bold(const char *s, int x, int y, Color c) {
   r_draw_text(s, vec2(x, y), c);
   r_draw_text(s, vec2(x + 1, y), c);
+}
+
+/* Draw the quoted original post at the layout's q* slots (shared by reply
+   mode's above-the-reply block and quote mode's inner card): avatar — the
+   fetched author photo, your own photo on a self-target, else an initials
+   disc — plus the bold author name, "@handle · date", and the clipped text.
+   Caller has the UI font style active. */
+static void draw_quote_post(const PubLayout *L, int fh,
+                            const unsigned char *self_rgba, int aw, int ah,
+                            const char *self_handle) {
+  int qaw = 0, qah = 0;
+  const unsigned char *qrgba = kern_x_reply_avatar_rgba(&qaw, &qah);
+  int self = self_handle[0] && strcmp(pub_reply.handle, self_handle) == 0;
+  int qcx = L->qav_x + L->qav_d / 2, qcy = L->qav_y + L->qav_d / 2;
+  if (qrgba && qaw > 0 && qah > 0) {
+    r_draw_image_circle(rect(L->qav_x, L->qav_y, L->qav_d, L->qav_d), qrgba, qaw, qah);
+  } else if (self && self_rgba && aw > 0 && ah > 0) {
+    r_draw_image_circle(rect(L->qav_x, L->qav_y, L->qav_d, L->qav_d), self_rgba, aw, ah);
+  } else {
+    const char *qn = pub_reply.author[0] ? pub_reply.author : pub_reply.handle;
+    draw_filled_circle(qcx, qcy, L->qav_d / 2, color(90, 100, 116, 255));
+    char qini[3]; pub_initials(qn, qini);
+    if (L->qav_d < 40) qini[1] = '\0';   /* one letter fits the small disc */
+    if (qini[0]) {
+      int qiw = r_get_text_width(qini, strlen(qini));
+      draw_ui_bold(qini, qcx - qiw / 2, qcy - fh / 2, color(255, 255, 255, 255));
+    }
+  }
+  const char *qname = pub_reply.author[0] ? pub_reply.author : pub_reply.handle;
+  draw_ui_bold(qname, L->qname_x, L->qname_y, color(231, 233, 234, 255));
+  int qnw = r_get_text_width(qname, strlen(qname)) + 1;
+  char qmeta[160];
+  if (pub_reply.date[0])
+    snprintf(qmeta, sizeof qmeta, "@%s \xC2\xB7 %s", pub_reply.handle, pub_reply.date);
+  else
+    snprintf(qmeta, sizeof qmeta, "@%s", pub_reply.handle);
+  r_draw_text(qmeta, vec2(L->qname_x + qnw + 10, L->qname_y), color(113, 118, 123, 255));
+  if (pub_reply.quote[0]) {
+    r_set_clip_rect(L->qbody);
+    pub_body_layout(pub_reply.quote, L->qbody.x, L->qbody.y, L->qbody.w, fh,
+                    color(231, 233, 234, 255), 1);
+    r_set_clip_rect(rect(0, 0, nav_win_w(), nav_win_h()));
+  }
 }
 
 /* Draw the tweet-preview confirmation overlay: a dimmed/blurred backdrop, a
@@ -2571,7 +2768,7 @@ static void draw_publish_overlay(void) {
   r_set_font_style(uif);
   /* reply mode: "Replying to @handle" caption above the tweet, like X — the
      lead-in dim, the handle in X blue. */
-  if (pub_reply.id[0]) {
+  if (pub_kind == PUBK_REPLY && pub_reply.id[0]) {
     const char *lead = "Replying to ";
     r_draw_text(lead, vec2(L.reply_x, L.reply_y), color(113, 118, 123, 255));
     char at[80];
@@ -2579,40 +2776,13 @@ static void draw_publish_overlay(void) {
     int lw = r_get_text_width(lead, strlen(lead));
     r_draw_text(at, vec2(L.reply_x + lw, L.reply_y), color(29, 155, 240, 255));
   }
-  /* the original post being replied to, simulated from the note's feed entry
-     (heading + blockquote): its own avatar + identity + clipped text, with
-     X's thread connector running down to the reply's avatar. */
-  if (L.has_quote) {
-    int qcx = L.qav_x + L.av_d / 2, qcy = L.qav_y + L.av_d / 2;
-    r_draw_rect(rect(qcx - 1, L.qav_y + L.av_d + 4, 2,
-                     L.av_y - (L.qav_y + L.av_d) - 8), hair);
-    /* replying to your own post shows your real photo; anyone else gets an
-       initials disc (their avatar isn't in the note) */
-    int self = handle[0] && strcmp(pub_reply.handle, handle) == 0;
-    if (self && rgba && aw > 0 && ah > 0) {
-      r_draw_image_circle(rect(L.qav_x, L.qav_y, L.av_d, L.av_d), rgba, aw, ah);
-    } else {
-      const char *qn = pub_reply.author[0] ? pub_reply.author : pub_reply.handle;
-      draw_filled_circle(qcx, qcy, L.av_d / 2, color(90, 100, 116, 255));
-      char qini[3]; pub_initials(qn, qini);
-      if (qini[0]) {
-        int qiw = r_get_text_width(qini, strlen(qini));
-        draw_ui_bold(qini, qcx - qiw / 2, qcy - fh / 2, color(255, 255, 255, 255));
-      }
-    }
-    const char *qname = pub_reply.author[0] ? pub_reply.author : pub_reply.handle;
-    draw_ui_bold(qname, L.qname_x, L.qname_y, color(231, 233, 234, 255));
-    int qnw = r_get_text_width(qname, strlen(qname)) + 1;
-    char qmeta[160];
-    if (pub_reply.date[0])
-      snprintf(qmeta, sizeof qmeta, "@%s \xC2\xB7 %s", pub_reply.handle, pub_reply.date);
-    else
-      snprintf(qmeta, sizeof qmeta, "@%s", pub_reply.handle);
-    r_draw_text(qmeta, vec2(L.qname_x + qnw + 10, L.qname_y), color(113, 118, 123, 255));
-    r_set_clip_rect(L.qbody);
-    pub_body_layout(pub_reply.quote, L.qbody.x, L.qbody.y, L.qbody.w, fh,
-                    color(231, 233, 234, 255), 1);
-    r_set_clip_rect(rect(0, 0, ww, wh));
+  /* reply mode: the original post ABOVE the reply, with X's thread connector
+     running down to the reply's avatar. */
+  if (L.has_quote && pub_kind == PUBK_REPLY) {
+    int qcx = L.qav_x + L.qav_d / 2;
+    r_draw_rect(rect(qcx - 1, L.qav_y + L.qav_d + 4, 2,
+                     L.av_y - (L.qav_y + L.qav_d) - 8), hair);
+    draw_quote_post(&L, fh, rgba, aw, ah, handle);
   }
   draw_ui_bold(name, L.name_x, L.name_y, color(231, 233, 234, 255));
   int nw = r_get_text_width(name, strlen(name)) + 1;   /* +1 for the faux-bold overdraw */
@@ -2623,6 +2793,16 @@ static void draw_publish_overlay(void) {
   pub_body_layout(pub_text, L.body.x, L.body.y, L.body.w, fh,
                   color(231, 233, 234, 255), 1);
   r_set_clip_rect(rect(0, 0, ww, wh));
+
+  /* quote mode: the original post BELOW the text, in a hairline-bordered
+     rounded inner card — X's quote-card look. */
+  if (L.has_quote && pub_kind == PUBK_QUOTE) {
+    r_draw_round_rect(L.qcard, 12, hair);
+    r_draw_round_rect(rect(L.qcard.x + 1, L.qcard.y + 1,
+                           L.qcard.w - 2, L.qcard.h - 2),
+                      11, color(22, 24, 28, 255));
+    draw_quote_post(&L, fh, rgba, aw, ah, handle);
+  }
 
   /* buttons: native macOS look — rounded pills, regular-weight labels. Cancel is
      a gray push button (matching the title-bar Publish button); Confirm is the
@@ -3280,6 +3460,7 @@ void editor_tick(void) {
                           may rebuild the menu bar at any time after launch) */
 
   pub_apply_result();   /* apply a pending X-publish result on the main thread */
+  pub_apply_tweet();    /* apply a pending reply-target tweet fetch likewise */
   feed_apply_result();  /* land a fetched X news feed in a note, ditto */
 
   do_render();
@@ -3601,8 +3782,10 @@ void tv_test_reset(void) {
   g_last_autosave = 0;
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
-  pub_state = PUB_NONE; pub_result = 0; pub_text[0] = '\0'; pub_result_info[0] = '\0';
+  pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;
+  pub_text[0] = '\0'; pub_result_info[0] = '\0';
   memset(&pub_reply, 0, sizeof pub_reply);
+  tweet_result = 0; memset(&tweet_fetched, 0, sizeof tweet_fetched);
   feed_result = 0; feed_result_kind = 0; free(feed_result_text); feed_result_text = NULL;
 }
 
@@ -3612,6 +3795,8 @@ const char *tv_test_pub_text(void)  { return pub_text; }
 const char *tv_test_pub_reply_id(void) { return pub_reply.id; }
 const char *tv_test_pub_quote_author(void) { return pub_reply.author; }
 const char *tv_test_pub_quote_text(void)   { return pub_reply.quote; }
+const char *tv_test_pub_reply_handle(void) { return pub_reply.handle; }
+int         tv_test_pub_kind(void) { return pub_kind; }
 
 /* Test accessor: the recorded predecessor basenames for `path` (raw, unfiltered
    by on-disk existence — that filtering lives in the app-only opened_after_list). */
