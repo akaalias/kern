@@ -27,6 +27,9 @@ void kern_x_publish(const char *text) {
   g_x_has_publish = 1;
 }
 void kern_titlebar_set_x_connected(int connected) { g_x_titlebar = connected; }
+static int g_view_menu_syncs = 0;
+void kern_menus_sync(void) { g_view_menu_syncs++; }
+int  kern_test_view_menu_syncs(void) { return g_view_menu_syncs; }
 void kern_x_fetch_feed(void) { g_x_feed_requested = 1; }
 static int g_x_bookmarks_requested = 0;
 void kern_x_fetch_bookmarks(void) { g_x_bookmarks_requested = 1; }
@@ -59,6 +62,7 @@ void kern_test_platform_reset(void) {
   g_x_titlebar = -1;
   g_x_feed_requested = 0;
   g_x_bookmarks_requested = 0;
+  g_view_menu_syncs = 0;
   snprintf(g_x_name, sizeof(g_x_name), "Test User");
   snprintf(g_x_handle, sizeof(g_x_handle), "testuser");
 }

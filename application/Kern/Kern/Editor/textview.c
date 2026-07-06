@@ -49,6 +49,11 @@ extern const unsigned char *kern_x_avatar_rgba(int *w, int *h);
 /* show/hide the title-bar "Publish to X" button (macos_style.m) */
 extern void kern_titlebar_set_x_connected(int connected);
 
+/* (re)attach the menu-bar checkmark/chord-hint delegates (macos_style.m) —
+   SwiftUI rebuilds the main menu on its own schedule, so this is polled every
+   tick */
+extern void kern_menus_sync(void);
+
 /* marketing version string (macos_style.m) — used only for the dev-build label */
 extern const char *kern_app_version(void);
 
@@ -3011,11 +3016,108 @@ void editor_tick(void) {
     if (c != g_last_x_conn) { g_last_x_conn = c; kern_titlebar_set_x_connected(c); }
   }
 
+  kern_menus_sync();   /* keep the menu ✓/chord-hint delegates attached (SwiftUI
+                          may rebuild the menu bar at any time after launch) */
+
   pub_apply_result();   /* apply a pending X-publish result on the main thread */
   feed_apply_result();  /* land a fetched X news feed in a note, ditto */
 
   do_render();
 }
+
+/* ---- menu-bar bridges (App/KernApp.swift .commands) ------------------------
+   Every menu item drives the exact same code path as its keyboard chord: the
+   bridge synthesizes the chord's SDL keydown(s) and pumps them through
+   editor_handle_event, so the menu can never drift from the keyboard. Menu
+   selection runs synchronously on the main thread during tracking — the same
+   thread as the SDL loop — so touching g_ed/g_vs is safe. */
+
+static void menu_key(int mod, int sym) {
+  SDL_Event e; memset(&e, 0, sizeof e);
+  e.type = SDL_KEYDOWN;
+  e.key.keysym.sym = sym;
+  e.key.keysym.mod = (Uint16)mod;
+  editor_handle_event(&e);
+}
+
+/* A C-x chord from a menu click: no SDL_TEXTINPUT follows a mouse click, so
+   clear the suppression the chord handler armed — a stale one would silently
+   eat the user's next typed character. */
+static void menu_chord_cx(int sym, int ctrl) {
+  menu_key(KMOD_CTRL, SDLK_x);
+  menu_key(ctrl ? KMOD_CTRL : 0, sym);
+  g_vs.suppress_next_text = 0;
+}
+
+/* Format: wrap the marked region in a markdown marker (these are typed
+   characters, not chords, so this calls the wrap primitive directly). */
+static void menu_wrap(const char *marker) {
+  if (!g_ed.mark_active) {
+    nav_status_set(&g_vs, "Select some text first (C-Space)");
+    return;
+  }
+  if (ed_wrap_region(&g_ed, marker, marker)) nav_ensure_cursor_visible(&g_ed, &g_vs);
+}
+
+/* File */
+void kern_menu_open(void)          { menu_chord_cx(SDLK_f, 1); }
+void kern_menu_save(void)          { menu_chord_cx(SDLK_s, 1); }
+void kern_menu_save_as(void)       { menu_chord_cx(SDLK_w, 1); }
+void kern_menu_switch_buffer(void) { menu_chord_cx(SDLK_b, 0); }
+void kern_menu_daily_note(void)    { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_t); }
+
+/* Edit */
+void kern_menu_undo(void)             { menu_key(KMOD_CTRL, SDLK_SLASH); }
+void kern_menu_cut(void)              { menu_key(KMOD_CTRL, SDLK_w); }
+void kern_menu_copy(void)             { menu_key(KMOD_ALT,  SDLK_w); }
+void kern_menu_paste(void)            { menu_key(KMOD_CTRL, SDLK_y); }
+void kern_menu_select_all(void)       { menu_chord_cx(SDLK_h, 0); }
+void kern_menu_kill_line(void)        { menu_key(KMOD_CTRL, SDLK_k); }
+void kern_menu_delete_word_fwd(void)  { menu_key(KMOD_ALT,  SDLK_d); }
+void kern_menu_delete_word_back(void) { menu_key(KMOD_ALT,  SDLK_BACKSPACE); }
+void kern_menu_transpose(void)        { menu_key(KMOD_CTRL, SDLK_t); }
+void kern_menu_open_line(void)        { menu_key(KMOD_CTRL, SDLK_o); }
+void kern_menu_upcase(void)           { menu_key(KMOD_ALT,  SDLK_u); }
+void kern_menu_downcase(void)         { menu_key(KMOD_ALT,  SDLK_l); }
+void kern_menu_capitalize(void)       { menu_key(KMOD_ALT,  SDLK_c); }
+void kern_menu_search_fwd(void)       { menu_key(KMOD_CTRL, SDLK_s); }
+void kern_menu_search_back(void)      { menu_key(KMOD_CTRL, SDLK_r); }
+
+/* Format */
+void kern_menu_bold(void)      { menu_wrap("**"); }
+void kern_menu_italic(void)    { menu_wrap("_"); }
+void kern_menu_highlight(void) { menu_wrap("=="); }
+void kern_menu_underline(void) { menu_wrap("++"); }
+void kern_menu_code(void)      { menu_wrap("`"); }
+void kern_menu_sentence_highlight(void) { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_h); }
+void kern_menu_sentence_underline(void) { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_u); }
+void kern_menu_indent(void)  { menu_key(0, SDLK_TAB); }
+void kern_menu_outdent(void) { menu_key(KMOD_SHIFT, SDLK_TAB); }
+
+/* View */
+void kern_menu_typewriter(void)      { menu_chord_cx(SDLK_t, 0); }
+int  kern_typewriter_enabled(void)   { return g_vs.typewriter_mode; }
+void kern_menu_page_borders(void)    { menu_chord_cx(SDLK_p, 0); }
+int  kern_page_borders_enabled(void) { return !g_vs.page_furniture_hidden; }
+void kern_menu_font_bigger(void)     { menu_key(KMOD_GUI, SDLK_EQUALS); }
+void kern_menu_font_smaller(void)    { menu_key(KMOD_GUI, SDLK_MINUS); }
+void kern_menu_recenter(void)        { menu_key(KMOD_CTRL, SDLK_l); }
+void kern_menu_page_down(void)       { menu_key(KMOD_CTRL, SDLK_v); }
+void kern_menu_page_up(void)         { menu_key(KMOD_ALT,  SDLK_v); }
+
+/* Go */
+void kern_menu_top(void)         { cmd_beginning_of_buffer_alt(&g_ed, &g_vs); }
+void kern_menu_bottom(void)      { cmd_end_of_buffer_alt(&g_ed, &g_vs); }
+void kern_menu_goto_line(void)   { cmd_goto_line(); }
+void kern_menu_back(void)        { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_LEFT); }
+void kern_menu_forward(void)     { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_RIGHT); }
+void kern_menu_follow_link(void) { menu_key(KMOD_GUI, SDLK_RETURN); }
+
+/* Notes */
+void kern_menu_extract_note(void)    { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_n); }
+void kern_menu_margin_note(void)     { menu_key(KMOD_GUI | KMOD_SHIFT, SDLK_m); }
+void kern_menu_fetch_news(void)      { menu_chord_cx(SDLK_n, 0); }
+void kern_menu_fetch_bookmarks(void) { menu_chord_cx(SDLK_m, 0); }
 
 #ifndef KERN_HEADLESS_TEST
 /* ---- launch: resume the last session or start today's daily note ---- */

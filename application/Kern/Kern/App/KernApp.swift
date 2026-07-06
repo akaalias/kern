@@ -78,13 +78,62 @@ struct KernApp: App {
         // can't come from SwiftUI (the parked main actor blocks updates) — an
         // AppKit NSMenuDelegate sets them from the C state (Platform/macos_style.m),
         // matching items by these exact titles, so keep the two in sync.
+        // The full command set as standard menus. Every item calls a kern_menu_*
+        // bridge that replays the exact keyboard chord through the editor's
+        // event path. Items carry NO SwiftUI keyboardShortcuts on purpose:
+        // AppKit key equivalents would intercept keys before the SDL loop sees
+        // them (risky with the parked main actor). Instead the chord is drawn
+        // as styled text by the menu delegate in Platform/macos_style.m —
+        // titles here must match its spec tables EXACTLY.
         .commands {
-            // Window menu: open the documents folder in Finder (replaces the
-            // former title-bar folder button).
-            CommandGroup(after: .windowArrangement) {
-                Button("Open Documents Folder in Finder") { kern_open_documents_folder() }
+            CommandGroup(replacing: .newItem) {
+                Button("Open…") { kern_menu_open() }
+                Button("Save") { kern_menu_save() }
+                Button("Save As…") { kern_menu_save_as() }
+                Divider()
+                Button("Switch to Recent Buffer") { kern_menu_switch_buffer() }
+                Button("Today's Note") { kern_menu_daily_note() }
+            }
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { kern_menu_undo() }
+            }
+            CommandGroup(replacing: .pasteboard) {
+                Button("Cut") { kern_menu_cut() }
+                Button("Copy") { kern_menu_copy() }
+                Button("Paste") { kern_menu_paste() }
+                Button("Select All") { kern_menu_select_all() }
+                Divider()
+                Button("Kill to End of Line") { kern_menu_kill_line() }
+                Button("Delete Word Forward") { kern_menu_delete_word_fwd() }
+                Button("Delete Word Backward") { kern_menu_delete_word_back() }
+                Button("Transpose Characters") { kern_menu_transpose() }
+                Button("Insert Blank Line") { kern_menu_open_line() }
+                Divider()
+                Button("UPPERCASE Word") { kern_menu_upcase() }
+                Button("lowercase Word") { kern_menu_downcase() }
+                Button("Capitalize Word") { kern_menu_capitalize() }
+                Divider()
+                Button("Search Forward") { kern_menu_search_fwd() }
+                Button("Search Backward") { kern_menu_search_back() }
+            }
+            CommandMenu("Format") {
+                Button("Bold") { kern_menu_bold() }
+                Button("Italic") { kern_menu_italic() }
+                Button("Highlight") { kern_menu_highlight() }
+                Button("Underline") { kern_menu_underline() }
+                Button("Inline Code") { kern_menu_code() }
+                Divider()
+                Button("Highlight Sentence") { kern_menu_sentence_highlight() }
+                Button("Underline Sentence") { kern_menu_sentence_underline() }
+                Divider()
+                Button("Indent List Item") { kern_menu_indent() }
+                Button("Outdent List Item") { kern_menu_outdent() }
             }
             CommandGroup(after: .toolbar) {
+                Button("Typewriter Mode") { kern_menu_typewriter() }
+                Button("Symbols") { kern_toggle_subs() }
+                Button("Page Borders") { kern_menu_page_borders() }
+                Divider()
                 Button("Syntax Highlighting") { kern_toggle_syntax() }
                 Button("Verbs") { kern_toggle_verbs() }
                 Button("Nouns") { kern_toggle_nouns() }
@@ -96,6 +145,34 @@ struct KernApp: App {
                 Button("Fillers") { kern_toggle_fillers() }
                 Button("Cliches") { kern_toggle_cliches() }
                 Button("Redundancies") { kern_toggle_redundancies() }
+                Divider()
+                Button("Bigger Text") { kern_menu_font_bigger() }
+                Button("Smaller Text") { kern_menu_font_smaller() }
+                Button("Recenter") { kern_menu_recenter() }
+                Button("Page Down") { kern_menu_page_down() }
+                Button("Page Up") { kern_menu_page_up() }
+            }
+            CommandMenu("Go") {
+                Button("Top of Document") { kern_menu_top() }
+                Button("Bottom of Document") { kern_menu_bottom() }
+                Button("Go to Line…") { kern_menu_goto_line() }
+                Divider()
+                Button("Follow Link") { kern_menu_follow_link() }
+                Button("Back") { kern_menu_back() }
+                Button("Forward") { kern_menu_forward() }
+            }
+            CommandMenu("Notes") {
+                Button("Extract Selection to New Note") { kern_menu_extract_note() }
+                Button("Margin Note") { kern_menu_margin_note() }
+                Divider()
+                Button("Publish to X…") { kern_publish_to_x() }
+                Button("Download News Feed") { kern_menu_fetch_news() }
+                Button("Download Bookmarks") { kern_menu_fetch_bookmarks() }
+            }
+            // Window menu: open the documents folder in Finder (replaces the
+            // former title-bar folder button).
+            CommandGroup(after: .windowArrangement) {
+                Button("Open Documents Folder in Finder") { kern_open_documents_folder() }
             }
         }
     }
@@ -142,6 +219,7 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Forward a character", "C-f"), B("Back a character", "C-b"),
         B("Next line", "C-n"), B("Previous line", "C-p"),
         B("Forward a word", "M-f"), B("Back a word", "M-b"),
+        B("Jump by word (arrow keys)", "C-Arrows / M-Arrows"),
         B("Top of document", "M-S-, / Cmd-S-,"),
         B("Bottom of document", "M-S-. / Cmd-S-."),
         B("Go to line…", "M-g"),
@@ -183,10 +261,15 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Follow link under cursor", "Cmd-Return"),
         B("Autocomplete a link", "[["),
         B("Extract selection to a new note", "Cmd-S-N"),
+        B("Margin note at the caret", "Cmd-S-M"),
         B("Today's note", "Cmd-S-T"),
-        B("Download your X news feed", "C-x n"),
-        B("Download all your X bookmarks", "C-x m"),
         B("Go back", "Cmd-S-Left"), B("Go forward", "Cmd-S-Right"),
+    ]),
+    ShortcutGroup(title: "X (Twitter)", bindings: [
+        B("Download your home news feed", "C-x n"),
+        B("Download all your bookmarks", "C-x m"),
+        B("Publish (from the title-bar button): confirm", "Return"),
+        B("Publish: cancel", "Esc"),
     ]),
     ShortcutGroup(title: "Files", bindings: [
         B("Save", "C-x C-s"), B("Save as…", "C-x C-w"),
@@ -352,7 +435,9 @@ struct XSettingsView: View {
             Text("X (Twitter)")
                 .font(.title2).bold()
 
-            Text("Publish the note you're viewing straight to your X timeline with ⌘⇧T. "
+            Text("Publish the note you're viewing to your X timeline with the "
+                 + "Publish button in the title bar, and pull X into Kern: "
+                 + "⌃X N downloads your home feed, ⌃X M all your bookmarks. "
                  + "Connect once; Kern keeps you signed in.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

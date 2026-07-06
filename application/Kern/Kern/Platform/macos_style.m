@@ -20,6 +20,9 @@ extern int kern_function_words_enabled(void);
 extern int kern_fillers_enabled(void);
 extern int kern_cliches_enabled(void);
 extern int kern_redundancies_enabled(void);
+extern int kern_typewriter_enabled(void);
+extern int kern_subs_enabled(void);
+extern int kern_page_borders_enabled(void);
 
 /* Open the sandbox-container Documents folder in Finder. Bridged to the Window
    menu item (App/KernApp.swift); runs on the main thread during menu tracking. */
@@ -82,45 +85,140 @@ static NSButton *kern_titlebar_button(NSString *symbol, NSString *accDesc,
   return btn;
 }
 
-/* Live checkmarks for the View-menu toggles. SwiftUI builds the "Syntax
-   Highlighting" / "Style Check" items (via .commands) but can't update them while
-   the main run loop is parked. So we own the View menu's delegate: AppKit calls
-   menuNeedsUpdate: on the main thread just before the menu opens — we chain to
-   SwiftUI's delegate (so its items still populate), then set each item's checkmark
-   from the live C state. */
-@interface KernViewMenuDelegate : NSObject <NSMenuDelegate>
-@property (nonatomic, weak) id<NSMenuDelegate> next;
-@end
-@implementation KernViewMenuDelegate
-- (void)menuNeedsUpdate:(NSMenu *)menu {
-  if ([self.next respondsToSelector:@selector(menuNeedsUpdate:)])
-    [self.next menuNeedsUpdate:menu];
-  /* Titles must match the SwiftUI .commands buttons (App/KernApp.swift) exactly. */
-#define KERN_SETCHK(t, fn) [menu itemWithTitle:(t)].state = \
-    (fn)() ? NSControlStateValueOn : NSControlStateValueOff
-  KERN_SETCHK(@"Syntax Highlighting", kern_syntax_enabled);
-  KERN_SETCHK(@"Verbs",               kern_verbs_enabled);
-  KERN_SETCHK(@"Nouns",               kern_nouns_enabled);
-  KERN_SETCHK(@"Adjectives",          kern_adjectives_enabled);
-  KERN_SETCHK(@"Adverbs",             kern_adverbs_enabled);
-  KERN_SETCHK(@"Function Words",      kern_function_words_enabled);
-  KERN_SETCHK(@"Style Check",         kern_style_enabled);
-  KERN_SETCHK(@"Fillers",             kern_fillers_enabled);
-  KERN_SETCHK(@"Cliches",             kern_cliches_enabled);
-  KERN_SETCHK(@"Redundancies",        kern_redundancies_enabled);
-#undef KERN_SETCHK
+/* Menu decoration: live checkmarks + chord-as-text shortcut hints.
+   SwiftUI builds the items (via .commands) but can't update them while the main
+   run loop is parked, and macOS menu items can't display two-chord emacs
+   sequences ("⌃X ⌃S") in the native shortcut column. So we own each menu's
+   delegate: AppKit calls menuNeedsUpdate: on the main thread just before the
+   menu opens — we chain to SwiftUI's delegate (so its items still populate),
+   then set each item's checkmark from the live C state and append its chord in
+   small secondary-color text via attributedTitle. (itemWithTitle: keeps
+   matching after attributedTitle is set — the plain title is untouched.) */
+
+typedef struct {
+  const char *title;      /* must match the SwiftUI Button title EXACTLY */
+  const char *chord;      /* shortcut hint text, NULL for none */
+  int (*enabled)(void);   /* checkmark source, NULL for plain items */
+} KernItemSpec;
+
+static const KernItemSpec k_file_items[] = {
+  {"Open…", "⌃X ⌃F", NULL}, {"Save", "⌃X ⌃S", NULL}, {"Save As…", "⌃X ⌃W", NULL},
+  {"Switch to Recent Buffer", "⌃X B", NULL}, {"Today's Note", "⌘⇧T", NULL},
+  {NULL, NULL, NULL},
+};
+static const KernItemSpec k_edit_items[] = {
+  {"Undo", "⌃/", NULL},
+  {"Cut", "⌃W", NULL}, {"Copy", "⌥W / ⌘C", NULL}, {"Paste", "⌃Y / ⌘V", NULL},
+  {"Select All", "⌃X H", NULL},
+  {"Kill to End of Line", "⌃K", NULL},
+  {"Delete Word Forward", "⌥D", NULL}, {"Delete Word Backward", "⌥⌫", NULL},
+  {"Transpose Characters", "⌃T", NULL}, {"Insert Blank Line", "⌃O", NULL},
+  {"UPPERCASE Word", "⌥U", NULL}, {"lowercase Word", "⌥L", NULL},
+  {"Capitalize Word", "⌥C", NULL},
+  {"Search Forward", "⌃S", NULL}, {"Search Backward", "⌃R", NULL},
+  {NULL, NULL, NULL},
+};
+static const KernItemSpec k_format_items[] = {
+  {"Bold", "**", NULL}, {"Italic", "_", NULL}, {"Highlight", "==", NULL},
+  {"Underline", "++", NULL}, {"Inline Code", "`", NULL},
+  {"Highlight Sentence", "⌘⇧H", NULL}, {"Underline Sentence", "⌘⇧U", NULL},
+  {"Indent List Item", "⇥", NULL}, {"Outdent List Item", "⇧⇥", NULL},
+  {NULL, NULL, NULL},
+};
+static const KernItemSpec k_view_items[] = {
+  {"Typewriter Mode", "⌃X T", kern_typewriter_enabled},
+  {"Symbols", "⌃X L", kern_subs_enabled},
+  {"Page Borders", "⌃X P", kern_page_borders_enabled},
+  {"Syntax Highlighting", "⌃X Y", kern_syntax_enabled},
+  {"Verbs", NULL, kern_verbs_enabled}, {"Nouns", NULL, kern_nouns_enabled},
+  {"Adjectives", NULL, kern_adjectives_enabled},
+  {"Adverbs", NULL, kern_adverbs_enabled},
+  {"Function Words", NULL, kern_function_words_enabled},
+  {"Style Check", "⌃X S", kern_style_enabled},
+  {"Fillers", NULL, kern_fillers_enabled}, {"Cliches", NULL, kern_cliches_enabled},
+  {"Redundancies", NULL, kern_redundancies_enabled},
+  {"Bigger Text", "⌘=", NULL}, {"Smaller Text", "⌘-", NULL},
+  {"Recenter", "⌃L", NULL}, {"Page Down", "⌃V", NULL}, {"Page Up", "⌥V", NULL},
+  {NULL, NULL, NULL},
+};
+static const KernItemSpec k_go_items[] = {
+  {"Top of Document", "⌘⇧,", NULL}, {"Bottom of Document", "⌘⇧.", NULL},
+  {"Go to Line…", "⌥G", NULL},
+  {"Follow Link", "⌘↩", NULL}, {"Back", "⌘⇧←", NULL}, {"Forward", "⌘⇧→", NULL},
+  {NULL, NULL, NULL},
+};
+static const KernItemSpec k_notes_items[] = {
+  {"Extract Selection to New Note", "⌘⇧N", NULL}, {"Margin Note", "⌘⇧M", NULL},
+  {"Download News Feed", "⌃X N", NULL}, {"Download Bookmarks", "⌃X M", NULL},
+  {NULL, NULL, NULL},
+};
+static const struct { const char *menu; const KernItemSpec *items; } k_menus[] = {
+  {"File", k_file_items}, {"Edit", k_edit_items}, {"Format", k_format_items},
+  {"View", k_view_items}, {"Go", k_go_items}, {"Notes", k_notes_items},
+  {NULL, NULL},
+};
+
+/* Decorate the menu items directly from the editor tick (main thread, ~250ms):
+   set each toggle's live ✓ state and append its chord hint. NO NSMenuDelegate —
+   we tried owning each menu's delegate and lost the delegate war: SwiftUI
+   re-grabs menu delegates on its own schedule, so our menuNeedsUpdate: fired
+   once and never again, freezing every checkmark at its first-open value
+   (hints survived only because attributedTitle is sticky). Setting item state
+   from the poll needs no cooperation from AppKit or SwiftUI: items update
+   while the menu is closed and display whatever is current when it opens.
+   (Menu tracking blocks the SDL loop, so states can't go stale mid-display —
+   any toggle closes the menu first, and the next tick runs before it can be
+   reopened.) */
+/* Find a spec's item by its plain title OR by its decorated title. Gotcha:
+   setting attributedTitle makes AppKit sync the plain `title` to the full
+   decorated string ("Save    ⌃X ⌃S"), so a plain itemWithTitle: match stops
+   working after the first decoration pass — every decorated toggle froze at
+   its first-tick state until this looked past the appended hint. */
+static NSMenuItem *kern_find_item(NSMenu *menu, const char *title) {
+  NSString *t = @(title);
+  NSString *decorated = [t stringByAppendingString:@"    "];
+  for (NSMenuItem *it in menu.itemArray) {
+    if ([it.title isEqualToString:t] || [it.title hasPrefix:decorated]) return it;
+  }
+  return nil;
 }
-@end
 
-static KernViewMenuDelegate *g_view_menu_delegate;  /* strong (ARC) — keep alive */
-
-static void kern_install_view_menu_checkmarks(void) {
-  if (g_view_menu_delegate) return;
-  NSMenu *view = [NSApp.mainMenu itemWithTitle:@"View"].submenu;
-  if (!view) return;
-  g_view_menu_delegate = [KernViewMenuDelegate new];
-  g_view_menu_delegate.next = view.delegate;
-  view.delegate = g_view_menu_delegate;
+void kern_menus_sync(void) {
+  for (int i = 0; k_menus[i].menu; i++) {
+    NSMenu *menu = [NSApp.mainMenu itemWithTitle:@(k_menus[i].menu)].submenu;
+    if (!menu) continue;                     /* not built yet — retry next tick */
+    for (const KernItemSpec *s = k_menus[i].items; s->title; s++) {
+      NSMenuItem *item = kern_find_item(menu, s->title);
+      if (!item) continue;
+      if (s->enabled)
+        item.state = s->enabled() ? NSControlStateValueOn : NSControlStateValueOff;
+      /* Chord hint, set once per item (SwiftUI may rebuild items — a fresh
+         item has no attributedTitle yet and gets re-decorated next tick). */
+      if (s->chord && !item.attributedTitle) {
+        NSMutableAttributedString *t = [[NSMutableAttributedString alloc]
+            initWithString:@(s->title)
+                attributes:@{NSFontAttributeName: [NSFont menuFontOfSize:0]}];
+        /* @() decodes the C string as UTF-8; %s would misread the multi-byte
+           key symbols (⌃⌥⇧⌘…) in the legacy system encoding and show mojibake. */
+        NSString *hint = [NSString stringWithFormat:@"    %@", @(s->chord)];
+        [t appendAttributedString:[[NSAttributedString alloc]
+            initWithString:hint
+                attributes:@{
+                  NSFontAttributeName: [NSFont menuFontOfSize:[NSFont smallSystemFontSize]],
+                  NSForegroundColorAttributeName: [NSColor secondaryLabelColor],
+                }]];
+        item.attributedTitle = t;
+      }
+    }
+    /* macOS injects "Enter Full Screen" into the View menu automatically; it
+       doesn't work with the SDL window, so strip it whenever it (re)appears. */
+    if (strcmp(k_menus[i].menu, "View") == 0) {
+      for (NSInteger j = menu.numberOfItems - 1; j >= 0; j--) {
+        if ([menu itemAtIndex:j].action == @selector(toggleFullScreen:))
+          [menu removeItemAtIndex:j];
+      }
+    }
+  }
 }
 
 void macos_style_window(SDL_Window *sdl_window) {
@@ -183,5 +281,18 @@ void macos_style_window(SDL_Window *sdl_window) {
   acc.view = buttons;
   [nswindow addTitlebarAccessoryViewController:acc];
 
-  kern_install_view_menu_checkmarks();   /* live ✓ on the View-menu toggles */
+  kern_menus_sync();   /* checkmarks + chord hints on the menus (re-synced each tick) */
+
+  /* SwiftUI populates each menu's REAL items lazily, on its first display —
+     replacing the items the tick decorated, mid-open, while menu tracking has
+     the SDL loop (and so the tick) frozen. Without help, the first-ever open
+     of each menu shows bare items (no ✓ gutter, no chord hints, Enter Full
+     Screen back). [menu update] at startup does NOT trigger that lazy build,
+     so instead: a timer registered ONLY in NSEventTrackingRunLoopMode — it
+     never fires in normal operation (zero cost), but menu tracking runs the
+     run loop in exactly that mode, so while a menu is open it ticks every
+     0.1s and re-decorates the freshly swapped-in items live. */
+  NSTimer *t = [NSTimer timerWithTimeInterval:0.1 repeats:YES
+                                        block:^(NSTimer *timer) { kern_menus_sync(); }];
+  [[NSRunLoop mainRunLoop] addTimer:t forMode:NSEventTrackingRunLoopMode];
 }

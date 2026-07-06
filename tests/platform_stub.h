@@ -31,6 +31,11 @@ int kern_test_x_bookmarks_requested(void);
  * @handle). Defaults to "Test User" / "testuser" after a reset. */
 void kern_test_set_x_identity(const char *name, const char *handle);
 
+/* Number of kern_menus_sync() calls since the last reset — editor_tick must
+ * re-sync the menu checkmark/chord-hint delegates every tick (the SwiftUI menu
+ * rebuild race). */
+int kern_test_view_menu_syncs(void);
+
 /* Reset all stub state (modstate, connection, recorded publish/titlebar). */
 void kern_test_platform_reset(void);
 

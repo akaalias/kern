@@ -116,6 +116,7 @@ section at the bottom listing backlinks and notes created the same day.
 | `Cmd-Enter`                   | Follow the `[[wikilink]]` under the cursor        |
 | `Cmd-Shift-←` / `Cmd-Shift-→` | Back / forward through note history               |
 | `Cmd-Shift-N`                 | Extract the selected region into a new linked note|
+| `Cmd-Shift-M`                 | Write a margin note (footnote) at the caret       |
 | `Cmd-Shift-T`                 | Open (or create) today's daily note               |
 | `C-x n`                       | Download your X home feed into a time-stamped news note |
 | `C-x m`                       | Download ALL your X bookmarks into a time-stamped note |

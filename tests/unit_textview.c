@@ -25,6 +25,22 @@
 
 /* textview.c bridges the app normally reaches from AppKit / Swift. */
 void kern_publish_to_x(void);                     /* title-bar Publish button */
+/* menu-bar bridges (each drives the same path as its keyboard chord) */
+void kern_menu_save(void);
+void kern_menu_switch_buffer(void);
+void kern_menu_undo(void);
+void kern_menu_select_all(void);
+void kern_menu_kill_line(void);
+void kern_menu_bold(void);
+void kern_menu_highlight(void);
+void kern_menu_typewriter(void);   int kern_typewriter_enabled(void);
+void kern_menu_page_borders(void); int kern_page_borders_enabled(void);
+void kern_menu_font_bigger(void);
+void kern_menu_bottom(void);
+void kern_menu_goto_line(void);
+void kern_menu_search_fwd(void);
+void kern_menu_extract_note(void);
+void kern_menu_fetch_news(void);
 void kern_x_publish_done(int ok, const char *info);  /* async publish result */
 void kern_x_feed_done(int ok, const char *text);     /* async news-feed result */
 void kern_x_bookmarks_done(int ok, const char *text);   /* async bookmarks result */
@@ -841,6 +857,106 @@ static void test_feed_quote_text(void) {
   CHECK_SEQ(tiny, "> abc");
 }
 
+/* ---- menu-bar bridges (File/Edit/Format/View/Go/Notes -> kern_menu_*) ----
+   Each bridge drives the exact same code path as its keyboard chord (synthetic
+   SDL events / the same cmd_* functions), so menu and keyboard can't drift. */
+
+static void test_menu_file_actions(void) {
+  tv_begin(); load("hello");
+  kern_menu_save();                            /* scratch buffer -> asks for a name */
+  CHECK_IEQ(VS->minibuf_active, 1);
+  key(0, SDLK_ESCAPE);                         /* dismiss */
+  kern_menu_switch_buffer();                   /* opens the buffer-switch prompt */
+  CHECK_IEQ(VS->minibuf_active, 1);
+  key(0, SDLK_ESCAPE);
+}
+
+static void test_menu_edit_actions(void) {
+  tv_begin(); load("hello world");
+  put_cursor(0, 0);
+  kern_menu_kill_line();                       /* C-k path */
+  EXPECT_LINE(0, "");
+  kern_menu_undo();                            /* C-/ path */
+  EXPECT_LINE(0, "hello world");
+  kern_menu_select_all();                      /* C-x h path */
+  CHECK_IEQ(ED->mark_active, 1);
+}
+
+static void test_menu_format_wraps_region(void) {
+  tv_begin(); load("pick me");
+  put_cursor(0, 0);
+  ED->mark_active = 1; ED->mark_line = 0; ED->mark_col = 4;   /* "pick" */
+  kern_menu_bold();
+  EXPECT_LINE(0, "**pick** me");
+  tv_begin(); load("pick me");
+  put_cursor(0, 0);
+  ED->mark_active = 1; ED->mark_line = 0; ED->mark_col = 4;
+  kern_menu_highlight();
+  EXPECT_LINE(0, "==pick== me");
+  /* no selection: report, don't touch the buffer */
+  tv_begin(); load("plain");
+  kern_menu_bold();
+  EXPECT_LINE(0, "plain");
+  CHECK(strstr(VS->status_msg, "Select") != NULL);
+}
+
+static void test_menu_view_toggles_and_queries(void) {
+  tv_begin(); load("hi");
+  CHECK_IEQ(kern_typewriter_enabled(), 0);
+  kern_menu_typewriter();
+  CHECK_IEQ(VS->typewriter_mode, 1);
+  CHECK_IEQ(kern_typewriter_enabled(), 1);
+  CHECK_IEQ(kern_page_borders_enabled(), 1);   /* borders shown by default */
+  kern_menu_page_borders();
+  CHECK_IEQ(VS->page_furniture_hidden, 1);
+  CHECK_IEQ(kern_page_borders_enabled(), 0);
+  float before = VS->font_size;
+  kern_menu_font_bigger();
+  CHECK(VS->font_size > before);
+}
+
+static void test_menu_go_actions(void) {
+  tv_begin(); load("one\ntwo\nthree");
+  kern_menu_bottom();
+  CHECK_IEQ(ED->cursor_line, 2);
+  kern_menu_goto_line();                       /* M-g path -> minibuffer */
+  CHECK_IEQ(VS->minibuf_active, 1);
+  key(0, SDLK_ESCAPE);
+  kern_menu_search_fwd();                      /* C-s path -> isearch */
+  CHECK_IEQ(VS->search_active, 1);
+  key(0, SDLK_ESCAPE);
+}
+
+static void test_menu_notes_actions(void) {
+  tv_begin(); load("hi");
+  kern_menu_extract_note();                    /* no region -> report */
+  CHECK(strstr(VS->status_msg, "region") != NULL);
+  kern_test_set_x_connected(1);
+  kern_menu_fetch_news();
+  CHECK_IEQ(kern_test_x_feed_requested(), 1);
+}
+
+/* A menu-driven C-x chord must NOT arm suppress_next_text — there is no
+   trailing SDL_TEXTINPUT after a mouse click, so a stale suppression would
+   silently eat the user's next typed character. */
+static void test_menu_chord_does_not_eat_next_char(void) {
+  tv_begin(); load("");
+  kern_menu_typewriter();                      /* routes through the C-x t chord */
+  type("a");
+  EXPECT_LINE(0, "a");                         /* the keystroke survived */
+}
+
+/* editor_tick re-syncs the View-menu checkmark delegate every pass — SwiftUI
+   rebuilds the main menu on its own schedule, so a once-at-launch install can
+   land on a menu that doesn't exist yet (or gets replaced), leaving the
+   toggles without checkmarks until relaunch. */
+static void test_tick_syncs_view_menu(void) {
+  tv_begin(); load("hi");
+  int before = kern_test_view_menu_syncs();
+  editor_tick();
+  CHECK_IEQ(kern_test_view_menu_syncs(), before + 1);
+}
+
 /* ---- X bookmarks (C-x m -> paginated fetch -> Twitter-Bookmarks note) ---- */
 
 /* With no account linked, C-x m reports and never asks Swift for bookmarks. */
@@ -1010,6 +1126,14 @@ void suite_textview(void) {
   RUN(test_feed_skip_link_only_posts);
   RUN(test_feed_skip_single_line_posts);
   RUN(test_feed_quote_text);
+  RUN(test_menu_file_actions);
+  RUN(test_menu_edit_actions);
+  RUN(test_menu_format_wraps_region);
+  RUN(test_menu_view_toggles_and_queries);
+  RUN(test_menu_go_actions);
+  RUN(test_menu_notes_actions);
+  RUN(test_menu_chord_does_not_eat_next_char);
+  RUN(test_tick_syncs_view_menu);
   RUN(test_cx_m_not_connected);
   RUN(test_cx_m_requests_bookmarks);
   RUN(test_bookmarks_result_opens_note);

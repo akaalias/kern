@@ -63,5 +63,65 @@ void kern_toggle_function_words(void); int kern_function_words_enabled(void);
 void kern_toggle_fillers(void);        int kern_fillers_enabled(void);
 void kern_toggle_cliches(void);        int kern_cliches_enabled(void);
 void kern_toggle_redundancies(void);   int kern_redundancies_enabled(void);
+void kern_toggle_subs(void);           int kern_subs_enabled(void);
+
+/* Menu-bar command bridges (implemented in textview.c). Each drives the exact
+   same code path as its keyboard chord — the bridge synthesizes the chord's
+   SDL key events — so the menus can never drift from the keyboard. Selected on
+   the main thread during menu tracking, the same thread as the render loop. */
+/* File */
+void kern_menu_open(void);
+void kern_menu_save(void);
+void kern_menu_save_as(void);
+void kern_menu_switch_buffer(void);
+void kern_menu_daily_note(void);
+/* Edit */
+void kern_menu_undo(void);
+void kern_menu_cut(void);
+void kern_menu_copy(void);
+void kern_menu_paste(void);
+void kern_menu_select_all(void);
+void kern_menu_kill_line(void);
+void kern_menu_delete_word_fwd(void);
+void kern_menu_delete_word_back(void);
+void kern_menu_transpose(void);
+void kern_menu_open_line(void);
+void kern_menu_upcase(void);
+void kern_menu_downcase(void);
+void kern_menu_capitalize(void);
+void kern_menu_search_fwd(void);
+void kern_menu_search_back(void);
+/* Format */
+void kern_menu_bold(void);
+void kern_menu_italic(void);
+void kern_menu_highlight(void);
+void kern_menu_underline(void);
+void kern_menu_code(void);
+void kern_menu_sentence_highlight(void);
+void kern_menu_sentence_underline(void);
+void kern_menu_indent(void);
+void kern_menu_outdent(void);
+/* View */
+void kern_menu_typewriter(void);      int kern_typewriter_enabled(void);
+void kern_menu_page_borders(void);    int kern_page_borders_enabled(void);
+void kern_menu_font_bigger(void);
+void kern_menu_font_smaller(void);
+void kern_menu_recenter(void);
+void kern_menu_page_down(void);
+void kern_menu_page_up(void);
+/* Go */
+void kern_menu_top(void);
+void kern_menu_bottom(void);
+void kern_menu_goto_line(void);
+void kern_menu_back(void);
+void kern_menu_forward(void);
+void kern_menu_follow_link(void);
+/* Notes */
+void kern_menu_extract_note(void);
+void kern_menu_margin_note(void);
+void kern_menu_fetch_news(void);
+void kern_menu_fetch_bookmarks(void);
+/* Publish (title-bar button action, reused by the Notes menu) */
+void kern_publish_to_x(void);
 
 #endif /* Kern_Bridging_Header_h */
