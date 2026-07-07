@@ -68,7 +68,7 @@ LDFLAGS := $(SAN) $(MATHLIB)
 CORE    := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/pos_render.c $(APP)/Editor/style_check.c \
-           $(APP)/Editor/sub_render.c \
+           $(APP)/Editor/sub_render.c $(APP)/Editor/graph.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c \
            $(APP)/Editor/textview.c
 TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
@@ -76,7 +76,7 @@ TESTS   := test_main.c stub_renderer.c clock_fake.c clipboard_fake.c \
            unit_editing.c unit_undo.c unit_buffer.c \
            unit_navigation.c unit_search.c unit_md_render.c unit_recent.c \
            unit_status.c unit_commands.c unit_utf8.c unit_textview.c \
-           unit_pos.c unit_style.c unit_sub.c snapshot.c
+           unit_pos.c unit_style.c unit_sub.c unit_graph.c snapshot.c
 SRC     := $(CORE) $(TESTS)
 HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
            $(APP)/Editor/utf8.h $(APP)/Editor/editor_loop.h
@@ -89,7 +89,7 @@ HDRS    := test.h ed_fixture.h stub_renderer.h platform_stub.h \
 COVCORE := $(APP)/Editor/buffer.c $(APP)/Editor/editing.c $(APP)/Editor/undo.c \
            $(APP)/Editor/navigation.c $(APP)/Editor/md_render.c \
            $(APP)/Editor/pos_render.c $(APP)/Editor/style_check.c \
-           $(APP)/Editor/sub_render.c \
+           $(APP)/Editor/sub_render.c $(APP)/Editor/graph.c \
            $(APP)/Editor/recent.c $(APP)/Editor/commands.c
 
 BIN     := kern_tests

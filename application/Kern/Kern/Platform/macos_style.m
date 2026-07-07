@@ -23,6 +23,7 @@ extern int kern_redundancies_enabled(void);
 extern int kern_typewriter_enabled(void);
 extern int kern_subs_enabled(void);
 extern int kern_page_borders_enabled(void);
+extern int kern_graph_enabled(void);
 
 /* Open the sandbox-container Documents folder in Finder. Bridged to the Window
    menu item (App/KernApp.swift); runs on the main thread during menu tracking. */
@@ -139,6 +140,7 @@ static const KernItemSpec k_view_items[] = {
   {"Typewriter Mode", "⌃X T", kern_typewriter_enabled},
   {"Symbols", "⌃X L", kern_subs_enabled},
   {"Page Borders", "⌃X P", kern_page_borders_enabled},
+  {"Graph View", "⌃X G", kern_graph_enabled},
   {"Syntax Highlighting", "⌃X Y", kern_syntax_enabled},
   {"Verbs", NULL, kern_verbs_enabled}, {"Nouns", NULL, kern_nouns_enabled},
   {"Adjectives", NULL, kern_adjectives_enabled},

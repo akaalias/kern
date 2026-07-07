@@ -58,6 +58,11 @@ ViewState   *tv_test_vs(void);
 void         tv_test_reset(void);
 /* The recorded "Opened after" predecessor basenames for `path` (see textview.c). */
 int          tv_test_opened_after(const char *path, char out[][256], int max);
+/* Graph view overlay (C-x g): 1 while the overlay is open. */
+int          tv_test_graph_active(void);
+/* Screen-space center of the graph node named `name` (the same transform the
+   draw pass and the click hit-test use); 0 if no such node. */
+int          tv_test_graph_node_screen(const char *name, int *x, int *y);
 /* X-publish confirmation overlay state: 0 = closed, 1 = confirming, 2 = sending. */
 int          tv_test_pub_state(void);
 /* What the pending publish is: 0 = plain post, 1 = reply, 2 = quote. */

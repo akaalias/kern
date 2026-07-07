@@ -27,6 +27,7 @@
 #include "clipboard.h"
 #include "clock.h"
 #include "commands.h"
+#include "graph.h"
 #include "editor_loop.h"
 
 /* ---- two struct instances hold all mutable state ---- */
@@ -153,6 +154,9 @@ static void minibuf_refresh_completion(void) {
 /* per-file cursor memory (defined below, near session persistence) */
 static void filepos_remember_current(void);
 static void filepos_restore_current(void);
+
+/* graph view overlay (C-x g; defined below, near the publish overlay) */
+static void cmd_toggle_graph(void);
 
 /* ---- "Opened after" history --------------------------------------------------
    For each note, remember the files that were open right before it was opened
@@ -1945,6 +1949,11 @@ static int handle_cx_prefix_key(int sym, int ctrl) {
     g_vs.suppress_next_text = 1;   /* swallow the "m" text event */
     return 1;
   }
+  if (!ctrl && sym == SDLK_g) {                                       /* C-x g */
+    cmd_toggle_graph();
+    g_vs.suppress_next_text = 1;   /* swallow the "g" text event */
+    return 1;
+  }
   return 1; /* consume even if unrecognized — prefix is cleared */
 }
 
@@ -2895,6 +2904,304 @@ static int pub_handle_click(int mx, int my) {
   return 1;
 }
 
+/* ---- graph view overlay (C-x g, drawn in do_render) -----------------------
+   An Obsidian-style force-directed map of the vault's relationships: one node
+   per note, edges for [[wikilinks]] (solid), "opened after" history (dashed)
+   and same-creation-day (dotted) — the same relations the Context section
+   lists. Model + physics live in graph.c (pure, headless-tested); this side
+   builds the graph from the documents dir, runs the modal interaction (click
+   a node to open it, drag to rearrange, scroll to zoom, Esc closes) and
+   draws. The layout keeps relaxing on the tick while it has energy. */
+
+#define GRAPH_SETTLE 0.02f   /* max node movement below which the sim sleeps */
+
+static int   graph_active;        /* the overlay is up (modal) */
+static int   graph_current = -1;  /* node of the open note (drawn accented) */
+static int   graph_hover = -1;    /* node under the mouse */
+static int   graph_drag = -1;     /* node being dragged */
+static int   graph_drag_moved;    /* drag traveled >3px (else it's a click) */
+static int   graph_press_x, graph_press_y;
+static float graph_zoom = 1.0f;
+static float graph_energy;        /* last layout step's max movement */
+
+/* Zoom around the window center: graph space <-> screen space. */
+static void graph_to_screen(float gx, float gy, int *sx, int *sy) {
+  float cx = nav_win_w() * 0.5f, cy = nav_win_h() * 0.5f;
+  *sx = (int)(cx + (gx - cx) * graph_zoom + 0.5f);
+  *sy = (int)(cy + (gy - cy) * graph_zoom + 0.5f);
+}
+
+static void graph_from_screen(int sx, int sy, float *gx, float *gy) {
+  float cx = nav_win_w() * 0.5f, cy = nav_win_h() * 0.5f;
+  *gx = cx + ((float)sx - cx) / graph_zoom;
+  *gy = cy + ((float)sy - cy) / graph_zoom;
+}
+
+/* Node under the screen point, hit in graph space with a zoom-true slop. */
+static int graph_hit(int sx, int sy) {
+  float gx, gy;
+  graph_from_screen(sx, sy, &gx, &gy);
+  return graph_node_at(gx, gy, 6.0f / graph_zoom);
+}
+
+static int graph_is_note_file(const char *name) {
+  const char *ext = strrchr(name, '.');
+  return ext && (strcmp(ext, ".md") == 0 || strcmp(ext, ".markdown") == 0 ||
+                 strcmp(ext, ".txt") == 0);
+}
+
+/* YYYY-MM-DD of a file's creation time ("" on failure). Birth time is
+   Darwin-only; elsewhere (Linux CI) mtime stands in. */
+static int graph_file_day(const char *path, char *out, int outsz) {
+  struct stat st;
+  out[0] = '\0';
+  if (stat(path, &st) != 0) return 0;
+#ifdef __APPLE__
+  time_t t = (time_t)st.st_birthtimespec.tv_sec;
+#else
+  time_t t = st.st_mtime;
+#endif
+  struct tm tm;
+  localtime_r(&t, &tm);
+  return (int)strftime(out, (size_t)outsz, "%Y-%m-%d", &tm) > 0;
+}
+
+/* Rebuild the graph from the vault: a node per note file (plus ghost nodes
+   for wikilink targets that don't exist on disk yet, like Obsidian), LINK
+   edges from each file's [[wikilinks]], DAY edges between notes born the same
+   calendar day, OPENED edges from the opened-after history. */
+static void graph_build(void) {
+  graph_clear();
+  graph_current = -1;
+  if (g_ed.filepath[0])
+    graph_current = graph_add_node(path_base(g_ed.filepath));
+
+  const char *docs = buf_get_documents_dir();
+  if (docs[0]) {
+    static char days[GRAPH_MAX_NODES][12];   /* creation day per node index */
+    static char body[256 * 1024];            /* main-thread only; off the stack */
+    memset(days, 0, sizeof days);
+    DIR *d = opendir(docs);
+    if (d) {
+      struct dirent *e;
+      while ((e = readdir(d)) != NULL) {
+        const char *name = e->d_name;
+        if (name[0] == '.' || strlen(name) >= 256) continue;
+        if (!graph_is_note_file(name)) continue;
+        int idx = graph_add_node(name);
+        if (idx < 0) continue;                /* table full */
+        char full[1300];
+        snprintf(full, sizeof full, "%s/%s", docs, name);
+        graph_file_day(full, days[idx], sizeof days[idx]);
+        FILE *f = fopen(full, "rb");
+        if (f) {
+          size_t n = fread(body, 1, sizeof body - 1, f);
+          fclose(f);
+          body[n] = '\0';
+          graph_scan_links(idx, body);
+        }
+      }
+      closedir(d);
+    }
+    int n = graph_node_count();
+    for (int i = 0; i < n; i++)
+      for (int j = i + 1; j < n; j++)
+        if (days[i][0] && days[j][0] && strcmp(days[i], days[j]) == 0)
+          graph_add_edge(i, j, GRAPH_EDGE_DAY);
+  }
+
+  for (int i = 0; i < g_opened_after_count; i++) {
+    OpenedAfter *oa = &g_opened_after[i];
+    int a = graph_add_node(path_base(oa->path));
+    for (int j = 0; j < oa->npred; j++)
+      graph_add_edge(a, graph_add_node(oa->preds[j]), GRAPH_EDGE_OPENED);
+  }
+}
+
+static void cmd_toggle_graph(void) {
+  if (graph_active) { graph_active = 0; return; }
+  graph_build();
+  graph_layout_init((float)nav_win_w(), (float)nav_win_h());
+  /* pre-settle so the overlay opens onto a laid-out map, not the seed spiral */
+  for (int i = 0; i < 150; i++)
+    graph_energy = graph_layout_step((float)nav_win_w(), (float)nav_win_h());
+  graph_zoom = 1.0f;
+  graph_hover = graph_drag = -1;
+  graph_active = 1;
+  nav_status_set(&g_vs, "Graph view: click a note to open it, drag to arrange, Esc to close");
+}
+
+/* Keydown routing while the overlay is up (modal — everything is consumed).
+   Esc closes; C-x g also closes (the toggle), which means the prefix state is
+   tracked here so other C-x chords can't fire under the overlay. */
+static int handle_graph_key(int sym, int ctrl) {
+  if (ctrl && sym == SDLK_x) { g_vs.ctrl_x_prefix = 1; return 1; }
+  if (g_vs.ctrl_x_prefix) {
+    g_vs.ctrl_x_prefix = 0;
+    if (!ctrl && sym == SDLK_g) {
+      graph_active = 0;
+      g_vs.suppress_next_text = 1;   /* swallow the "g" text event */
+    }
+    return 1;
+  }
+  if (sym == SDLK_ESCAPE) graph_active = 0;
+  return 1;
+}
+
+/* Left mouse down over the overlay: start a drag on a node (a release without
+   movement is a click, handled in graph_mouse_up). Consumes while modal. */
+static int graph_mouse_down(int mx, int my) {
+  if (!graph_active) return 0;
+  graph_drag = graph_hit(mx, my);
+  graph_drag_moved = 0;
+  graph_press_x = mx;
+  graph_press_y = my;
+  return 1;
+}
+
+static void graph_mouse_motion(int mx, int my) {
+  if (!graph_active) return;
+  if (graph_drag >= 0) {
+    GraphNode *n = graph_node(graph_drag);
+    graph_from_screen(mx, my, &n->x, &n->y);
+    n->vx = n->vy = 0.0f;
+    if (abs(mx - graph_press_x) > 3 || abs(my - graph_press_y) > 3)
+      graph_drag_moved = 1;
+    graph_energy = 1.0f;               /* re-excite the neighbors */
+  } else {
+    graph_hover = graph_hit(mx, my);
+  }
+}
+
+/* Release: an unmoved press on a node opens that note — the same jump as
+   following a [[wikilink]] (save, push history, open). */
+static void graph_mouse_up(int mx, int my) {
+  if (!graph_active) return;
+  int idx = graph_drag;
+  graph_drag = -1;
+  if (idx < 0 || graph_drag_moved) return;
+  if (graph_hit(mx, my) != idx) return;        /* slid off the node */
+  graph_active = 0;
+  save_if_dirty();
+  nav_stack_push(nav_back, &nav_back_count, g_ed.filepath, g_ed.cursor_line, g_ed.cursor_col);
+  nav_fwd_count = 0;
+  open_or_create_file(graph_open_target(idx));
+}
+
+static void graph_wheel(float dy) {
+  if (dy > 0)      graph_zoom *= 1.1f;
+  else if (dy < 0) graph_zoom /= 1.1f;
+  if (graph_zoom < 0.3f) graph_zoom = 0.3f;
+  if (graph_zoom > 3.0f) graph_zoom = 3.0f;
+}
+
+/* A line as a run of 2×2 dots every 2px — the renderer seam has no angled
+   line primitive, and at these lengths the dot run reads as a solid stroke.
+   dash: 0 = solid, 1 = dashed (opened-after), 2 = dotted (same-day). */
+static void draw_graph_line(int x0, int y0, int x1, int y1, Color c, int dash) {
+  float dx = (float)(x1 - x0), dy = (float)(y1 - y0);
+  float len = sqrtf(dx * dx + dy * dy);
+  int steps = (int)(len / 2.0f);
+  if (steps < 1) return;
+  for (int i = 0; i <= steps; i++) {
+    if (dash == 1 && ((i / 4) & 1)) continue;    /* 8px on / 8px off */
+    if (dash == 2 && (i % 3)) continue;          /* sparse dots */
+    float t = (float)i / (float)steps;
+    r_draw_rect(rect((int)(x0 + dx * t) - 1, (int)(y0 + dy * t) - 1, 2, 2), c);
+  }
+}
+
+/* One edge's stroke: the strongest relation present picks the texture. */
+static void graph_edge_stroke(unsigned kinds, int hot, Color *c, int *dash) {
+  if (kinds & GRAPH_EDGE_LINK) {
+    *c = hot ? color(170, 190, 205, 235) : color(130, 140, 152, 110);
+    *dash = 0;
+  } else if (kinds & GRAPH_EDGE_OPENED) {
+    *c = hot ? color(120, 190, 235, 225) : color(95, 150, 190, 95);
+    *dash = 1;
+  } else {
+    *c = hot ? color(235, 195, 120, 225) : color(190, 158, 95, 85);
+    *dash = 2;
+  }
+}
+
+static void draw_graph_overlay(void) {
+  if (!graph_active) return;
+  int ww = nav_win_w(), wh = nav_win_h();
+  int fh = r_get_text_height();
+  int saved = r_get_font_style();
+
+  /* backdrop: blur + darken the page (heavier than the publish overlay — the
+     text below is pure noise behind a map) */
+  r_blur_rect(rect(0, 0, ww, wh), 6);
+  r_draw_rect(rect(0, 0, ww, wh), color(14, 15, 18, 215));
+
+  r_set_font_style(r_ui_font_style());
+
+  /* edges under the nodes; edges touching the hovered node light up */
+  for (int i = 0; i < graph_edge_count(); i++) {
+    GraphEdge *e = graph_edge(i);
+    int x0, y0, x1, y1;
+    graph_to_screen(graph_node(e->a)->x, graph_node(e->a)->y, &x0, &y0);
+    graph_to_screen(graph_node(e->b)->x, graph_node(e->b)->y, &x1, &y1);
+    Color c; int dash;
+    graph_edge_stroke(e->kinds, e->a == graph_hover || e->b == graph_hover, &c, &dash);
+    draw_graph_line(x0, y0, x1, y1, c, dash);
+  }
+
+  /* nodes: the open note in the caret's read-only amber, the hovered one in
+     caret cyan, ghosts (no file on disk yet) dimmer than real notes */
+  for (int i = 0; i < graph_node_count(); i++) {
+    int sx, sy;
+    graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
+    int rad = (int)(graph_node_radius(i) * graph_zoom + 0.5f);
+    if (rad < 3) rad = 3;
+    Color c = (i == graph_current)      ? color(250, 165, 70, 255)
+            : (i == graph_hover)        ? color(90, 200, 250, 255)
+            : graph_node(i)->file[0]    ? color(168, 174, 184, 255)
+                                        : color(105, 110, 120, 255);
+    draw_filled_circle(sx, sy, rad, c);
+  }
+
+  /* labels: small, centered under each node */
+  r_set_font_scale(0.6f);
+  for (int i = 0; i < graph_node_count(); i++) {
+    const char *name = graph_node(i)->name;
+    int sx, sy;
+    graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
+    int rad = (int)(graph_node_radius(i) * graph_zoom + 0.5f);
+    int tw = r_get_text_width(name, (int)strlen(name));
+    Color c = (i == graph_hover || i == graph_current)
+                ? color(225, 228, 232, 255)
+                : color(150, 155, 163, 170);
+    r_draw_text(name, vec2(sx - tw / 2, sy + rad + 4), c);
+  }
+
+  /* edge-kind legend (bottom left) + a usage hint (top center) */
+  {
+    int ly = wh - fh - 14;
+    int lx = 20;
+    const struct { const char *label; unsigned kind; } leg[3] = {
+      { "linked",       GRAPH_EDGE_LINK },
+      { "opened after", GRAPH_EDGE_OPENED },
+      { "same day",     GRAPH_EDGE_DAY },
+    };
+    for (int i = 0; i < 3; i++) {
+      Color c; int dash;
+      graph_edge_stroke(leg[i].kind, 1, &c, &dash);
+      draw_graph_line(lx, ly + fh / 3, lx + 26, ly + fh / 3, c, dash);
+      lx += 32;
+      r_draw_text(leg[i].label, vec2(lx, ly), color(150, 155, 163, 200));
+      lx += r_get_text_width(leg[i].label, (int)strlen(leg[i].label)) + 22;
+    }
+    const char *hint = "click to open   \xC2\xB7   drag to arrange   \xC2\xB7   scroll to zoom   \xC2\xB7   esc to close";
+    int hw = r_get_text_width(hint, (int)strlen(hint));
+    r_draw_text(hint, vec2((ww - hw) / 2, 44), color(140, 145, 153, 190));
+  }
+  r_set_font_scale(1.0f);
+  r_set_font_style(saved);
+}
+
 static void do_render(void) {
   r_clear(color(30, 30, 32, 255));
   /* Set substitution BEFORE process_frame: it draws the selection/search
@@ -3016,6 +3323,7 @@ static void do_render(void) {
 
   draw_status_bar();
 
+  draw_graph_overlay();     /* the C-x g relationship map, over the page */
   draw_publish_overlay();   /* the X-publish confirmation, on top of everything */
 
   r_present();
@@ -3108,10 +3416,15 @@ void editor_handle_event(const SDL_Event *ev) {
         /* reflow only if the page width actually changed (a height-only
            resize or a spurious resize event is now free) */
         nav_maybe_reflow(&g_ed, &g_vs);
+        if (graph_active) graph_energy = 1.0f;   /* re-center on the new window */
       }
       break;
-    case SDL_MOUSEMOTION: g_mouse_x = e.motion.x; g_mouse_y = e.motion.y; break;
+    case SDL_MOUSEMOTION:
+      g_mouse_x = e.motion.x; g_mouse_y = e.motion.y;
+      graph_mouse_motion(e.motion.x, e.motion.y);   /* hover/drag (no-op unless open) */
+      break;
     case SDL_MOUSEWHEEL:
+      if (graph_active) { graph_wheel((float)e.wheel.y); break; }   /* zoom the map */
       g_vs.scroll_y -= e.wheel.y * nav_line_height() * 3;
       g_vs.scroll_target_y = g_vs.scroll_y;   /* don't let the ease fight the wheel */
       break;
@@ -3120,6 +3433,7 @@ void editor_handle_event(const SDL_Event *ev) {
       if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
       if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
       if (pub_state != PUB_NONE) break;      /* overlay swallows typing */
+      if (graph_active) break;               /* graph view swallows typing too */
       if (mn_active) {                       /* typing a margin note */
         int tlen = strlen(e.text.text);
         if (mn_len + tlen < (int)sizeof(mn_text) - 1) {
@@ -3190,11 +3504,16 @@ void editor_handle_event(const SDL_Event *ev) {
         /* the publish overlay is modal: it consumes left clicks (buttons + the
            dimmed backdrop) before they can reach the text under it */
         if (b == MOUSE_LEFT && pub_handle_click(e.button.x, e.button.y)) break;
+        /* so is the graph view (press starts a node drag / click) */
+        if (b == MOUSE_LEFT && graph_mouse_down(e.button.x, e.button.y)) break;
         if (b == MOUSE_LEFT && e.button.y > TOP_PADDING && e.button.x < nav_win_w() - 12) {
           nav_click_to_cursor(&g_ed, &g_vs, e.button.x, e.button.y);
         }
       }
-      if (b && e.type == SDL_MOUSEBUTTONUP) { g_mouse_down &= ~b; }
+      if (b && e.type == SDL_MOUSEBUTTONUP) {
+        g_mouse_down &= ~b;
+        if (b == MOUSE_LEFT) graph_mouse_up(e.button.x, e.button.y);
+      }
       break;
     }
 
@@ -3214,6 +3533,7 @@ void editor_handle_event(const SDL_Event *ev) {
 
         /* 1. Modal handlers (consume and break) */
         if (pub_state != PUB_NONE && handle_publish_key(sym)) break;
+        if (graph_active && handle_graph_key(sym, ctrl)) break;
         if (mn_active && handle_marginnote_key(sym)) break;
         if (g_vs.minibuf_active && handle_minibuf_key(sym, ctrl)) break;
         if (g_vs.search_active && handle_search_key(sym, ctrl)) break;
@@ -3522,6 +3842,12 @@ void editor_tick(void) {
   pub_apply_tweet();    /* apply a pending reply-target tweet fetch likewise */
   feed_apply_result();  /* land a fetched X news feed in a note, ditto */
 
+  /* graph view: keep relaxing the layout while it still has energy (a drag
+     or resize re-excites it; it sleeps once movement falls under the floor) */
+  if (graph_active && graph_energy > GRAPH_SETTLE)
+    for (int i = 0; i < 3; i++)
+      graph_energy = graph_layout_step((float)nav_win_w(), (float)nav_win_h());
+
   do_render();
 }
 
@@ -3597,6 +3923,8 @@ void kern_menu_outdent(void) { menu_key(KMOD_SHIFT, SDLK_TAB); }
 /* View */
 void kern_menu_typewriter(void)      { menu_chord_cx(SDLK_t, 0); }
 int  kern_typewriter_enabled(void)   { return g_vs.typewriter_mode; }
+void kern_menu_graph_view(void)      { menu_chord_cx(SDLK_g, 0); }
+int  kern_graph_enabled(void)        { return graph_active; }
 void kern_menu_page_borders(void)    { menu_chord_cx(SDLK_p, 0); }
 int  kern_page_borders_enabled(void) { return !g_vs.page_furniture_hidden; }
 void kern_menu_font_bigger(void)     { menu_key(KMOD_GUI, SDLK_EQUALS); }
@@ -3798,7 +4126,8 @@ int editor_main(int argc, char **argv) {
     /* Block until input arrives (NULL leaves events queued for the drain loop
        below) instead of busy-spinning. The timeout wakes us periodically so
        transient status-bar messages can still clear without input. */
-    SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating || g_pos_animating) ? 16 : 250);
+    SDL_WaitEventTimeout(NULL, (g_scroll_animating || g_dim_animating || g_pos_animating ||
+                                (graph_active && graph_energy > GRAPH_SETTLE)) ? 16 : 250);
     while (SDL_PollEvent(&e)) editor_handle_event(&e);
     editor_tick();
   }
@@ -3841,6 +4170,9 @@ void tv_test_reset(void) {
   g_last_autosave = 0;
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
+  graph_active = 0; graph_current = graph_hover = graph_drag = -1;
+  graph_drag_moved = 0; graph_zoom = 1.0f; graph_energy = 0.0f;
+  graph_clear();
   pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;
   pub_text[0] = '\0'; pub_result_info[0] = '\0';
   memset(&pub_reply, 0, sizeof pub_reply);
@@ -3856,6 +4188,16 @@ const char *tv_test_pub_quote_author(void) { return pub_reply.author; }
 const char *tv_test_pub_quote_text(void)   { return pub_reply.quote; }
 const char *tv_test_pub_reply_handle(void) { return pub_reply.handle; }
 int         tv_test_pub_kind(void) { return pub_kind; }
+
+/* Graph view overlay: open flag + a node's screen-space center (the same
+   transform the draw pass and the click hit-test use). */
+int tv_test_graph_active(void) { return graph_active; }
+int tv_test_graph_node_screen(const char *name, int *x, int *y) {
+  int i = graph_find(name);
+  if (i < 0) return 0;
+  graph_to_screen(graph_node(i)->x, graph_node(i)->y, x, y);
+  return 1;
+}
 
 /* Test accessor: the recorded predecessor basenames for `path` (raw, unfiltered
    by on-disk existence — that filtering lives in the app-only opened_after_list). */

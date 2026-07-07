@@ -9,6 +9,7 @@
 #include "test.h"
 #include "platform_stub.h"
 #include "editor_loop.h"
+#include "graph.h"
 #include "editor_types.h"
 #include "buffer.h"
 #include "clock_fake.h"
@@ -35,6 +36,7 @@ void kern_menu_bold(void);
 void kern_menu_highlight(void);
 void kern_menu_typewriter(void);   int kern_typewriter_enabled(void);
 void kern_menu_page_borders(void); int kern_page_borders_enabled(void);
+void kern_menu_graph_view(void);   int kern_graph_enabled(void);
 void kern_menu_font_bigger(void);
 void kern_menu_bottom(void);
 void kern_menu_goto_line(void);
@@ -1323,6 +1325,13 @@ static void test_menu_view_toggles_and_queries(void) {
   float before = VS->font_size;
   kern_menu_font_bigger();
   CHECK(VS->font_size > before);
+  /* Graph View drives the C-x g chord and reports the overlay state */
+  CHECK_IEQ(kern_graph_enabled(), 0);
+  kern_menu_graph_view();
+  CHECK_IEQ(kern_graph_enabled(), 1);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  kern_menu_graph_view();
+  CHECK_IEQ(kern_graph_enabled(), 0);
 }
 
 static void test_menu_go_actions(void) {
@@ -1469,6 +1478,129 @@ static void test_cmd_shift_u_toggles_sentence_underline(void) {
   EXPECT_LINE(0, "Just do it.");
 }
 
+/* --------------------------------------------------------------------------- graph view (C-x g) */
+
+/* A left mouse click (down + up) at window coordinates (x, y). */
+static void click(int x, int y) {
+  SDL_Event e; memset(&e, 0, sizeof e);
+  e.type = SDL_MOUSEBUTTONDOWN;
+  e.button.button = SDL_BUTTON_LEFT;
+  e.button.x = x; e.button.y = y;
+  editor_handle_event(&e);
+  e.type = SDL_MOUSEBUTTONUP;
+  editor_handle_event(&e);
+}
+
+/* C-x g opens the graph overlay over the current note: the open file and its
+   [[wikilink]] targets become nodes joined by LINK edges; typing is swallowed
+   while the overlay is up; Esc closes it. */
+static void test_cx_g_opens_graph_view(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  const char *body = "see [[Beta]]\n";
+  buf_save_text(a, body, (int)strlen(body));
+  tv_begin(); load("see [[Beta]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x);
+  key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  CHECK_IEQ(VS->ctrl_x_prefix, 0);
+
+  int ia = graph_find("Alpha"), ib = graph_find("Beta");
+  CHECK(ia >= 0);
+  CHECK(ib >= 0);
+  CHECK((graph_edge_kinds_between(ia, ib) & GRAPH_EDGE_LINK) != 0);
+
+  /* the overlay is modal: typed text never reaches the buffer (clear the
+     chord's own text suppression first so the swallow tested is the graph's) */
+  VS->suppress_next_text = 0;
+  type("x");
+  EXPECT_LINE(0, "see [[Beta]]");
+
+  key(0, SDLK_ESCAPE);
+  CHECK_IEQ(tv_test_graph_active(), 0);
+  buf_set_documents_dir("");
+}
+
+/* A second C-x g closes the overlay (toggle). */
+static void test_cx_g_toggles_closed(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  tv_begin(); load("hi");
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 0);
+  buf_set_documents_dir("");
+}
+
+/* Clicking a node opens that note (the real on-disk filename when the node
+   came from a file) and closes the overlay. */
+static void test_graph_click_opens_note(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Beta.md", dir);
+  const char *body = "see [[Beta]]\n";
+  buf_save_text(a, body, (int)strlen(body));
+  buf_save_text(b, "beta\n", 5);
+  tv_begin(); load("see [[Beta]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  int x = 0, y = 0;
+  CHECK(tv_test_graph_node_screen("Beta", &x, &y));
+  click(x, y);
+  CHECK_IEQ(tv_test_graph_active(), 0);
+  CHECK(strstr(ED->filepath, "Beta.md") != NULL);
+  buf_set_documents_dir("");
+}
+
+/* Notes created the same day get a DAY edge (both fixtures are written now,
+   so they share a creation day by construction). */
+static void test_graph_same_day_edge(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/One.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Two.md", dir);
+  buf_save_text(a, "one\n", 4);
+  buf_save_text(b, "two\n", 4);
+  tv_begin(); load("one");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "One.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  int ia = graph_find("One"), ib = graph_find("Two");
+  CHECK(ia >= 0);
+  CHECK(ib >= 0);
+  CHECK((graph_edge_kinds_between(ia, ib) & GRAPH_EDGE_DAY) != 0);
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
+/* The opened-after history becomes OPENED edges. */
+static void test_graph_opened_after_edge(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/First.md", dir);
+  buf_save_text(a, "first\n", 6);
+  tv_begin(); load("first");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "First.md";
+  /* open Second.md while First.md is up → Second remembers First */
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f);
+  type("Second.md"); key(0, SDLK_RETURN);
+  CHECK(strstr(ED->filepath, "Second.md") != NULL);
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  int ia = graph_find("First"), ib = graph_find("Second");
+  CHECK(ia >= 0);
+  CHECK(ib >= 0);
+  CHECK((graph_edge_kinds_between(ia, ib) & GRAPH_EDGE_OPENED) != 0);
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -1574,6 +1706,12 @@ void suite_textview(void) {
   RUN(test_cx_m_requests_bookmarks);
   RUN(test_bookmarks_result_opens_note);
   RUN(test_feed_failure_reports_error);
+  /* graph view (C-x g) */
+  RUN(test_cx_g_opens_graph_view);
+  RUN(test_cx_g_toggles_closed);
+  RUN(test_graph_click_opens_note);
+  RUN(test_graph_same_day_edge);
+  RUN(test_graph_opened_after_edge);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

@@ -112,6 +112,7 @@ void kern_menu_outdent(void);
 /* View */
 void kern_menu_typewriter(void);      int kern_typewriter_enabled(void);
 void kern_menu_page_borders(void);    int kern_page_borders_enabled(void);
+void kern_menu_graph_view(void);      int kern_graph_enabled(void);
 void kern_menu_font_bigger(void);
 void kern_menu_font_smaller(void);
 void kern_menu_recenter(void);

@@ -133,6 +133,7 @@ struct KernApp: App {
                 Button("Typewriter Mode") { kern_menu_typewriter() }
                 Button("Symbols") { kern_toggle_subs() }
                 Button("Page Borders") { kern_menu_page_borders() }
+                Button("Graph View") { kern_menu_graph_view() }
                 Divider()
                 Button("Syntax Highlighting") { kern_toggle_syntax() }
                 Button("Verbs") { kern_toggle_verbs() }
@@ -281,6 +282,7 @@ let shortcutGroups: [ShortcutGroup] = [
         B("Typewriter mode", "C-x t"), B("Syntax highlighting", "C-x y"),
         B("Style check", "C-x s"), B("Symbols (ligatures)", "C-x l"),
         B("Page borders", "C-x p"),
+        B("Graph view (note relationships)", "C-x g"),
     ]),
     ShortcutGroup(title: "Scrolling", bindings: [
         B("Page down", "C-v"), B("Page up", "M-v"),

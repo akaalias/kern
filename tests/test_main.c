@@ -37,6 +37,7 @@ void suite_textview(void);
 void suite_pos(void);
 void suite_style(void);
 void suite_sub(void);
+void suite_graph(void);
 void suite_snapshot(void);
 
 int main(void) {
@@ -54,6 +55,7 @@ int main(void) {
   suite_pos();
   suite_style();
   suite_sub();
+  suite_graph();
   suite_snapshot();
 
   fprintf(stdout, "\n%d tests (%d failed), %d checks (%d failed)\n",
