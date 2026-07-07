@@ -99,6 +99,19 @@ void r_draw_rect(Rect rect, Color color) {
   }
 }
 
+/* AA line / circle (graph view): recorded as their bounding rects. */
+void r_draw_line(float x0, float y0, float x1, float y1, float width, Color color) {
+  float lx = x0 < x1 ? x0 : x1, hx = x0 < x1 ? x1 : x0;
+  float ly = y0 < y1 ? y0 : y1, hy = y0 < y1 ? y1 : y0;
+  (void)width;
+  r_draw_rect(rect((int)lx, (int)ly, (int)(hx - lx) + 1, (int)(hy - ly) + 1), color);
+}
+
+void r_draw_circle(float cx, float cy, float radius, Color color) {
+  r_draw_rect(rect((int)(cx - radius), (int)(cy - radius),
+                   (int)(radius * 2), (int)(radius * 2)), color);
+}
+
 /* ---- unused by the headless layout paths: no-ops ---- */
 void r_draw_image_circle(Rect rect, const unsigned char *rgba, int iw, int ih) {
   (void)rect; (void)rgba; (void)iw; (void)ih;

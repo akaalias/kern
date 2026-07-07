@@ -1601,6 +1601,151 @@ static void test_graph_opened_after_edge(void) {
   buf_set_documents_dir("");
 }
 
+/* Did any captured text draw contain `s` (page text, labels, chrome alike)? */
+static int stub_has_text(const char *s) {
+  for (int i = 0; i < stub_text_count; i++)
+    if (strstr(stub_texts[i].ch, s)) return 1;
+  return 0;
+}
+
+/* A wide star (one hub note wikilinking 29 ghost targets) settles larger than
+   the 800×600 stub window at 1:1 — the overlay must open fitted so every node
+   is on screen (Obsidian-style), not cropped. */
+static void test_graph_opens_fitted(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char hub[512]; snprintf(hub, sizeof hub, "%s/Hub.md", dir);
+  char body[1024]; int blen = 0;
+  for (int i = 1; i < 30; i++)
+    blen += snprintf(body + blen, sizeof body - blen, "[[G%d]]\n", i);
+  buf_save_text(hub, body, blen);
+  char plain[512]; snprintf(plain, sizeof plain, "%s/Plain.md", dir);
+  buf_save_text(plain, "hi\n", 3);
+  tv_begin(); load("hi");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", plain);
+  ED->filename = "Plain.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  CHECK(graph_node_count() >= 30);
+  for (int i = 0; i < graph_node_count(); i++) {
+    int x = 0, y = 0;
+    CHECK(tv_test_graph_node_screen(graph_node(i)->name, &x, &y));
+    CHECK(x >= 0 && x <= 800);
+    CHECK(y >= 0 && y <= 600);
+  }
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
+/* Node labels are hidden while zoomed out (below the fade threshold) and fade
+   in past it — except the hovered node's label, which always shows. */
+static void test_graph_labels_fade_with_zoom(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char hub[512]; snprintf(hub, sizeof hub, "%s/Hub.md", dir);
+  char body[1024]; int blen = 0;
+  for (int i = 1; i < 30; i++)
+    blen += snprintf(body + blen, sizeof body - blen, "[[G%d]]\n", i);
+  buf_save_text(hub, body, blen);
+  char plain[512]; snprintf(plain, sizeof plain, "%s/Plain.md", dir);
+  buf_save_text(plain, "hi\n", 3);
+  tv_begin(); load("hi");   /* page text has no "G7", so any hit is a label */
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", plain);
+  ED->filename = "Plain.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+
+  /* the wide star fits well below the label threshold → no labels drawn */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("G7"), 0);
+
+  /* hovering a node shows its label even while zoomed out */
+  int hx = 0, hy = 0;
+  CHECK(tv_test_graph_node_screen("G3", &hx, &hy));
+  SDL_Event m; memset(&m, 0, sizeof m);
+  m.type = SDL_MOUSEMOTION; m.motion.x = hx; m.motion.y = hy;
+  editor_handle_event(&m);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("G3"), 1);
+  CHECK_IEQ(stub_has_text("G7"), 0);
+
+  /* zoom in past the threshold → the other labels fade in */
+  m.motion.x = 5; m.motion.y = 5;          /* un-hover first */
+  editor_handle_event(&m);
+  SDL_Event w; memset(&w, 0, sizeof w);
+  w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
+  for (int i = 0; i < 8; i++) editor_handle_event(&w);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("G7"), 1);
+
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
+/* Any recorded rect stroke with this rgb and an alpha inside [lo, hi]? */
+static int stub_has_rect_rgba(int r, int g, int b, int lo, int hi) {
+  for (int i = 0; i < stub_rect_count; i++) {
+    Color c = stub_rects[i].color;
+    if (c.r == r && c.g == g && c.b == b && c.a >= lo && c.a <= hi) return 1;
+  }
+  return 0;
+}
+
+/* Edges fade with zoom but never disappear: the fitted overview draws them at
+   a faint floor alpha, a hovered node's edges show at full highlight, and
+   zooming past the threshold brings the rest to full strength. Asserted via
+   the muted wikilink stroke color (130,140,152, base alpha 110) the stub
+   records. */
+static void test_graph_edges_fade_with_zoom(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char hub[512]; snprintf(hub, sizeof hub, "%s/Hub.md", dir);
+  char body[1024]; int blen = 0;
+  for (int i = 1; i < 30; i++)
+    blen += snprintf(body + blen, sizeof body - blen, "[[G%d]]\n", i);
+  buf_save_text(hub, body, blen);
+  char plain[512]; snprintf(plain, sizeof plain, "%s/Plain.md", dir);
+  buf_save_text(plain, "hi\n", 3);
+  tv_begin(); load("hi");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", plain);
+  ED->filename = "Plain.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+
+  /* fitted overview: edges present but faint (alpha well under the base 110,
+     above zero), and none at full muted strength */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 1, 55), 1);
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 56, 255), 0);
+
+  /* hovering a node lifts its edges to the full hot highlight */
+  int hx = 0, hy = 0;
+  CHECK(tv_test_graph_node_screen("G3", &hx, &hy));
+  SDL_Event m; memset(&m, 0, sizeof m);
+  m.type = SDL_MOUSEMOTION; m.motion.x = hx; m.motion.y = hy;
+  editor_handle_event(&m);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(170, 190, 205, 235, 235), 1);
+
+  /* zoom in past the threshold → the muted edges reach full base alpha */
+  m.motion.x = 5; m.motion.y = 5;
+  editor_handle_event(&m);
+  SDL_Event w; memset(&w, 0, sizeof w);
+  w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
+  for (int i = 0; i < 8; i++) editor_handle_event(&w);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 1);
+
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -1712,6 +1857,9 @@ void suite_textview(void) {
   RUN(test_graph_click_opens_note);
   RUN(test_graph_same_day_edge);
   RUN(test_graph_opened_after_edge);
+  RUN(test_graph_opens_fitted);
+  RUN(test_graph_labels_fade_with_zoom);
+  RUN(test_graph_edges_fade_with_zoom);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

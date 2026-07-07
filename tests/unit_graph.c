@@ -193,6 +193,24 @@ static void test_graph_node_at(void) {
   CHECK_IEQ(graph_node_at(-5000.0f, -5000.0f, 4.0f), -1);
 }
 
+/* Bounding box of the node centers (what the overlay fits to the window). */
+static void test_graph_bounds(void) {
+  graph_clear();
+  float minx = 1, miny = 2, maxx = 3, maxy = 4;
+  CHECK_IEQ(graph_bounds(&minx, &miny, &maxx, &maxy), 0);   /* empty graph */
+  graph_add_node("A");
+  graph_add_node("B");
+  graph_add_node("C");
+  graph_node(0)->x = -50.0f; graph_node(0)->y = 300.0f;
+  graph_node(1)->x = 900.0f; graph_node(1)->y = -20.0f;
+  graph_node(2)->x = 400.0f; graph_node(2)->y = 750.0f;
+  CHECK_IEQ(graph_bounds(&minx, &miny, &maxx, &maxy), 1);
+  CHECK(minx == -50.0f);
+  CHECK(miny == -20.0f);
+  CHECK(maxx == 900.0f);
+  CHECK(maxy == 750.0f);
+}
+
 /* Degree grows the drawn radius (hub nodes read bigger, like Obsidian). */
 static void test_graph_radius_grows_with_degree(void) {
   graph_clear();
@@ -219,5 +237,6 @@ void suite_graph(void) {
   RUN(test_graph_layout_repels_and_settles);
   RUN(test_graph_layout_stays_near_window);
   RUN(test_graph_node_at);
+  RUN(test_graph_bounds);
   RUN(test_graph_radius_grows_with_degree);
 }

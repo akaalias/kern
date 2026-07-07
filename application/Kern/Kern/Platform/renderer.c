@@ -314,6 +314,93 @@ void r_draw_rect(Rect rect, Color color) {
   push_quad_uv(rect.x, rect.y, rect.w, rect.h, 0, 0, 1, 1, color);
 }
 
+/* push_quad_uv with free-form corners and per-vertex colors (vertex order:
+   the two ends of edge A, then the two ends of edge B — same triangle split
+   as push_quad_uv). Samples the current texture at a fixed texel. */
+static void push_quad_pts(const float xs[4], const float ys[4],
+                          const Color cols[4]) {
+  if (buf_idx == BUFFER_SIZE) { flush(); }
+  int texvert_idx = buf_idx *  8;
+  int   color_idx = buf_idx * 16;
+  int element_idx = buf_idx *  4;
+  int   index_idx = buf_idx *  6;
+  buf_idx++;
+  for (int i = 0; i < 4; i++) {
+    tex_buf[texvert_idx + 2 * i]     = 0.5f;
+    tex_buf[texvert_idx + 2 * i + 1] = 0.5f;
+    vert_buf[texvert_idx + 2 * i]     = xs[i];
+    vert_buf[texvert_idx + 2 * i + 1] = ys[i];
+    memcpy(color_buf + color_idx + 4 * i, &cols[i], 4);
+  }
+  index_buf[index_idx + 0] = element_idx + 0;
+  index_buf[index_idx + 1] = element_idx + 1;
+  index_buf[index_idx + 2] = element_idx + 2;
+  index_buf[index_idx + 3] = element_idx + 2;
+  index_buf[index_idx + 4] = element_idx + 3;
+  index_buf[index_idx + 5] = element_idx + 1;
+}
+
+void r_draw_line(float x0, float y0, float x1, float y1, float width, Color color) {
+  float dx = x1 - x0, dy = y1 - y0;
+  float len = sqrtf(dx * dx + dy * dy);
+  if (len < 0.001f || width <= 0.0f) return;
+  float nx = -dy / len, ny = dx / len;      /* unit normal */
+  float hw = width * 0.5f, ft = 1.0f;       /* half-width + feather */
+  switch_texture(white_tex);
+  Color clear = color; clear.a = 0;
+  /* solid core */
+  {
+    float xs[4] = { x0 + nx * hw, x0 - nx * hw, x1 + nx * hw, x1 - nx * hw };
+    float ys[4] = { y0 + ny * hw, y0 - ny * hw, y1 + ny * hw, y1 - ny * hw };
+    Color cs[4] = { color, color, color, color };
+    push_quad_pts(xs, ys, cs);
+  }
+  /* feather strips: solid at the core edge fading to clear one px out */
+  for (int side = -1; side <= 1; side += 2) {
+    float ox = nx * (float)side, oy = ny * (float)side;
+    float xs[4] = { x0 + ox * (hw + ft), x0 + ox * hw,
+                    x1 + ox * (hw + ft), x1 + ox * hw };
+    float ys[4] = { y0 + oy * (hw + ft), y0 + oy * hw,
+                    y1 + oy * (hw + ft), y1 + oy * hw };
+    Color cs[4] = { clear, color, clear, color };
+    push_quad_pts(xs, ys, cs);
+  }
+}
+
+/* One 64×64 anti-aliased disc coverage mask, built lazily and mipmapped so
+   small nodes minify cleanly; every circle is this texture scaled. */
+static GLuint circle_tex;
+static void ensure_circle_tex(void) {
+  if (circle_tex) return;
+  enum { S = 64 };
+  static unsigned char px[S * S];
+  double c = S / 2.0, r = S / 2.0 - 1.5;
+  for (int y = 0; y < S; y++)
+    for (int x = 0; x < S; x++) {
+      double ddx = (x + 0.5) - c, ddy = (y + 0.5) - c;
+      double cov = 0.5 - (sqrt(ddx * ddx + ddy * ddy) - r);
+      if (cov < 0) cov = 0; else if (cov > 1) cov = 1;
+      px[y * S + x] = (unsigned char)(cov * 255.0 + 0.5);
+    }
+  glGenTextures(1, &circle_tex);
+  glBindTexture(GL_TEXTURE_2D, circle_tex);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  glTexParameteri(GL_TEXTURE_2D, GL_GENERATE_MIPMAP, GL_TRUE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, S, S, 0, GL_ALPHA, GL_UNSIGNED_BYTE, px);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void r_draw_circle(float cx, float cy, float radius, Color color) {
+  if (radius <= 0.0f) return;
+  ensure_circle_tex();
+  switch_texture(circle_tex);
+  push_quad_uv(cx - radius, cy - radius, radius * 2.0f, radius * 2.0f,
+               0, 0, 1, 1, color);
+}
+
 /* Filled rounded rectangle with anti-aliased edges. Builds a coverage mask from
    the rounded-rect signed-distance field into a GL_ALPHA texture, then draws it
    modulated by `color` (same path as glyphs: alpha = coverage × color.a). Small

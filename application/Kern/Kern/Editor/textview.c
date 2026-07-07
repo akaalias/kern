@@ -2921,27 +2921,67 @@ static int   graph_hover = -1;    /* node under the mouse */
 static int   graph_drag = -1;     /* node being dragged */
 static int   graph_drag_moved;    /* drag traveled >3px (else it's a click) */
 static int   graph_press_x, graph_press_y;
-static float graph_zoom = 1.0f;
+static float graph_scale = 1.0f;  /* view zoom (fit-derived until the user zooms) */
+static float graph_cx, graph_cy;  /* graph-space point pinned to the window center */
+static int   graph_user_view;     /* wheel touched the zoom — stop auto-fitting */
 static float graph_energy;        /* last layout step's max movement */
 
-/* Zoom around the window center: graph space <-> screen space. */
+/* Node labels fade in with zoom (Obsidian-style): hidden at/below LO, fully
+   opaque at/above HI. The hovered and current nodes' labels always show. */
+#define GRAPH_LABEL_LO 0.80f
+#define GRAPH_LABEL_HI 1.20f
+/* Edges fade in the same way, on a lower ramp, but never vanish — the fitted
+   overview keeps them at a faint floor (MIN of the base alpha) so the map's
+   structure still reads, and they reach full strength as you move in. A
+   hovered node's edges always show at full highlight. */
+#define GRAPH_EDGE_LO  0.55f
+#define GRAPH_EDGE_HI  1.00f
+#define GRAPH_EDGE_MIN 0.25f
+
+/* View transform: graph space <-> screen space (graph_cx/cy at the window
+   center, scaled by graph_scale). */
 static void graph_to_screen(float gx, float gy, int *sx, int *sy) {
-  float cx = nav_win_w() * 0.5f, cy = nav_win_h() * 0.5f;
-  *sx = (int)(cx + (gx - cx) * graph_zoom + 0.5f);
-  *sy = (int)(cy + (gy - cy) * graph_zoom + 0.5f);
+  *sx = (int)(nav_win_w() * 0.5f + (gx - graph_cx) * graph_scale + 0.5f);
+  *sy = (int)(nav_win_h() * 0.5f + (gy - graph_cy) * graph_scale + 0.5f);
 }
 
 static void graph_from_screen(int sx, int sy, float *gx, float *gy) {
-  float cx = nav_win_w() * 0.5f, cy = nav_win_h() * 0.5f;
-  *gx = cx + ((float)sx - cx) / graph_zoom;
-  *gy = cy + ((float)sy - cy) / graph_zoom;
+  *gx = graph_cx + ((float)sx - nav_win_w() * 0.5f) / graph_scale;
+  *gy = graph_cy + ((float)sy - nav_win_h() * 0.5f) / graph_scale;
 }
 
 /* Node under the screen point, hit in graph space with a zoom-true slop. */
 static int graph_hit(int sx, int sy) {
   float gx, gy;
   graph_from_screen(sx, sy, &gx, &gy);
-  return graph_node_at(gx, gy, 6.0f / graph_zoom);
+  return graph_node_at(gx, gy, 6.0f / graph_scale);
+}
+
+/* Fit the whole layout into the window (Obsidian settles with every node
+   visible): center on the bounding box and scale it inside a screen margin
+   (room for the hint, legend and labels). Never blows a tiny graph up past
+   1:1. Re-run each tick while the sim is still moving, unless the user has
+   taken over the zoom. */
+static void graph_fit_view(void) {
+  int ww = nav_win_w(), wh = nav_win_h();
+  float x0, y0, x1, y1;
+  if (!graph_bounds(&x0, &y0, &x1, &y1)) {
+    graph_scale = 1.0f;
+    graph_cx = ww * 0.5f;
+    graph_cy = wh * 0.5f;
+    return;
+  }
+  const float M = 70.0f;                 /* screen margin on every side */
+  float bw = (x1 - x0) + 40.0f;          /* pad by ~a node diameter */
+  float bh = (y1 - y0) + 40.0f;
+  float sx = ((float)ww - 2.0f * M) / bw;
+  float sy = ((float)wh - 2.0f * M) / bh;
+  float s = sx < sy ? sx : sy;
+  if (s > 1.0f) s = 1.0f;
+  if (s < 0.2f) s = 0.2f;
+  graph_scale = s;
+  graph_cx = (x0 + x1) * 0.5f;
+  graph_cy = (y0 + y1) * 0.5f;
 }
 
 static int graph_is_note_file(const char *name) {
@@ -3025,7 +3065,8 @@ static void cmd_toggle_graph(void) {
   /* pre-settle so the overlay opens onto a laid-out map, not the seed spiral */
   for (int i = 0; i < 150; i++)
     graph_energy = graph_layout_step((float)nav_win_w(), (float)nav_win_h());
-  graph_zoom = 1.0f;
+  graph_user_view = 0;
+  graph_fit_view();                /* open with every node on screen */
   graph_hover = graph_drag = -1;
   graph_active = 1;
   nav_status_set(&g_vs, "Graph view: click a note to open it, drag to arrange, Esc to close");
@@ -3089,25 +3130,31 @@ static void graph_mouse_up(int mx, int my) {
 }
 
 static void graph_wheel(float dy) {
-  if (dy > 0)      graph_zoom *= 1.1f;
-  else if (dy < 0) graph_zoom /= 1.1f;
-  if (graph_zoom < 0.3f) graph_zoom = 0.3f;
-  if (graph_zoom > 3.0f) graph_zoom = 3.0f;
+  if (dy > 0)      graph_scale *= 1.1f;
+  else if (dy < 0) graph_scale /= 1.1f;
+  if (graph_scale < 0.2f) graph_scale = 0.2f;
+  if (graph_scale > 4.0f) graph_scale = 4.0f;
+  graph_user_view = 1;             /* the zoom is the user's now — stop fitting */
 }
 
-/* A line as a run of 2×2 dots every 2px — the renderer seam has no angled
-   line primitive, and at these lengths the dot run reads as a solid stroke.
-   dash: 0 = solid, 1 = dashed (opened-after), 2 = dotted (same-day). */
-static void draw_graph_line(int x0, int y0, int x1, int y1, Color c, int dash) {
-  float dx = (float)(x1 - x0), dy = (float)(y1 - y0);
+/* An edge stroke in one of three textures, all anti-aliased:
+   0 = solid line, 1 = dashed (opened-after), 2 = dotted (same-day). */
+static void draw_graph_stroke(float x0, float y0, float x1, float y1,
+                              Color c, int dash) {
+  if (dash == 0) { r_draw_line(x0, y0, x1, y1, 1.0f, c); return; }
+  float dx = x1 - x0, dy = y1 - y0;
   float len = sqrtf(dx * dx + dy * dy);
-  int steps = (int)(len / 2.0f);
-  if (steps < 1) return;
-  for (int i = 0; i <= steps; i++) {
-    if (dash == 1 && ((i / 4) & 1)) continue;    /* 8px on / 8px off */
-    if (dash == 2 && (i % 3)) continue;          /* sparse dots */
-    float t = (float)i / (float)steps;
-    r_draw_rect(rect((int)(x0 + dx * t) - 1, (int)(y0 + dy * t) - 1, 2, 2), c);
+  if (len < 1.0f) return;
+  float ux = dx / len, uy = dy / len;
+  if (dash == 1) {
+    for (float t = 0.0f; t < len; t += 16.0f) {      /* 9px dash, 7px gap */
+      float e = t + 9.0f;
+      if (e > len) e = len;
+      r_draw_line(x0 + ux * t, y0 + uy * t, x0 + ux * e, y0 + uy * e, 1.0f, c);
+    }
+  } else {
+    for (float t = 0.0f; t <= len; t += 7.0f)        /* a dot every 7px */
+      r_draw_circle(x0 + ux * t, y0 + uy * t, 1.0f, c);
   }
 }
 
@@ -3138,15 +3185,21 @@ static void draw_graph_overlay(void) {
 
   r_set_font_style(r_ui_font_style());
 
-  /* edges under the nodes; edges touching the hovered node light up */
+  /* edges under the nodes, fading in with zoom (down to a faint floor, never
+     gone); the hovered node's edges always show at full strength */
+  float edgef = (graph_scale - GRAPH_EDGE_LO) / (GRAPH_EDGE_HI - GRAPH_EDGE_LO);
+  if (edgef < GRAPH_EDGE_MIN) edgef = GRAPH_EDGE_MIN;
+  if (edgef > 1.0f) edgef = 1.0f;
   for (int i = 0; i < graph_edge_count(); i++) {
     GraphEdge *e = graph_edge(i);
+    int hot = (e->a == graph_hover || e->b == graph_hover);
     int x0, y0, x1, y1;
     graph_to_screen(graph_node(e->a)->x, graph_node(e->a)->y, &x0, &y0);
     graph_to_screen(graph_node(e->b)->x, graph_node(e->b)->y, &x1, &y1);
     Color c; int dash;
-    graph_edge_stroke(e->kinds, e->a == graph_hover || e->b == graph_hover, &c, &dash);
-    draw_graph_line(x0, y0, x1, y1, c, dash);
+    graph_edge_stroke(e->kinds, hot, &c, &dash);
+    if (!hot) c.a = (unsigned char)((float)c.a * edgef);
+    draw_graph_stroke((float)x0, (float)y0, (float)x1, (float)y1, c, dash);
   }
 
   /* nodes: the open note in the caret's read-only amber, the hovered one in
@@ -3154,26 +3207,31 @@ static void draw_graph_overlay(void) {
   for (int i = 0; i < graph_node_count(); i++) {
     int sx, sy;
     graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
-    int rad = (int)(graph_node_radius(i) * graph_zoom + 0.5f);
-    if (rad < 3) rad = 3;
+    float rad = graph_node_radius(i) * graph_scale;
+    if (rad < 3.0f) rad = 3.0f;
     Color c = (i == graph_current)      ? color(250, 165, 70, 255)
             : (i == graph_hover)        ? color(90, 200, 250, 255)
             : graph_node(i)->file[0]    ? color(168, 174, 184, 255)
                                         : color(105, 110, 120, 255);
-    draw_filled_circle(sx, sy, rad, c);
+    r_draw_circle((float)sx, (float)sy, rad, c);
   }
 
-  /* labels: small, centered under each node */
+  /* labels fade in with zoom (hidden while the map is zoomed out, like
+     Obsidian); the hovered and current nodes' labels always show */
+  float labelf = (graph_scale - GRAPH_LABEL_LO) / (GRAPH_LABEL_HI - GRAPH_LABEL_LO);
+  if (labelf < 0.0f) labelf = 0.0f;
+  if (labelf > 1.0f) labelf = 1.0f;
   r_set_font_scale(0.6f);
   for (int i = 0; i < graph_node_count(); i++) {
+    int focus = (i == graph_hover || i == graph_current);
+    if (labelf <= 0.0f && !focus) continue;
     const char *name = graph_node(i)->name;
     int sx, sy;
     graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
-    int rad = (int)(graph_node_radius(i) * graph_zoom + 0.5f);
+    int rad = (int)(graph_node_radius(i) * graph_scale + 0.5f);
     int tw = r_get_text_width(name, (int)strlen(name));
-    Color c = (i == graph_hover || i == graph_current)
-                ? color(225, 228, 232, 255)
-                : color(150, 155, 163, 170);
+    Color c = focus ? color(225, 228, 232, 255)
+                    : color(150, 155, 163, (unsigned char)(170.0f * labelf));
     r_draw_text(name, vec2(sx - tw / 2, sy + rad + 4), c);
   }
 
@@ -3189,7 +3247,8 @@ static void draw_graph_overlay(void) {
     for (int i = 0; i < 3; i++) {
       Color c; int dash;
       graph_edge_stroke(leg[i].kind, 1, &c, &dash);
-      draw_graph_line(lx, ly + fh / 3, lx + 26, ly + fh / 3, c, dash);
+      draw_graph_stroke((float)lx, (float)(ly + fh / 3),
+                        (float)(lx + 26), (float)(ly + fh / 3), c, dash);
       lx += 32;
       r_draw_text(leg[i].label, vec2(lx, ly), color(150, 155, 163, 200));
       lx += r_get_text_width(leg[i].label, (int)strlen(leg[i].label)) + 22;
@@ -3843,10 +3902,13 @@ void editor_tick(void) {
   feed_apply_result();  /* land a fetched X news feed in a note, ditto */
 
   /* graph view: keep relaxing the layout while it still has energy (a drag
-     or resize re-excites it; it sleeps once movement falls under the floor) */
-  if (graph_active && graph_energy > GRAPH_SETTLE)
+     or resize re-excites it; it sleeps once movement falls under the floor),
+     re-fitting the view to keep every node on screen until the user zooms */
+  if (graph_active && graph_energy > GRAPH_SETTLE) {
     for (int i = 0; i < 3; i++)
       graph_energy = graph_layout_step((float)nav_win_w(), (float)nav_win_h());
+    if (!graph_user_view && graph_drag < 0) graph_fit_view();
+  }
 
   do_render();
 }
@@ -4171,7 +4233,8 @@ void tv_test_reset(void) {
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
   graph_active = 0; graph_current = graph_hover = graph_drag = -1;
-  graph_drag_moved = 0; graph_zoom = 1.0f; graph_energy = 0.0f;
+  graph_drag_moved = 0; graph_scale = 1.0f; graph_cx = graph_cy = 0.0f;
+  graph_user_view = 0; graph_energy = 0.0f;
   graph_clear();
   pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;
   pub_text[0] = '\0'; pub_result_info[0] = '\0';

@@ -77,4 +77,8 @@ float graph_node_radius(int i);
 /* Topmost node whose disc (+ `slop` px) covers (x,y); -1 = none. */
 int  graph_node_at(float x, float y, float slop);
 
+/* Bounding box of all node centers; 0 (outputs untouched) when empty. The
+   overlay uses it to fit the settled layout into the window. */
+int  graph_bounds(float *minx, float *miny, float *maxx, float *maxy);
+
 #endif /* GRAPH_H */

@@ -33,6 +33,15 @@ void r_clip_mask_end(void);
    texture is (re)uploaded when the pixel pointer changes. App-only; the headless
    stub is a no-op. */
 void r_draw_image_circle(Rect rect, const unsigned char *rgba, int iw, int ih);
+/* Anti-aliased line of `width` px between two points at any angle: a solid
+   core quad plus ~1px alpha-feathered edge strips (per-vertex colors, no
+   texture upload — cheap enough for hundreds per frame; the graph view's
+   edges). The headless stub records the bounding box as a rect. */
+void r_draw_line(float x0, float y0, float x1, float y1, float width, Color color);
+/* Anti-aliased filled circle (one cached alpha-mask texture, scaled per call
+   — unlike r_draw_round_rect there's no per-call mask rebuild, so it's fine
+   for hundreds per frame; the graph view's nodes). Stub records a rect. */
+void r_draw_circle(float cx, float cy, float radius, Color color);
 void r_draw_text(const char *text, Vec2 pos, Color color);
  int r_get_text_width(const char *text, int len);
  int r_get_text_height(void);

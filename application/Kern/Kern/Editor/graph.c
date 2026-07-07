@@ -224,6 +224,19 @@ float graph_node_radius(int i) {
   return r > 18.0f ? 18.0f : r;
 }
 
+int graph_bounds(float *minx, float *miny, float *maxx, float *maxy) {
+  if (g_node_count == 0) return 0;
+  float x0 = g_nodes[0].x, y0 = g_nodes[0].y, x1 = x0, y1 = y0;
+  for (int i = 1; i < g_node_count; i++) {
+    if (g_nodes[i].x < x0) x0 = g_nodes[i].x;
+    if (g_nodes[i].x > x1) x1 = g_nodes[i].x;
+    if (g_nodes[i].y < y0) y0 = g_nodes[i].y;
+    if (g_nodes[i].y > y1) y1 = g_nodes[i].y;
+  }
+  *minx = x0; *miny = y0; *maxx = x1; *maxy = y1;
+  return 1;
+}
+
 int graph_node_at(float x, float y, float slop) {
   int best = -1;
   float best_d2 = 0.0f;
