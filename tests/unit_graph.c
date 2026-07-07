@@ -211,17 +211,68 @@ static void test_graph_bounds(void) {
   CHECK(maxy == 750.0f);
 }
 
-/* Degree grows the drawn radius (hub nodes read bigger, like Obsidian). */
-static void test_graph_radius_grows_with_degree(void) {
+/* Backlinks count references TO a note, direction-aware: scanning a file's
+   text credits its targets (deduped within the file), not the file itself. */
+static void test_graph_backlinks_from_scans(void) {
   graph_clear();
-  int hub = graph_add_node("Hub"), leaf = graph_add_node("Leaf");
-  graph_add_edge(hub, leaf, GRAPH_EDGE_LINK);
-  char name[16];
-  for (int i = 0; i < 8; i++) {
+  int a = graph_add_node("A"), b = graph_add_node("B"), c = graph_add_node("C");
+  graph_scan_links(a, "see [[Hub]] and [[Hub]] again");   /* dupes count once */
+  graph_scan_links(b, "also [[Hub]]");
+  graph_scan_links(c, "[[Hub]] and [[A]]");
+  int hub = graph_find("Hub");
+  CHECK(hub >= 0);
+  CHECK_IEQ(graph_node(hub)->backlinks, 3);
+  CHECK_IEQ(graph_node(a)->backlinks, 1);   /* linked once, by C */
+  CHECK_IEQ(graph_node(b)->backlinks, 0);   /* links out, nothing links in */
+}
+
+/* Mutual links credit both sides once each. */
+static void test_graph_backlinks_mutual(void) {
+  graph_clear();
+  int a = graph_add_node("A"), b = graph_add_node("B");
+  graph_scan_links(a, "[[B]]");
+  graph_scan_links(b, "[[A]]");
+  CHECK_IEQ(graph_node(a)->backlinks, 1);
+  CHECK_IEQ(graph_node(b)->backlinks, 1);
+}
+
+/* The context relations feed the count through graph_add_backlink. */
+static void test_graph_add_backlink(void) {
+  graph_clear();
+  int a = graph_add_node("A");
+  graph_add_backlink(a);
+  graph_add_backlink(a);
+  graph_add_backlink(-1);            /* out of range: ignored */
+  graph_add_backlink(99);
+  CHECK_IEQ(graph_node(a)->backlinks, 2);
+  graph_clear();
+  CHECK_IEQ(graph_add_node("A"), 0);
+  CHECK_IEQ(graph_node(0)->backlinks, 0);   /* clear resets the count */
+}
+
+/* Backlink count (not raw degree) grows the drawn radius: a note many others
+   reference reads bigger than one that merely links out a lot. */
+static void test_graph_radius_grows_with_backlinks(void) {
+  graph_clear();
+  int hub = graph_add_node("Hub"), pump = graph_add_node("Pump");
+  char name[16], text[16];
+  for (int i = 0; i < 8; i++) {           /* eight notes link TO Hub */
     snprintf(name, sizeof name, "S%d", i);
-    graph_add_edge(hub, graph_add_node(name), GRAPH_EDGE_LINK);
+    int s = graph_add_node(name);
+    graph_scan_links(s, "[[Hub]]");
+    (void)s;
   }
-  CHECK(graph_node_radius(hub) > graph_node_radius(leaf));
+  snprintf(text, sizeof text, "[[S0]]");   /* Pump links OUT (high degree via edges) */
+  for (int i = 0; i < 8; i++) {
+    snprintf(text, sizeof text, "[[S%d]]", i);
+    graph_scan_links(pump, text);
+  }
+  CHECK_IEQ(graph_node(hub)->backlinks, 8);
+  CHECK_IEQ(graph_node(pump)->backlinks, 0);
+  CHECK(graph_node_radius(hub) > graph_node_radius(pump));
+  /* every S was linked once by Pump, so they sit between */
+  CHECK(graph_node_radius(graph_find("S0")) > graph_node_radius(pump));
+  CHECK(graph_node_radius(hub) > graph_node_radius(graph_find("S0")));
 }
 
 void suite_graph(void) {
@@ -238,5 +289,8 @@ void suite_graph(void) {
   RUN(test_graph_layout_stays_near_window);
   RUN(test_graph_node_at);
   RUN(test_graph_bounds);
-  RUN(test_graph_radius_grows_with_degree);
+  RUN(test_graph_backlinks_from_scans);
+  RUN(test_graph_backlinks_mutual);
+  RUN(test_graph_add_backlink);
+  RUN(test_graph_radius_grows_with_backlinks);
 }

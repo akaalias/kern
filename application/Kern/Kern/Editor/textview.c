@@ -3046,15 +3046,21 @@ static void graph_build(void) {
     int n = graph_node_count();
     for (int i = 0; i < n; i++)
       for (int j = i + 1; j < n; j++)
-        if (days[i][0] && days[j][0] && strcmp(days[i], days[j]) == 0)
+        if (days[i][0] && days[j][0] && strcmp(days[i], days[j]) == 0) {
           graph_add_edge(i, j, GRAPH_EDGE_DAY);
+          graph_add_backlink(i);   /* same-day is mutual: each lists the other */
+          graph_add_backlink(j);
+        }
   }
 
   for (int i = 0; i < g_opened_after_count; i++) {
     OpenedAfter *oa = &g_opened_after[i];
     int a = graph_add_node(path_base(oa->path));
-    for (int j = 0; j < oa->npred; j++)
-      graph_add_edge(a, graph_add_node(oa->preds[j]), GRAPH_EDGE_OPENED);
+    for (int j = 0; j < oa->npred; j++) {
+      int pred = graph_add_node(oa->preds[j]);
+      graph_add_edge(a, pred, GRAPH_EDGE_OPENED);
+      graph_add_backlink(pred);    /* this note's context lists the predecessor */
+    }
   }
 }
 

@@ -22,7 +22,10 @@ typedef struct {
   char  file[256];   /* on-disk filename to open; "" until a real file is seen */
   float x, y;        /* layout position (screen-space units) */
   float vx, vy;      /* layout velocity */
-  int   degree;      /* incident edges (drives the drawn radius) */
+  int   degree;      /* incident edges (drives the layout) */
+  int   backlinks;   /* references TO this note — incoming wikilinks plus the
+                        context relations (same-day companions, appearances in
+                        other notes' opened-after lists). Drives the radius. */
 } GraphNode;
 
 typedef struct {
@@ -58,8 +61,14 @@ unsigned graph_edge_kinds_between(int a, int b);
 
 /* Scan `text` for [[wikilinks]] and add a LINK edge from node `from` to each
    target (target nodes are created as needed — a link to a note that doesn't
-   exist on disk still shows as a node, like Obsidian's ghost nodes). */
+   exist on disk still shows as a node, like Obsidian's ghost nodes). Each
+   distinct target also gains one backlink (deduped within the scan, so a note
+   linking [[X]] twice still counts once). */
 void graph_scan_links(int from, const char *text);
+
+/* Count one reference to node `idx` from elsewhere (a same-day companion, an
+   appearance in another note's opened-after list). Grows the drawn radius. */
+void graph_add_backlink(int idx);
 
 /* Deterministic initial placement (golden-angle spiral around the w×h
    center) — no randomness, so layouts reproduce exactly. */

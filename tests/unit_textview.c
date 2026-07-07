@@ -1746,6 +1746,37 @@ static void test_graph_edges_fade_with_zoom(void) {
   buf_set_documents_dir("");
 }
 
+/* Node size mirrors the Context section: incoming wikilinks, same-day
+   companions, and appearing in another note's opened-after list all count as
+   backlinks, and the much-referenced note draws bigger. */
+static void test_graph_node_size_reflects_backlinks(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char p[512];
+  snprintf(p, sizeof p, "%s/Hub.md", dir);  buf_save_text(p, "hub\n", 4);
+  snprintf(p, sizeof p, "%s/A.md", dir);    buf_save_text(p, "see [[Hub]]\n", 12);
+  snprintf(p, sizeof p, "%s/B.md", dir);    buf_save_text(p, "see [[Hub]]\n", 12);
+  snprintf(p, sizeof p, "%s/C.md", dir);    buf_save_text(p, "see [[Hub]]\n", 12);
+  tv_begin(); load("hub");
+  char hubp[512]; snprintf(hubp, sizeof hubp, "%s/Hub.md", dir);
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", hubp);
+  ED->filename = "Hub.md";
+  /* open A.md while Hub.md is up → Hub lands in A's opened-after list */
+  key(KMOD_CTRL, SDLK_x); key(KMOD_CTRL, SDLK_f);
+  type("A.md"); key(0, SDLK_RETURN);
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  int hub = graph_find("Hub"), b = graph_find("B");
+  CHECK(hub >= 0);
+  CHECK(b >= 0);
+  /* Hub: 3 incoming wikilinks + 3 same-day companions + 1 opened-after
+     appearance; B: 3 same-day companions only */
+  CHECK_IEQ(graph_node(hub)->backlinks, 7);
+  CHECK_IEQ(graph_node(b)->backlinks, 3);
+  CHECK(graph_node_radius(hub) > graph_node_radius(b));
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* --------------------------------------------------------------------------- suite */
 
 void suite_textview(void) {
@@ -1860,6 +1891,7 @@ void suite_textview(void) {
   RUN(test_graph_opens_fitted);
   RUN(test_graph_labels_fade_with_zoom);
   RUN(test_graph_edges_fade_with_zoom);
+  RUN(test_graph_node_size_reflects_backlinks);
 
   /* leave globals clean for any later suite */
   tv_test_reset();

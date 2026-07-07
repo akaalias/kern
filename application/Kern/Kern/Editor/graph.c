@@ -107,6 +107,10 @@ unsigned graph_edge_kinds_between(int a, int b) {
 
 void graph_scan_links(int from, const char *text) {
   if (from < 0 || from >= g_node_count || !text) return;
+  /* one backlink per distinct target per scan — a note that writes [[X]]
+     twice still references X once */
+  static unsigned char credited[GRAPH_MAX_NODES];
+  memset(credited, 0, sizeof credited);
   const char *p = text;
   while ((p = strstr(p, "[[")) != NULL) {
     const char *s = p + 2;
@@ -122,7 +126,13 @@ void graph_scan_links(int from, const char *text) {
         memcpy(name, s, (size_t)len);
         name[len] = '\0';
         int to = graph_add_node(name);
-        if (to >= 0 && to != from) graph_add_edge(from, to, GRAPH_EDGE_LINK);
+        if (to >= 0 && to != from) {
+          graph_add_edge(from, to, GRAPH_EDGE_LINK);
+          if (!credited[to]) {
+            credited[to] = 1;
+            g_nodes[to].backlinks++;
+          }
+        }
       }
       p = q + 2;
     } else if (*q == '[') {
@@ -131,6 +141,11 @@ void graph_scan_links(int from, const char *text) {
       p = s;          /* newline / end of text: give up on this "[[" */
     }
   }
+}
+
+void graph_add_backlink(int idx) {
+  if (idx < 0 || idx >= g_node_count) return;
+  g_nodes[idx].backlinks++;
 }
 
 /* ---- layout ---------------------------------------------------------- */
@@ -220,7 +235,7 @@ float graph_layout_step(float w, float h) {
 
 float graph_node_radius(int i) {
   if (i < 0 || i >= g_node_count) return 0.0f;
-  float r = 5.0f + 2.2f * sqrtf((float)g_nodes[i].degree);
+  float r = 5.0f + 2.2f * sqrtf((float)g_nodes[i].backlinks);
   return r > 18.0f ? 18.0f : r;
 }
 
