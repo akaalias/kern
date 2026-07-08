@@ -3407,9 +3407,11 @@ static void draw_graph_overlay(void) {
     }
   }
 
-  /* search box (top left): type to filter, matches turn red (filled = real
-     note, red ring = ghost). Esc clears, then closes. The prefix and the
-     query are separate draws (dim label, bright query). */
+  /* search box (bottom right, on top of everything — the top corners sit
+     under the macOS traffic lights and window title): type to filter,
+     matches turn red (filled = real note, red ring = ghost). Esc clears,
+     then closes. The prefix and the query are separate draws (dim label,
+     bright query). */
   {
     const char *prefix = "search: ";
     char body[176];
@@ -3419,12 +3421,14 @@ static void draw_graph_overlay(void) {
       snprintf(body, sizeof body, "type to filter");
     int pw = r_get_text_width(prefix, (int)strlen(prefix));
     int bw = r_get_text_width(body, (int)strlen(body));
-    r_draw_round_rect(rect(14, 12, pw + bw + 20, fh + 12), 6,
-                      color(24, 26, 30, 220));
-    r_draw_text(prefix, vec2(24, 18), color(120, 125, 133, 160));
+    int boxw = pw + bw + 20;
+    int bx = ww - boxw - 14;
+    int by = wh - fh - 26;
+    r_draw_round_rect(rect(bx, by, boxw, fh + 12), 6, color(24, 26, 30, 220));
+    r_draw_text(prefix, vec2(bx + 10, by + 6), color(120, 125, 133, 160));
     Color tc = graph_query_len > 0 ? color(225, 228, 232, 235)
                                    : color(120, 125, 133, 160);
-    r_draw_text(body, vec2(24 + pw, 18), tc);
+    r_draw_text(body, vec2(bx + 10 + pw, by + 6), tc);
   }
   r_set_font_scale(1.0f);
   r_set_font_style(saved);

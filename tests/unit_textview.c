@@ -1884,6 +1884,12 @@ static void test_graph_search_highlights_matches(void) {
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_text("bet"), 1);                       /* query echoed */
+  /* the box sits bottom-right, clear of the macOS traffic lights / title */
+  for (int i = 0; i < stub_text_count; i++)
+    if (strncmp(stub_texts[i].ch, "bet", 3) == 0) {
+      CHECK(stub_texts[i].x > 400);
+      CHECK(stub_texts[i].y > 400);
+    }
   CHECK_IEQ(stub_has_rect_rgba(235, 80, 80, 200, 255), 1);  /* Beta filled red */
   EXPECT_LINE(0, "see [[Beta]] and [[Ghostly]]");           /* buffer untouched */
 
