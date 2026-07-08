@@ -188,7 +188,11 @@ void graph_scan_links(int from, const char *text) {
         char name[256];
         memcpy(name, s, (size_t)len);
         name[len] = '\0';
-        int to = wikilink_target_is_note(name) ? graph_add_node(name) : -1;
+        /* [[Target|Display Alias]] — the file is the part before the '|' */
+        char *bar = strchr(name, '|');
+        if (bar) *bar = '\0';
+        int to = (name[0] && wikilink_target_is_note(name))
+                     ? graph_add_node(name) : -1;
         if (to >= 0 && to != from) {
           graph_add_edge(from, to, GRAPH_EDGE_LINK);
           if (to < credited_cap && !credited[to]) {

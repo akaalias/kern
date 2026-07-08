@@ -63,6 +63,9 @@ int          tv_test_graph_active(void);
 /* Screen-space center of the graph node named `name` (the same transform the
    draw pass and the click hit-test use); 0 if no such node. */
 int          tv_test_graph_node_screen(const char *name, int *x, int *y);
+/* Screen rect of legend toggle i (0 linked, 1 opened-after, 2 same-day);
+   0 until the overlay has drawn once. */
+int          tv_test_graph_legend_rect(int i, int *x, int *y, int *w, int *h);
 /* X-publish confirmation overlay state: 0 = closed, 1 = confirming, 2 = sending. */
 int          tv_test_pub_state(void);
 /* What the pending publish is: 0 = plain post, 1 = reply, 2 = quote. */

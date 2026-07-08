@@ -170,6 +170,24 @@ static void test_graph_scan_links_skips_media(void) {
   CHECK_IEQ(graph_node_count(), 6);        /* A + the five notes */
 }
 
+/* Obsidian alias links: [[Target|Display Alias]] — the file is the part
+   before the '|', the alias is display-only and never becomes a node. */
+static void test_graph_scan_links_alias(void) {
+  graph_clear();
+  int a = graph_add_node("A");
+  graph_scan_links(a,
+      "[[Start with WHO not How|Start with who]] [[Other.md|nice name]] "
+      "[[img.jpg|a picture]]");
+  CHECK(graph_find("Start with WHO not How") >= 0);
+  CHECK(graph_find("Other") >= 0);
+  CHECK_SEQ(graph_open_target(graph_find("Other")), "Other.md");
+  CHECK_IEQ(graph_find("Start with who"), -1);   /* aliases aren't nodes */
+  CHECK_IEQ(graph_find("nice name"), -1);
+  CHECK_IEQ(graph_find("img.jpg"), -1);          /* media still filtered */
+  CHECK_IEQ(graph_find("a picture"), -1);
+  CHECK_IEQ(graph_node_count(), 3);
+}
+
 /* ---------------------------------------------------------------- layout */
 
 static float dist(int a, int b) {
@@ -514,6 +532,7 @@ void suite_graph(void) {
   RUN(test_graph_scan_links);
   RUN(test_graph_scan_links_ignores_multiline_and_nested);
   RUN(test_graph_scan_links_skips_media);
+  RUN(test_graph_scan_links_alias);
   RUN(test_graph_large_layout_relaxed);
   RUN(test_graph_no_node_cap);
   RUN(test_graph_no_edge_cap);

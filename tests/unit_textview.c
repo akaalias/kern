@@ -548,6 +548,27 @@ static void test_follow_wikilink_creates_md_note(void) {
   buf_set_documents_dir("");
 }
 
+/* [[Target|Alias]]: Cmd-Enter follows the file before the '|', not the
+   display alias. */
+static void test_follow_wikilink_alias(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char origin[512], target[512];
+  snprintf(origin, sizeof origin, "%s/origin.md", dir);
+  snprintf(target, sizeof target, "%s/Target.md", dir);
+  buf_save_text(origin, "see [[Target|a nice alias]] x", 29);
+  buf_save_text(target, "i am target", 11);
+
+  tv_begin();
+  load("see [[Target|a nice alias]] x");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", origin);
+  ED->filename = "origin.md";
+  put_cursor(0, 20);                 /* inside the alias half */
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK(strstr(ED->filepath, "Target.md") != NULL);
+  EXPECT_LINE(0, "i am target");
+  buf_set_documents_dir("");
+}
+
 static void test_follow_wikilink_none_at_cursor(void) {
   tv_begin();
   load("no link here");
@@ -1788,6 +1809,57 @@ static int stub_has_rect_rgba(int r, int g, int b, int lo, int hi) {
   return 0;
 }
 
+/* The overlay draws no usage-hint banner — the map speaks for itself. */
+static void test_graph_no_hint_banner(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  tv_begin(); load("hi");
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("click to open"), 0);
+  CHECK_IEQ(stub_has_text("drag to arrange"), 0);
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
+/* Clicking a legend entry toggles that edge kind off and on (display filter;
+   the entry itself stays clickable and the overlay stays open). */
+static void test_graph_legend_toggles_edge_kind(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Beta.md", dir);
+  buf_save_text(a, "see [[Beta]]\n", 13);
+  buf_save_text(b, "beta\n", 5);
+  tv_begin(); load("see [[Beta]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  SDL_Event w; memset(&w, 0, sizeof w);
+  w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
+  for (int i = 0; i < 10; i++) editor_handle_event(&w);   /* edges full alpha */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 1);   /* LINK drawn */
+
+  int lx = 0, ly = 0, lw = 0, lh = 0;
+  CHECK(tv_test_graph_legend_rect(0, &lx, &ly, &lw, &lh));     /* "linked" */
+  click(lx + lw / 2, ly + lh / 2);
+  CHECK_IEQ(tv_test_graph_active(), 1);       /* a toggle, not a note-open */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 0);   /* hidden */
+
+  click(lx + lw / 2, ly + lh / 2);            /* back on */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 1);
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* Zoomed way out, nodes draw as fine dots — the minimum drawn radius is
    small enough that a dense vault reads as a starfield with gaps, not a
    solid ball of 6px discs. */
@@ -1978,6 +2050,7 @@ void suite_textview(void) {
   RUN(test_follow_wikilink_and_history);
   RUN(test_follow_wikilink_bare_name_resolves_md);
   RUN(test_follow_wikilink_creates_md_note);
+  RUN(test_follow_wikilink_alias);
   RUN(test_follow_wikilink_none_at_cursor);
   RUN(test_follow_url_opens_browser);
   RUN(test_follow_url_absent_falls_through_to_wikilink);
@@ -2056,6 +2129,8 @@ void suite_textview(void) {
   RUN(test_graph_labels_fade_with_zoom);
   RUN(test_graph_ghost_node_outlined);
   RUN(test_graph_far_zoom_draws_small_dots);
+  RUN(test_graph_no_hint_banner);
+  RUN(test_graph_legend_toggles_edge_kind);
   RUN(test_graph_edges_fade_with_zoom);
   RUN(test_graph_node_size_reflects_backlinks);
 

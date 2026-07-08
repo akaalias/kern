@@ -482,7 +482,10 @@ static int wikilink_at_cursor(char *out, int outsz) {
           if (len <= 0 || len >= outsz) return 0;
           memcpy(out, l->text + i + 2, len);
           out[len] = '\0';
-          return 1;
+          /* [[Target|Display Alias]] — follow the file before the '|' */
+          char *bar = strchr(out, '|');
+          if (bar) *bar = '\0';
+          return out[0] != '\0';
         }
         i = j + 1;                                  /* skip past this span */
       }
@@ -2928,6 +2931,8 @@ static float graph_scale = 1.0f;  /* view zoom (fit-derived until the user zooms
 static float graph_cx, graph_cy;  /* graph-space point pinned to the window center */
 static int   graph_user_view;     /* wheel touched the zoom — stop auto-fitting */
 static float graph_energy;        /* last layout step's max movement */
+static unsigned graph_kind_mask = GRAPH_EDGE_LINK | GRAPH_EDGE_DAY | GRAPH_EDGE_OPENED;
+static Rect  graph_legend_rects[3];  /* click-toggle hit zones, set by the draw */
 
 /* Node labels fade in with zoom (Obsidian-style): hidden at/below LO, fully
    opaque at/above HI. The hovered and current nodes' labels always show. */
@@ -3143,6 +3148,20 @@ static int handle_graph_key(int sym, int ctrl) {
    click, handled in graph_mouse_up). Consumes while modal. */
 static int graph_mouse_down(int mx, int my) {
   if (!graph_active) return 0;
+  /* legend click: toggle that edge kind's visibility (consumes the press) */
+  static const unsigned legend_kinds[3] = { GRAPH_EDGE_LINK, GRAPH_EDGE_OPENED,
+                                            GRAPH_EDGE_DAY };
+  for (int i = 0; i < 3; i++) {
+    Rect *r = &graph_legend_rects[i];
+    if (r->w > 0 && mx >= r->x && mx < r->x + r->w &&
+        my >= r->y && my < r->y + r->h) {
+      graph_kind_mask ^= legend_kinds[i];
+      graph_drag = -1;
+      graph_pan = 0;
+      graph_drag_moved = 1;      /* the release must not open/arrange anything */
+      return 1;
+    }
+  }
   graph_drag = graph_hit(mx, my);
   graph_pan = (graph_drag < 0);
   graph_drag_moved = 0;
@@ -3254,12 +3273,14 @@ static void draw_graph_overlay(void) {
   if (edgef > 1.0f) edgef = 1.0f;
   for (int i = 0; i < graph_edge_count(); i++) {
     GraphEdge *e = graph_edge(i);
+    unsigned vis = e->kinds & graph_kind_mask;   /* legend toggles filter kinds */
+    if (!vis) continue;
     int hot = (e->a == graph_hover || e->b == graph_hover);
     int x0, y0, x1, y1;
     graph_to_screen(graph_node(e->a)->x, graph_node(e->a)->y, &x0, &y0);
     graph_to_screen(graph_node(e->b)->x, graph_node(e->b)->y, &x1, &y1);
     Color c; int dash;
-    graph_edge_stroke(e->kinds, hot, &c, &dash);
+    graph_edge_stroke(vis, hot, &c, &dash);
     if (!hot) c.a = (unsigned char)((float)c.a * edgef);
     draw_graph_stroke((float)x0, (float)y0, (float)x1, (float)y1, c, dash);
   }
@@ -3313,7 +3334,9 @@ static void draw_graph_overlay(void) {
     r_draw_text(name, vec2(sx - tw / 2, sy + rad + 4), c);
   }
 
-  /* edge-kind legend (bottom left) + a usage hint (top center) */
+  /* edge-kind legend (bottom left) — each entry is a click-toggle for its
+     kind; a toggled-off entry draws dimmed. The hit rects are remembered for
+     graph_mouse_down. */
   {
     int ly = wh - fh - 14;
     int lx = 20;
@@ -3323,17 +3346,20 @@ static void draw_graph_overlay(void) {
       { "same day",     GRAPH_EDGE_DAY },
     };
     for (int i = 0; i < 3; i++) {
+      int on = (graph_kind_mask & leg[i].kind) != 0;
+      int x0 = lx;
       Color c; int dash;
       graph_edge_stroke(leg[i].kind, 1, &c, &dash);
+      if (!on) c.a = (unsigned char)(c.a / 3);
       draw_graph_stroke((float)lx, (float)(ly + fh / 3),
                         (float)(lx + 26), (float)(ly + fh / 3), c, dash);
       lx += 32;
-      r_draw_text(leg[i].label, vec2(lx, ly), color(150, 155, 163, 200));
-      lx += r_get_text_width(leg[i].label, (int)strlen(leg[i].label)) + 22;
+      Color tc = on ? color(150, 155, 163, 200) : color(110, 114, 122, 110);
+      r_draw_text(leg[i].label, vec2(lx, ly), tc);
+      lx += r_get_text_width(leg[i].label, (int)strlen(leg[i].label));
+      graph_legend_rects[i] = rect(x0 - 4, ly - 6, lx - x0 + 8, fh + 12);
+      lx += 22;
     }
-    const char *hint = "click to open   \xC2\xB7   drag to arrange   \xC2\xB7   scroll to zoom   \xC2\xB7   esc to close";
-    int hw = r_get_text_width(hint, (int)strlen(hint));
-    r_draw_text(hint, vec2((ww - hw) / 2, 44), color(140, 145, 153, 190));
   }
   r_set_font_scale(1.0f);
   r_set_font_style(saved);
@@ -4313,6 +4339,8 @@ void tv_test_reset(void) {
   graph_active = 0; graph_current = graph_hover = graph_drag = -1;
   graph_drag_moved = 0; graph_pan = 0;
   graph_scale = 1.0f; graph_cx = graph_cy = 0.0f;
+  graph_kind_mask = GRAPH_EDGE_LINK | GRAPH_EDGE_DAY | GRAPH_EDGE_OPENED;
+  memset(graph_legend_rects, 0, sizeof graph_legend_rects);
   graph_user_view = 0; graph_energy = 0.0f;
   graph_clear();
   pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;
@@ -4338,6 +4366,14 @@ int tv_test_graph_node_screen(const char *name, int *x, int *y) {
   int i = graph_find(name);
   if (i < 0) return 0;
   graph_to_screen(graph_node(i)->x, graph_node(i)->y, x, y);
+  return 1;
+}
+int tv_test_graph_legend_rect(int i, int *x, int *y, int *w, int *h) {
+  if (i < 0 || i > 2 || graph_legend_rects[i].w <= 0) return 0;
+  *x = graph_legend_rects[i].x;
+  *y = graph_legend_rects[i].y;
+  *w = graph_legend_rects[i].w;
+  *h = graph_legend_rects[i].h;
   return 1;
 }
 
