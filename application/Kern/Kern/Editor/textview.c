@@ -3331,7 +3331,8 @@ static void draw_graph_overlay(void) {
     int tw = r_get_text_width(name, (int)strlen(name));
     Color c = focus ? color(225, 228, 232, 255)
                     : color(150, 155, 163, (unsigned char)(170.0f * labelf));
-    r_draw_text(name, vec2(sx - tw / 2, sy + rad + 4), c);
+    /* above the disc — below it, the pointer covers the label on hover */
+    r_draw_text(name, vec2(sx - tw / 2, sy - rad - 4 - r_get_text_height()), c);
   }
 
   /* edge-kind legend (bottom left) — each entry is a click-toggle for its

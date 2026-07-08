@@ -1809,6 +1809,36 @@ static int stub_has_rect_rgba(int r, int g, int b, int lo, int hi) {
   return 0;
 }
 
+/* Node labels draw ABOVE the node — below the disc they'd sit right under
+   the mouse pointer whenever the node is hovered. */
+static void test_graph_label_above_node(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Beta.md", dir);
+  buf_save_text(a, "see [[Beta]]\n", 13);
+  buf_save_text(b, "beta\n", 5);
+  tv_begin(); load("see [[Beta]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  int nx = 0, ny = 0;
+  CHECK(tv_test_graph_node_screen("Beta", &nx, &ny));
+  SDL_Event m; memset(&m, 0, sizeof m);
+  m.type = SDL_MOUSEMOTION; m.motion.x = nx; m.motion.y = ny;
+  editor_handle_event(&m);                   /* hover → label always shows */
+  stub_reset();
+  editor_tick();
+  int found = 0, label_y = 0;
+  for (int i = 0; i < stub_text_count; i++)
+    if (strncmp(stub_texts[i].ch, "Beta", 4) == 0) { found = 1; label_y = stub_texts[i].y; }
+  CHECK_IEQ(found, 1);
+  CHECK(label_y < ny);                       /* above the node center */
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* The overlay draws no usage-hint banner — the map speaks for itself. */
 static void test_graph_no_hint_banner(void) {
   char dir[256]; fresh_docs_dir(dir, sizeof dir);
@@ -2129,6 +2159,7 @@ void suite_textview(void) {
   RUN(test_graph_labels_fade_with_zoom);
   RUN(test_graph_ghost_node_outlined);
   RUN(test_graph_far_zoom_draws_small_dots);
+  RUN(test_graph_label_above_node);
   RUN(test_graph_no_hint_banner);
   RUN(test_graph_legend_toggles_edge_kind);
   RUN(test_graph_edges_fade_with_zoom);
