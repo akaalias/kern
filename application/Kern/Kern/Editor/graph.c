@@ -188,9 +188,12 @@ void graph_scan_links(int from, const char *text) {
         char name[256];
         memcpy(name, s, (size_t)len);
         name[len] = '\0';
-        /* [[Target|Display Alias]] — the file is the part before the '|' */
+        /* [[Target|Display Alias]] — the file is the part before the '|';
+           [[Target#Heading]] deep-links a heading — the node is the file */
         char *bar = strchr(name, '|');
         if (bar) *bar = '\0';
+        char *hash = strchr(name, '#');
+        if (hash) *hash = '\0';
         int to = (name[0] && wikilink_target_is_note(name))
                      ? graph_add_node(name) : -1;
         if (to >= 0 && to != from) {

@@ -569,6 +569,27 @@ static void test_follow_wikilink_alias(void) {
   buf_set_documents_dir("");
 }
 
+/* [[Target#Heading]]: Cmd-Enter follows the file; the heading deep-link part
+   after '#' is ignored for now. */
+static void test_follow_wikilink_heading(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char origin[512], target[512];
+  snprintf(origin, sizeof origin, "%s/origin.md", dir);
+  snprintf(target, sizeof target, "%s/Target.md", dir);
+  buf_save_text(origin, "see [[Target#Some Heading]] x", 29);
+  buf_save_text(target, "i am target", 11);
+
+  tv_begin();
+  load("see [[Target#Some Heading]] x");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", origin);
+  ED->filename = "origin.md";
+  put_cursor(0, 20);                 /* inside the heading half */
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK(strstr(ED->filepath, "Target.md") != NULL);
+  EXPECT_LINE(0, "i am target");
+  buf_set_documents_dir("");
+}
+
 static void test_follow_wikilink_none_at_cursor(void) {
   tv_begin();
   load("no link here");
@@ -2081,6 +2102,7 @@ void suite_textview(void) {
   RUN(test_follow_wikilink_bare_name_resolves_md);
   RUN(test_follow_wikilink_creates_md_note);
   RUN(test_follow_wikilink_alias);
+  RUN(test_follow_wikilink_heading);
   RUN(test_follow_wikilink_none_at_cursor);
   RUN(test_follow_url_opens_browser);
   RUN(test_follow_url_absent_falls_through_to_wikilink);

@@ -482,9 +482,12 @@ static int wikilink_at_cursor(char *out, int outsz) {
           if (len <= 0 || len >= outsz) return 0;
           memcpy(out, l->text + i + 2, len);
           out[len] = '\0';
-          /* [[Target|Display Alias]] — follow the file before the '|' */
+          /* [[Target|Display Alias]] — follow the file before the '|';
+             [[Target#Heading]] — follow the file, ignore the heading */
           char *bar = strchr(out, '|');
           if (bar) *bar = '\0';
+          char *hash = strchr(out, '#');
+          if (hash) *hash = '\0';
           return out[0] != '\0';
         }
         i = j + 1;                                  /* skip past this span */

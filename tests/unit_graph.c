@@ -188,6 +188,23 @@ static void test_graph_scan_links_alias(void) {
   CHECK_IEQ(graph_node_count(), 3);
 }
 
+/* Obsidian heading deep-links: [[My Note#The Heading]] targets a heading
+   inside the note — the node is the file, everything from '#' on is cut.
+   Composes with aliases: [[Note#Heading|Alias]] still resolves to Note. */
+static void test_graph_scan_links_heading(void) {
+  graph_clear();
+  int a = graph_add_node("A");
+  graph_scan_links(a,
+      "[[My Note#The Heading]] [[Other.md#Setup]] [[Deep#Sec|shown text]] "
+      "[[#Local Heading]]");
+  CHECK(graph_find("My Note") >= 0);
+  CHECK(graph_find("Other") >= 0);
+  CHECK_SEQ(graph_open_target(graph_find("Other")), "Other.md");
+  CHECK(graph_find("Deep") >= 0);
+  CHECK_IEQ(graph_find("My Note#The Heading"), -1);
+  CHECK_IEQ(graph_node_count(), 4);   /* A + 3 files; [[#Local]] is no node */
+}
+
 /* ---------------------------------------------------------------- layout */
 
 static float dist(int a, int b) {
@@ -533,6 +550,7 @@ void suite_graph(void) {
   RUN(test_graph_scan_links_ignores_multiline_and_nested);
   RUN(test_graph_scan_links_skips_media);
   RUN(test_graph_scan_links_alias);
+  RUN(test_graph_scan_links_heading);
   RUN(test_graph_large_layout_relaxed);
   RUN(test_graph_no_node_cap);
   RUN(test_graph_no_edge_cap);
