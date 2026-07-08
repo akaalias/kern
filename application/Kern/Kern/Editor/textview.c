@@ -2981,7 +2981,7 @@ static void graph_fit_view(void) {
   float sy = ((float)wh - 2.0f * M) / bh;
   float s = sx < sy ? sx : sy;
   if (s > 1.0f) s = 1.0f;
-  if (s < 0.2f) s = 0.2f;
+  if (s < 0.05f) s = 0.05f;    /* a thousands-note vault needs a wide fit */
   graph_scale = s;
   graph_cx = (x0 + x1) * 0.5f;
   graph_cy = (y0 + y1) * 0.5f;
@@ -3009,10 +3009,23 @@ static int graph_file_day(const char *path, char *out, int outsz) {
   return (int)strftime(out, (size_t)outsz, "%Y-%m-%d", &tm) > 0;
 }
 
+/* (node index, creation day) — collected during the vault scan, then sorted
+   to group same-day notes without an O(n²) pair walk. */
+typedef struct { char day[12]; int idx; } GraphDayEnt;
+
+static int graph_dayent_cmp(const void *pa, const void *pb) {
+  const GraphDayEnt *a = pa, *b = pb;
+  int c = strcmp(a->day, b->day);
+  if (c) return c;
+  return a->idx - b->idx;               /* deterministic tie-break */
+}
+
 /* Rebuild the graph from the vault: a node per note file (plus ghost nodes
    for wikilink targets that don't exist on disk yet, like Obsidian), LINK
    edges from each file's [[wikilinks]], DAY edges between notes born the same
-   calendar day, OPENED edges from the opened-after history. */
+   calendar day (clique when the day is small, chain when it's a bulk-imported
+   day — see graph_add_day_group), OPENED edges from the opened-after
+   history. */
 static void graph_build(void) {
   graph_clear();
   graph_current = -1;
@@ -3021,9 +3034,10 @@ static void graph_build(void) {
 
   const char *docs = buf_get_documents_dir();
   if (docs[0]) {
-    static char days[GRAPH_MAX_NODES][12];   /* creation day per node index */
     static char body[256 * 1024];            /* main-thread only; off the stack */
-    memset(days, 0, sizeof days);
+    static GraphDayEnt *dents;               /* grown across builds */
+    static int          dent_cap;
+    int dent_n = 0;
     DIR *d = opendir(docs);
     if (d) {
       struct dirent *e;
@@ -3032,10 +3046,22 @@ static void graph_build(void) {
         if (name[0] == '.' || strlen(name) >= 256) continue;
         if (!graph_is_note_file(name)) continue;
         int idx = graph_add_node(name);
-        if (idx < 0) continue;                /* table full */
+        if (idx < 0) continue;
         char full[1300];
         snprintf(full, sizeof full, "%s/%s", docs, name);
-        graph_file_day(full, days[idx], sizeof days[idx]);
+        char day[12];
+        if (graph_file_day(full, day, sizeof day) && day[0]) {
+          if (dent_n >= dent_cap) {
+            int cap = dent_cap ? dent_cap * 2 : 1024;
+            GraphDayEnt *p = realloc(dents, (size_t)cap * sizeof *p);
+            if (p) { dents = p; dent_cap = cap; }
+          }
+          if (dent_n < dent_cap) {
+            memcpy(dents[dent_n].day, day, sizeof dents[dent_n].day);
+            dents[dent_n].idx = idx;
+            dent_n++;
+          }
+        }
         FILE *f = fopen(full, "rb");
         if (f) {
           size_t n = fread(body, 1, sizeof body - 1, f);
@@ -3046,14 +3072,24 @@ static void graph_build(void) {
       }
       closedir(d);
     }
-    int n = graph_node_count();
-    for (int i = 0; i < n; i++)
-      for (int j = i + 1; j < n; j++)
-        if (days[i][0] && days[j][0] && strcmp(days[i], days[j]) == 0) {
-          graph_add_edge(i, j, GRAPH_EDGE_DAY);
-          graph_add_backlink(i);   /* same-day is mutual: each lists the other */
-          graph_add_backlink(j);
+    /* sort by day and link each same-day run */
+    if (dent_n > 1) {
+      qsort(dents, (size_t)dent_n, sizeof *dents, graph_dayent_cmp);
+      int *grp = malloc((size_t)dent_n * sizeof *grp);
+      if (grp) {
+        int i = 0;
+        while (i < dent_n) {
+          int j = i;
+          while (j < dent_n && strcmp(dents[j].day, dents[i].day) == 0) j++;
+          if (j - i >= 2) {
+            for (int m = i; m < j; m++) grp[m - i] = dents[m].idx;
+            graph_add_day_group(grp, j - i);
+          }
+          i = j;
         }
+        free(grp);
+      }
+    }
   }
 
   for (int i = 0; i < g_opened_after_count; i++) {
@@ -3071,8 +3107,11 @@ static void cmd_toggle_graph(void) {
   if (graph_active) { graph_active = 0; return; }
   graph_build();
   graph_layout_init((float)nav_win_w(), (float)nav_win_h());
-  /* pre-settle so the overlay opens onto a laid-out map, not the seed spiral */
-  for (int i = 0; i < 150; i++)
+  /* pre-settle so the overlay opens onto a laid-out map, not the seed spiral;
+     a huge vault gets fewer blocking steps (each one costs more) and the live
+     tick keeps relaxing it while the overlay is up */
+  int presteps = graph_node_count() > 1200 ? 50 : 150;
+  for (int i = 0; i < presteps; i++)
     graph_energy = graph_layout_step((float)nav_win_w(), (float)nav_win_h());
   graph_user_view = 0;
   graph_fit_view();                /* open with every node on screen */
@@ -3121,6 +3160,7 @@ static void graph_mouse_motion(int mx, int my) {
     if (abs(mx - graph_press_x) > 3 || abs(my - graph_press_y) > 3)
       graph_drag_moved = 1;
     graph_energy = 1.0f;               /* re-excite the neighbors */
+    graph_layout_reheat();             /* a cooled-down sim must respond again */
   } else if (graph_pan) {
     /* slide the view under the mouse: the pinned center moves opposite the
        drag, in graph-space units (press_x/y doubles as the running last
@@ -3154,7 +3194,7 @@ static void graph_mouse_up(int mx, int my) {
 static void graph_wheel(float dy) {
   if (dy > 0)      graph_scale *= 1.1f;
   else if (dy < 0) graph_scale /= 1.1f;
-  if (graph_scale < 0.2f) graph_scale = 0.2f;
+  if (graph_scale < 0.05f) graph_scale = 0.05f;
   if (graph_scale > 4.0f) graph_scale = 4.0f;
   graph_user_view = 1;             /* the zoom is the user's now — stop fitting */
 }
@@ -3513,7 +3553,7 @@ void editor_handle_event(const SDL_Event *ev) {
         /* reflow only if the page width actually changed (a height-only
            resize or a spurious resize event is now free) */
         nav_maybe_reflow(&g_ed, &g_vs);
-        if (graph_active) graph_energy = 1.0f;   /* re-center on the new window */
+        if (graph_active) { graph_energy = 1.0f; graph_layout_reheat(); }   /* re-center on the new window */
       }
       break;
     case SDL_MOUSEMOTION:

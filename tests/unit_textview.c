@@ -1863,7 +1863,7 @@ static void test_graph_edges_fade_with_zoom(void) {
   editor_handle_event(&m);
   SDL_Event w; memset(&w, 0, sizeof w);
   w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
-  for (int i = 0; i < 20; i++) editor_handle_event(&w);   /* 0.2 → ~1.35 */
+  for (int i = 0; i < 30; i++) editor_handle_event(&w);   /* comfortably ≥ 1.0 */
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 1);

@@ -100,12 +100,115 @@ static void test_graph_scan_links_ignores_multiline_and_nested(void) {
   CHECK_IEQ(graph_node_count(), 2);
 }
 
+/* No node cap: a real vault has thousands of notes and every one becomes a
+   node (the arrays grow on demand). */
+static void test_graph_no_node_cap(void) {
+  graph_clear();
+  char name[32];
+  for (int i = 0; i < 1000; i++) {
+    snprintf(name, sizeof name, "N%d.md", i);
+    CHECK(graph_add_node(name) == i);
+  }
+  CHECK_IEQ(graph_node_count(), 1000);
+  CHECK_IEQ(graph_find("N999"), 999);
+  CHECK_SEQ(graph_open_target(700), "N700.md");
+}
+
+/* No edge cap either: an 80-node complete graph is 3160 edges. */
+static void test_graph_no_edge_cap(void) {
+  graph_clear();
+  char name[32];
+  for (int i = 0; i < 80; i++) { snprintf(name, sizeof name, "E%d", i); graph_add_node(name); }
+  for (int i = 0; i < 80; i++)
+    for (int j = i + 1; j < 80; j++)
+      CHECK(graph_add_edge(i, j, GRAPH_EDGE_LINK) >= 0);
+  CHECK_IEQ(graph_edge_count(), 80 * 79 / 2);
+}
+
+/* Same-day groups: small ones stay a full clique (every companion connected,
+   mutual backlinks — the Context section's semantics), but a big group (a
+   bulk-imported day with thousands of notes) becomes a chain, not the
+   quadratic clique that would swamp the map. */
+static void test_graph_day_group(void) {
+  graph_clear();
+  char name[32];
+  int small[3];
+  for (int i = 0; i < 3; i++) { snprintf(name, sizeof name, "S%d", i); small[i] = graph_add_node(name); }
+  graph_add_day_group(small, 3);
+  CHECK_IEQ(graph_edge_count(), 3);                      /* clique: 3 pairs */
+  CHECK((graph_edge_kinds_between(small[0], small[2]) & GRAPH_EDGE_DAY) != 0);
+  CHECK_IEQ(graph_node(small[1])->backlinks, 2);         /* mutual credits */
+
+  graph_clear();
+  int big[20];
+  for (int i = 0; i < 20; i++) { snprintf(name, sizeof name, "B%d", i); big[i] = graph_add_node(name); }
+  graph_add_day_group(big, 20);
+  CHECK_IEQ(graph_edge_count(), 19);                     /* chain, not 190 */
+  for (int i = 0; i < graph_edge_count(); i++)
+    CHECK((graph_edge(i)->kinds & GRAPH_EDGE_DAY) != 0);
+}
+
 /* ---------------------------------------------------------------- layout */
 
 static float dist(int a, int b) {
   float dx = graph_node(a)->x - graph_node(b)->x;
   float dy = graph_node(a)->y - graph_node(b)->y;
   return sqrtf(dx * dx + dy * dy);
+}
+
+/* A large graph (grid-approximated repulsion path) still lays out sanely:
+   deterministic, no NaN, linked nodes closer than unlinked, everything at
+   finite coordinates. */
+static void test_graph_layout_large_graph(void) {
+  float first[3][2];
+  for (int run = 0; run < 2; run++) {
+    graph_clear();
+    char name[32];
+    for (int i = 0; i < 1200; i++) { snprintf(name, sizeof name, "L%d", i); graph_add_node(name); }
+    graph_add_edge(0, 1, GRAPH_EDGE_LINK);       /* one linked pair */
+    graph_layout_init(800, 600);
+    for (int i = 0; i < 60; i++) graph_layout_step(800, 600);
+    int bad = 0;
+    for (int i = 0; i < 1200; i++) {
+      if (graph_node(i)->x != graph_node(i)->x) bad++;          /* NaN */
+      if (fabsf(graph_node(i)->x) > 100000.0f) bad++;
+      if (fabsf(graph_node(i)->y) > 100000.0f) bad++;
+    }
+    CHECK_IEQ(bad, 0);
+    CHECK(dist(0, 1) < dist(0, 2));
+    for (int i = 0; i < 3; i++) {
+      if (run == 0) { first[i][0] = graph_node(i)->x; first[i][1] = graph_node(i)->y; }
+      else {
+        CHECK(graph_node(i)->x == first[i][0]);      /* bit-identical rerun */
+        CHECK(graph_node(i)->y == first[i][1]);
+      }
+    }
+  }
+}
+
+/* Big-gas convergence: the grid-approximated repulsion has a noise floor
+   (cells re-centroid every step), which used to keep thousands of nodes
+   churning at the velocity cap forever. The cooling schedule shrinks the
+   per-step displacement cap over time, so the sim provably sleeps; a reheat
+   (what a drag calls) restores the cap so the layout responds again. */
+static void test_graph_large_layout_cools_to_sleep(void) {
+  graph_clear();
+  char name[32];
+  for (int i = 0; i < 1200; i++) { snprintf(name, sizeof name, "C%d", i); graph_add_node(name); }
+  for (int i = 0; i < 1200; i += 13) graph_add_edge(i, (i * 7 + 1) % 1200, GRAPH_EDGE_LINK);
+  graph_layout_init(800, 600);
+  float move = 1e9f;
+  for (int i = 0; i < 3000 && move >= 0.02f; i++) move = graph_layout_step(800, 600);
+  CHECK(move < 0.02f);                     /* actually goes to sleep */
+
+  /* cold, a displaced node stays frozen; a reheat wakes the sim up */
+  graph_node(0)->x += 500.0f;
+  float cold = graph_layout_step(800, 600);
+  CHECK(cold < 0.02f);
+  graph_layout_reheat();
+  float warm = 0.0f;
+  for (int i = 0; i < 5; i++) { float m = graph_layout_step(800, 600); if (m > warm) warm = m; }
+  CHECK(warm > 0.75f);                     /* responding again */
 }
 
 /* Same input → bit-identical layout (no randomness anywhere). */
@@ -372,6 +475,11 @@ void suite_graph(void) {
   RUN(test_graph_edge_rejects_self_and_bogus);
   RUN(test_graph_scan_links);
   RUN(test_graph_scan_links_ignores_multiline_and_nested);
+  RUN(test_graph_no_node_cap);
+  RUN(test_graph_no_edge_cap);
+  RUN(test_graph_day_group);
+  RUN(test_graph_layout_large_graph);
+  RUN(test_graph_large_layout_cools_to_sleep);
   RUN(test_graph_layout_deterministic);
   RUN(test_graph_layout_attracts_linked);
   RUN(test_graph_layout_repels_and_settles);

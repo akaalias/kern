@@ -7,9 +7,6 @@
    builds it from the documents dir + the opened-after table and draws it; the
    headless suite (tests/unit_graph.c) exercises everything here directly. */
 
-#define GRAPH_MAX_NODES 256
-#define GRAPH_MAX_EDGES 2048
-
 /* Edge kinds — one edge per node pair, kinds OR together as a bitmask. */
 enum {
   GRAPH_EDGE_LINK   = 1,   /* a [[wikilink]] between the two notes */
@@ -38,7 +35,9 @@ void graph_clear(void);
 /* Add (or find) the node for `name`. Identity is extension-insensitive:
    "Foo.md" and "Foo" are the same node (display name "Foo"); a name carrying
    a note extension (.md/.markdown/.txt) also records it as the node's file.
-   Returns the node index, or -1 when the table is full / name unusable. */
+   Storage grows on demand — there is no node or edge cap; a whole multi-
+   thousand-note vault becomes one graph. Returns the node index, or -1 when
+   the name is unusable (or allocation failed). */
 int  graph_add_node(const char *name);
 int  graph_find(const char *name);            /* index or -1 */
 
@@ -70,6 +69,12 @@ void graph_scan_links(int from, const char *text);
    appearance in another note's opened-after list). Grows the drawn radius. */
 void graph_add_backlink(int idx);
 
+/* Link the nodes of one creation-day group. A small group (<= 8) becomes the
+   full clique with mutual backlink credits (the Context section's same-day
+   semantics); a big one (a bulk-imported day with hundreds of notes) becomes
+   a chain instead — the quadratic clique would swamp the map. */
+void graph_add_day_group(const int *nodes, int count);
+
 /* Deterministic initial placement (golden-angle spiral around the w×h
    center) — no randomness, so layouts reproduce exactly. */
 void graph_layout_init(float w, float h);
@@ -77,8 +82,16 @@ void graph_layout_init(float w, float h);
 /* One force-directed relaxation step (repulsion between all pairs, springs
    along edges — LINK stronger than DAY/OPENED — and center gravity). Returns
    the largest node displacement this step, so the caller knows when the
-   layout has settled. */
+   layout has settled. The step cools over time (a shrinking displacement
+   cap, classic F-R temperature), which guarantees even a huge grid-
+   approximated gas goes to sleep instead of churning on the approximation's
+   noise floor. */
 float graph_layout_step(float w, float h);
+
+/* Restore the full displacement cap (graph_layout_init does this too). Call
+   when the user disturbs the layout — a drag, a resize — so a cooled-down
+   sim responds again. */
+void graph_layout_reheat(void);
 
 /* Drawn radius for node i (grows with degree). */
 float graph_node_radius(int i);
