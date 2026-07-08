@@ -216,6 +216,47 @@ static void test_resolve_path(void) {
   rmdir(dir);
 }
 
+/* Note-name resolution is extension-insensitive, like Obsidian: [[My File]]
+   and [[My File.md]] land on the same note, and a brand-new note is created
+   as .md. */
+static void test_resolve_note_path(void) {
+  char dir[] = "/tmp/kern_docs_XXXXXX";
+  CHECK(mkdtemp(dir) != NULL);
+  buf_set_documents_dir(dir);
+  touch(dir, "Note.md");
+  touch(dir, "Memo.txt");
+  touch(dir, "Plain");          /* legacy extensionless note */
+
+  char out[1200], want[1200];
+
+  buf_resolve_note_path("Note", out, sizeof out);        /* bare name → the .md */
+  snprintf(want, sizeof want, "%s/Note.md", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_note_path("Note.md", out, sizeof out);     /* explicit ext → same file */
+  CHECK_SEQ(out, want);
+
+  buf_resolve_note_path("Memo", out, sizeof out);        /* .txt notes count too */
+  snprintf(want, sizeof want, "%s/Memo.txt", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_note_path("Plain", out, sizeof out);       /* verbatim existing wins */
+  snprintf(want, sizeof want, "%s/Plain", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_note_path("Ghost", out, sizeof out);       /* new note → created as .md */
+  snprintf(want, sizeof want, "%s/Ghost.md", dir);
+  CHECK_SEQ(out, want);
+
+  buf_resolve_note_path("Ghost.txt", out, sizeof out);   /* explicit ext kept even when new */
+  snprintf(want, sizeof want, "%s/Ghost.txt", dir);
+  CHECK_SEQ(out, want);
+
+  rm(dir, "Note.md"); rm(dir, "Memo.txt"); rm(dir, "Plain");
+  buf_set_documents_dir("");
+  rmdir(dir);
+}
+
 static void test_complete_and_list_filenames(void) {
   char dir[] = "/tmp/kern_docs_XXXXXX";
   CHECK(mkdtemp(dir) != NULL);
@@ -432,6 +473,7 @@ void suite_buffer(void) {
   RUN(test_line_array_growth);
   RUN(test_region_orders_endpoints);
   RUN(test_resolve_path);
+  RUN(test_resolve_note_path);
   RUN(test_complete_and_list_filenames);
   RUN(test_documents_dir_and_unsandboxed_resolve);
   RUN(test_complete_filename_subdir);

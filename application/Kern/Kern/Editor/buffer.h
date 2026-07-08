@@ -35,6 +35,12 @@ void buf_set_documents_dir(const char *dir);
 const char *buf_get_documents_dir(void);
 void buf_resolve_path(const char *input, char *out, int outsz);
 
+/* buf_resolve_path plus Obsidian-style note-name semantics: a name that ends
+   in a note extension (.md/.markdown/.txt) or exists verbatim is used as-is;
+   otherwise an existing sibling with a note extension appended wins ("My File"
+   opens "My File.md"); otherwise the note is new and resolves to <name>.md. */
+void buf_resolve_note_path(const char *input, char *out, int outsz);
+
 /* filename completion in the documents dir; out begins with prefix. Returns 1
    if a longer existing match was found, else 0. */
 int  buf_complete_filename(const char *prefix, char *out, int outsz);

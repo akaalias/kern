@@ -66,7 +66,7 @@ Meta (`M-`) is either **Alt** or the **Esc** prefix — e.g. `M-d` = Alt-D, or E
 | `C-x s`       | Style check (strike cuttable fillers/redundancies) |
 | `C-x l`       | Symbols on/off (draw `->` `--` `!=` `(c)` quotes `lambda` `forall` as → — ≠ © “ ” λ ∀; on by default) |
 | `C-x p`       | Page borders on/off (hide/show the page rails, gutters & note margins) |
-| `C-x g`       | Graph view (interactive map of wikilinks, same-day & opened-after relations; click a node to open it) |
+| `C-x g`       | Graph view (interactive map of wikilinks, same-day & opened-after relations; click a node to open it, drag the background to pan) |
 | `M-g`         | Go to line                      |
 
 **Editing**

@@ -508,6 +508,46 @@ static void test_follow_wikilink_and_history(void) {
   buf_set_documents_dir("");
 }
 
+/* A bare [[Target]] resolves to the on-disk Target.md, like Obsidian — both
+   link forms open the same note instead of the bare one spawning a second,
+   extensionless file. */
+static void test_follow_wikilink_bare_name_resolves_md(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char origin[512], target[512];
+  snprintf(origin, sizeof origin, "%s/origin.md", dir);
+  snprintf(target, sizeof target, "%s/Target.md", dir);
+  buf_save_text(origin, "see [[Target]] x", 16);
+  buf_save_text(target, "i am target", 11);
+
+  tv_begin();
+  load("see [[Target]] x");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", origin);
+  ED->filename = "origin.md";
+  put_cursor(0, 8);                  /* inside [[Target]] */
+  key(KMOD_GUI, SDLK_RETURN);        /* Cmd-Enter follows */
+  CHECK(strstr(ED->filepath, "Target.md") != NULL);
+  EXPECT_LINE(0, "i am target");
+  buf_set_documents_dir("");
+}
+
+/* Following a link to a note that doesn't exist yet creates it as .md, so the
+   new note shows up in the [[ autocomplete and the graph like any other. */
+static void test_follow_wikilink_creates_md_note(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char origin[512];
+  snprintf(origin, sizeof origin, "%s/origin.md", dir);
+  buf_save_text(origin, "see [[Ghost]] x", 15);
+
+  tv_begin();
+  load("see [[Ghost]] x");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", origin);
+  ED->filename = "origin.md";
+  put_cursor(0, 8);
+  key(KMOD_GUI, SDLK_RETURN);
+  CHECK(strstr(ED->filepath, "Ghost.md") != NULL);
+  buf_set_documents_dir("");
+}
+
 static void test_follow_wikilink_none_at_cursor(void) {
   tv_begin();
   load("no link here");
@@ -1558,6 +1598,58 @@ static void test_graph_click_opens_note(void) {
   buf_set_documents_dir("");
 }
 
+/* Dragging the background pans the whole graph — every node's screen position
+   shifts by the mouse delta — without opening a note or closing the overlay,
+   and the pan sticks (it takes over the view, so the auto-fit doesn't snap it
+   back on the next tick). */
+static void test_graph_pan_drags_view(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Beta.md", dir);
+  const char *body = "see [[Beta]]\n";
+  buf_save_text(a, body, (int)strlen(body));
+  buf_save_text(b, "beta\n", 5);
+  tv_begin(); load("see [[Beta]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  int bx = 0, by = 0;
+  CHECK(tv_test_graph_node_screen("Beta", &bx, &by));
+
+  /* press empty background (the fit keeps all nodes >=70px from the window
+     edge, so the corner is guaranteed node-free), drag by (+50, +30) */
+  SDL_Event e; memset(&e, 0, sizeof e);
+  e.type = SDL_MOUSEBUTTONDOWN;
+  e.button.button = SDL_BUTTON_LEFT;
+  e.button.x = 10; e.button.y = 10;
+  editor_handle_event(&e);
+  memset(&e, 0, sizeof e);
+  e.type = SDL_MOUSEMOTION; e.motion.x = 60; e.motion.y = 40;
+  editor_handle_event(&e);
+  memset(&e, 0, sizeof e);
+  e.type = SDL_MOUSEBUTTONUP;
+  e.button.button = SDL_BUTTON_LEFT;
+  e.button.x = 60; e.button.y = 40;
+  editor_handle_event(&e);
+
+  int px = 0, py = 0;
+  CHECK(tv_test_graph_node_screen("Beta", &px, &py));
+  CHECK(px >= bx + 49 && px <= bx + 51);       /* shifted by the drag (±rounding) */
+  CHECK(py >= by + 29 && py <= by + 31);
+  CHECK_IEQ(tv_test_graph_active(), 1);        /* still open — a pan is not a click */
+  CHECK(strstr(ED->filepath, "Alpha.md") != NULL);
+
+  editor_tick();                               /* auto-fit must not undo the pan */
+  CHECK(tv_test_graph_node_screen("Beta", &px, &py));
+  CHECK(px >= bx + 49 && px <= bx + 51);
+  CHECK(py >= by + 29 && py <= by + 31);
+
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* Notes created the same day get a DAY edge (both fixtures are written now,
    so they share a creation day by construction). */
 static void test_graph_same_day_edge(void) {
@@ -1655,7 +1747,10 @@ static void test_graph_labels_fade_with_zoom(void) {
   key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
   CHECK_IEQ(tv_test_graph_active(), 1);
 
-  /* the wide star fits well below the label threshold → no labels drawn */
+  /* zoom well out, below the label threshold → no labels drawn */
+  SDL_Event w; memset(&w, 0, sizeof w);
+  w.type = SDL_MOUSEWHEEL; w.wheel.y = -1;
+  for (int i = 0; i < 20; i++) editor_handle_event(&w);   /* scale floor 0.2 */
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_text("G7"), 0);
@@ -1674,9 +1769,8 @@ static void test_graph_labels_fade_with_zoom(void) {
   /* zoom in past the threshold → the other labels fade in */
   m.motion.x = 5; m.motion.y = 5;          /* un-hover first */
   editor_handle_event(&m);
-  SDL_Event w; memset(&w, 0, sizeof w);
-  w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
-  for (int i = 0; i < 8; i++) editor_handle_event(&w);
+  w.wheel.y = 1;
+  for (int i = 0; i < 20; i++) editor_handle_event(&w);   /* 0.2 → ~1.35 */
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_text("G7"), 1);
@@ -1692,6 +1786,35 @@ static int stub_has_rect_rgba(int r, int g, int b, int lo, int hi) {
     if (c.r == r && c.g == g && c.b == b && c.a >= lo && c.a <= hi) return 1;
   }
   return 0;
+}
+
+/* A ghost node (a wikilink target with no file on disk yet) draws as a gray
+   outline ring, not a filled disc — real notes keep the filled gray. */
+static void test_graph_ghost_node_outlined(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char g[512]; snprintf(g, sizeof g, "%s/Gamma.md", dir);
+  const char *body = "see [[Beta]] and [[Gamma]]\n";
+  buf_save_text(a, body, (int)strlen(body));
+  buf_save_text(g, "gamma\n", 6);          /* Gamma is real; Beta stays a ghost */
+  tv_begin(); load("see [[Beta]] and [[Gamma]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  CHECK(graph_find("Beta") >= 0);
+
+  stub_reset();
+  editor_tick();
+  /* the ghost's ring strokes are drawn, the old filled ghost disc is not */
+  CHECK_IEQ(stub_has_rect_rgba(128, 133, 143, 150, 255), 1);
+  CHECK_IEQ(stub_has_rect_rgba(105, 110, 120, 1, 255), 0);
+  /* a real (non-current) note still draws its filled disc */
+  CHECK_IEQ(stub_has_rect_rgba(168, 174, 184, 200, 255), 1);
+
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
 }
 
 /* Edges fade with zoom but never disappear: the fitted overview draws them at
@@ -1715,8 +1838,11 @@ static void test_graph_edges_fade_with_zoom(void) {
   key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
   CHECK_IEQ(tv_test_graph_active(), 1);
 
-  /* fitted overview: edges present but faint (alpha well under the base 110,
-     above zero), and none at full muted strength */
+  /* zoomed well out: edges present but faint (alpha well under the base 110,
+     above zero — the floor), and none at full muted strength */
+  SDL_Event zo; memset(&zo, 0, sizeof zo);
+  zo.type = SDL_MOUSEWHEEL; zo.wheel.y = -1;
+  for (int i = 0; i < 20; i++) editor_handle_event(&zo);  /* scale floor 0.2 */
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 1, 55), 1);
@@ -1737,7 +1863,7 @@ static void test_graph_edges_fade_with_zoom(void) {
   editor_handle_event(&m);
   SDL_Event w; memset(&w, 0, sizeof w);
   w.type = SDL_MOUSEWHEEL; w.wheel.y = 1;
-  for (int i = 0; i < 8; i++) editor_handle_event(&w);
+  for (int i = 0; i < 20; i++) editor_handle_event(&w);   /* 0.2 → ~1.35 */
   stub_reset();
   editor_tick();
   CHECK_IEQ(stub_has_rect_rgba(130, 140, 152, 110, 110), 1);
@@ -1815,6 +1941,8 @@ void suite_textview(void) {
   RUN(test_save_as_writes_file);
   /* wikilink nav */
   RUN(test_follow_wikilink_and_history);
+  RUN(test_follow_wikilink_bare_name_resolves_md);
+  RUN(test_follow_wikilink_creates_md_note);
   RUN(test_follow_wikilink_none_at_cursor);
   RUN(test_follow_url_opens_browser);
   RUN(test_follow_url_absent_falls_through_to_wikilink);
@@ -1886,10 +2014,12 @@ void suite_textview(void) {
   RUN(test_cx_g_opens_graph_view);
   RUN(test_cx_g_toggles_closed);
   RUN(test_graph_click_opens_note);
+  RUN(test_graph_pan_drags_view);
   RUN(test_graph_same_day_edge);
   RUN(test_graph_opened_after_edge);
   RUN(test_graph_opens_fitted);
   RUN(test_graph_labels_fade_with_zoom);
+  RUN(test_graph_ghost_node_outlined);
   RUN(test_graph_edges_fade_with_zoom);
   RUN(test_graph_node_size_reflects_backlinks);
 

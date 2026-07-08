@@ -64,6 +64,37 @@ void buf_resolve_path(const char *input, char *out, int outsz) {
   snprintf(out, outsz, "%s/%s", g_documents_dir, rel);
 }
 
+/* Does the basename of `path` end in a note extension (.md/.markdown/.txt)? */
+static int has_note_ext(const char *path) {
+  const char *base = strrchr(path, '/');
+  base = base ? base + 1 : path;
+  const char *dot = strrchr(base, '.');
+  return dot && (strcmp(dot, ".md") == 0 || strcmp(dot, ".markdown") == 0 ||
+                 strcmp(dot, ".txt") == 0);
+}
+
+static int file_exists(const char *path) {
+  struct stat st;
+  return stat(path, &st) == 0;
+}
+
+void buf_resolve_note_path(const char *input, char *out, int outsz) {
+  buf_resolve_path(input, out, outsz);
+  if (has_note_ext(out)) return;             /* explicit note name — use as-is */
+  if (file_exists(out)) return;              /* an existing file wins verbatim */
+  static const char *exts[] = { ".md", ".markdown", ".txt" };
+  char cand[2304];
+  for (int i = 0; i < 3; i++) {
+    snprintf(cand, sizeof cand, "%s%s", out, exts[i]);
+    if (file_exists(cand)) {
+      snprintf(out, outsz, "%s", cand);
+      return;
+    }
+  }
+  snprintf(cand, sizeof cand, "%s.md", out); /* brand-new note: create as .md */
+  snprintf(out, outsz, "%s", cand);
+}
+
 /* Find the alphabetically-first existing file in the documents dir whose name
    starts with `prefix` (and is longer than it). Writes the full completed name
    to `out` (which therefore begins with `prefix`) and returns 1, else 0.

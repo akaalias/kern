@@ -397,8 +397,10 @@ static void open_or_create_file(const char *path) {
   filepos_remember_current();   /* stash where we were in the file we're leaving */
   char prev[1024];              /* the file we're leaving, for the "Opened after" list */
   snprintf(prev, sizeof(prev), "%s", g_ed.filepath);
-  /* resolve the typed name to a path inside the sandbox documents dir */
-  buf_resolve_path(path, g_ed.filepath, sizeof(g_ed.filepath));
+  /* resolve the typed name to a path inside the sandbox documents dir —
+     note-aware, so [[My File]] and [[My File.md]] land on the same note and a
+     brand-new note is created as .md (Obsidian's rule) */
+  buf_resolve_note_path(path, g_ed.filepath, sizeof(g_ed.filepath));
   g_ed.filename = path_base(g_ed.filepath);
   opened_after_record(g_ed.filepath, prev);   /* before context_refresh, so it lists prev */
 
@@ -2920,6 +2922,7 @@ static int   graph_current = -1;  /* node of the open note (drawn accented) */
 static int   graph_hover = -1;    /* node under the mouse */
 static int   graph_drag = -1;     /* node being dragged */
 static int   graph_drag_moved;    /* drag traveled >3px (else it's a click) */
+static int   graph_pan;           /* dragging empty background = panning the view */
 static int   graph_press_x, graph_press_y;
 static float graph_scale = 1.0f;  /* view zoom (fit-derived until the user zooms) */
 static float graph_cx, graph_cy;  /* graph-space point pinned to the window center */
@@ -3074,6 +3077,7 @@ static void cmd_toggle_graph(void) {
   graph_user_view = 0;
   graph_fit_view();                /* open with every node on screen */
   graph_hover = graph_drag = -1;
+  graph_pan = 0;
   graph_active = 1;
   nav_status_set(&g_vs, "Graph view: click a note to open it, drag to arrange, Esc to close");
 }
@@ -3095,11 +3099,13 @@ static int handle_graph_key(int sym, int ctrl) {
   return 1;
 }
 
-/* Left mouse down over the overlay: start a drag on a node (a release without
-   movement is a click, handled in graph_mouse_up). Consumes while modal. */
+/* Left mouse down over the overlay: start a drag on a node, or — on empty
+   background — a pan of the whole view (a release without movement is a
+   click, handled in graph_mouse_up). Consumes while modal. */
 static int graph_mouse_down(int mx, int my) {
   if (!graph_active) return 0;
   graph_drag = graph_hit(mx, my);
+  graph_pan = (graph_drag < 0);
   graph_drag_moved = 0;
   graph_press_x = mx;
   graph_press_y = my;
@@ -3115,6 +3121,15 @@ static void graph_mouse_motion(int mx, int my) {
     if (abs(mx - graph_press_x) > 3 || abs(my - graph_press_y) > 3)
       graph_drag_moved = 1;
     graph_energy = 1.0f;               /* re-excite the neighbors */
+  } else if (graph_pan) {
+    /* slide the view under the mouse: the pinned center moves opposite the
+       drag, in graph-space units (press_x/y doubles as the running last
+       point). Panning is the user taking the view over — stop auto-fitting. */
+    graph_cx -= (float)(mx - graph_press_x) / graph_scale;
+    graph_cy -= (float)(my - graph_press_y) / graph_scale;
+    graph_press_x = mx;
+    graph_press_y = my;
+    graph_user_view = 1;
   } else {
     graph_hover = graph_hit(mx, my);
   }
@@ -3126,6 +3141,7 @@ static void graph_mouse_up(int mx, int my) {
   if (!graph_active) return;
   int idx = graph_drag;
   graph_drag = -1;
+  graph_pan = 0;
   if (idx < 0 || graph_drag_moved) return;
   if (graph_hit(mx, my) != idx) return;        /* slid off the node */
   graph_active = 0;
@@ -3209,16 +3225,32 @@ static void draw_graph_overlay(void) {
   }
 
   /* nodes: the open note in the caret's read-only amber, the hovered one in
-     caret cyan, ghosts (no file on disk yet) dimmer than real notes */
+     caret cyan, ghosts (no file on disk yet) as a gray outline ring — the
+     hollow disc marks "this note doesn't exist yet" at a glance */
   for (int i = 0; i < graph_node_count(); i++) {
     int sx, sy;
     graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
     float rad = graph_node_radius(i) * graph_scale;
     if (rad < 3.0f) rad = 3.0f;
-    Color c = (i == graph_current)      ? color(250, 165, 70, 255)
-            : (i == graph_hover)        ? color(90, 200, 250, 255)
-            : graph_node(i)->file[0]    ? color(168, 174, 184, 255)
-                                        : color(105, 110, 120, 255);
+    int ghost = !graph_node(i)->file[0];
+    if (ghost && i != graph_current && i != graph_hover) {
+      /* ring: a closed AA polyline around the disc (segments, not a texture,
+         so the border stays hairline-thin at any radius) */
+      Color c = color(128, 133, 143, 210);
+      int segs = 28;
+      float px = (float)sx + rad, py = (float)sy;
+      for (int k = 1; k <= segs; k++) {
+        float t = (float)k * (6.2831853f / (float)segs);
+        float qx = (float)sx + cosf(t) * rad;
+        float qy = (float)sy + sinf(t) * rad;
+        r_draw_line(px, py, qx, qy, 1.3f, c);
+        px = qx; py = qy;
+      }
+      continue;
+    }
+    Color c = (i == graph_current) ? color(250, 165, 70, 255)
+            : (i == graph_hover)   ? color(90, 200, 250, 255)
+                                   : color(168, 174, 184, 255);
     r_draw_circle((float)sx, (float)sy, rad, c);
   }
 
@@ -4239,7 +4271,8 @@ void tv_test_reset(void) {
   g_last_x_conn = -1;
   g_opened_after_count = 0;   /* clear the "Opened after" history between tests */
   graph_active = 0; graph_current = graph_hover = graph_drag = -1;
-  graph_drag_moved = 0; graph_scale = 1.0f; graph_cx = graph_cy = 0.0f;
+  graph_drag_moved = 0; graph_pan = 0;
+  graph_scale = 1.0f; graph_cx = graph_cy = 0.0f;
   graph_user_view = 0; graph_energy = 0.0f;
   graph_clear();
   pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;

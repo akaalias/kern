@@ -1,12 +1,15 @@
 /* graph.c — note-relationship graph model + layout for the C-x g graph view.
    Pure C, renderer-independent; headless-tested in tests/unit_graph.c.
 
-   Layout is a damped force-directed embedder (Fruchterman-Reingold flavored):
-   pairwise repulsion K²/d, springs d²/K along edges (wikilinks pull harder
-   than the softer day/opened relations), and a linear pull to the window
-   center so disconnected notes can't drift off-screen. Everything is
-   deterministic — the seed placement is a golden-angle spiral, ties are
-   broken by node index — so the same vault always lays out the same way. */
+   Layout is a damped force-directed embedder: softened inverse-square
+   repulsion between all pairs, linear springs along edges (wikilinks pull
+   harder than the softer day/opened relations; degree-1 satellites pull
+   extra and repel less, so a note with a single connection settles beside
+   its one neighbor instead of stranded across the map), and a linear pull
+   to the window center so disconnected notes can't drift off-screen.
+   Everything is deterministic — the seed placement is a golden-angle spiral
+   (degree-1 nodes seeded beside their only neighbor), ties are broken by
+   node index — so the same vault always lays out the same way. */
 #include "graph.h"
 
 #include <math.h>
@@ -169,12 +172,31 @@ void graph_layout_init(float w, float h) {
     g_nodes[i].vx = 0.0f;
     g_nodes[i].vy = 0.0f;
   }
+  /* second pass: seed each degree-1 node beside its only neighbor, offset
+     radially outward (plus an index-based fan so several satellites of one
+     hub spread out) — starting in the right basin is what keeps a leaf from
+     ending up stranded on the far side of the layout */
+  for (int i = 0; i < g_node_count; i++) {
+    if (g_nodes[i].degree != 1) continue;
+    for (int e = 0; e < g_edge_count; e++) {
+      int other = g_edges[e].a == i ? g_edges[e].b
+                : g_edges[e].b == i ? g_edges[e].a : -1;
+      if (other < 0) continue;
+      float ox = g_nodes[other].x - cx, oy = g_nodes[other].y - cy;
+      if (ox * ox + oy * oy < 1.0f) { ox = 1.0f; oy = 0.0f; }
+      float ang = atan2f(oy, ox) + 0.35f * (float)((i % 5) - 2);
+      g_nodes[i].x = g_nodes[other].x + cosf(ang) * step * 1.5f;
+      g_nodes[i].y = g_nodes[other].y + sinf(ang) * step * 1.5f;
+      break;
+    }
+  }
 }
 
 float graph_layout_step(float w, float h) {
   int n = g_node_count;
   if (n == 0) return 0.0f;
   const float DT = 0.02f, DAMP = 0.6f, GRAV = 0.12f;
+  const float SOFT = 50.0f;   /* repulsion pole softening radius (px) */
   float k = layout_k(w, h);
   float cx = w * 0.5f, cy = h * 0.5f;
   static float fx[GRAPH_MAX_NODES], fy[GRAPH_MAX_NODES];
@@ -195,25 +217,67 @@ float graph_layout_step(float w, float h) {
       float d = sqrtf(d2);
       /* inverse-square repulsion (k³/d²): unlike F-R's k²/d it decays fast
          enough that a big vault can't collectively out-push the center
-         gravity and drift the whole ring off-screen. Premultiplied for dx. */
-      float f = k * k * k / (d2 * d);
+         gravity and drift the whole ring off-screen. The pole is softened
+         (SOFT) so crowded satellites settle instead of vcap-jittering, and
+         degree-1 nodes claim half the personal space — satellites may nestle
+         close to their hub. Premultiplied for dx. */
+      float f = k * k * k / ((d2 + SOFT * SOFT) * d);
+      if (g_nodes[i].degree == 1) f *= 0.5f;
+      if (g_nodes[j].degree == 1) f *= 0.5f;
       fx[i] += dx * f; fy[i] += dy * f;
       fx[j] -= dx * f; fy[j] -= dy * f;
     }
   }
-  /* springs along edges (d²/k), wikilinks stiffer than day/opened relations */
+  /* linear springs along edges, wikilinks stiffer than day/opened relations;
+     a degree-1 endpoint doubles the pull (its single edge is all that holds
+     it), and each endpoint's force is normalized by its own degree so a hub
+     with dozens of edges has bounded total stiffness (an unnormalized hub
+     flips in a period-2 oscillation at the velocity cap and never sleeps) */
   for (int i = 0; i < g_edge_count; i++) {
     GraphEdge *e = &g_edges[i];
     float weight = (e->kinds & GRAPH_EDGE_LINK)   ? 1.0f
                  : (e->kinds & GRAPH_EDGE_OPENED) ? 0.5f
                                                   : 0.3f;
+    int da = g_nodes[e->a].degree, db = g_nodes[e->b].degree;
+    if (da < 1) da = 1;
+    if (db < 1) db = 1;
+    weight *= 1.0f + 1.0f / (float)(da < db ? da : db);
     float dx = g_nodes[e->a].x - g_nodes[e->b].x;
     float dy = g_nodes[e->a].y - g_nodes[e->b].y;
     if (dx * dx + dy * dy < 0.01f) continue;
-    float f = (1.0f / k) * 0.6f * weight;  /* (d²/k) / d = d/k, premultiplied */
-    fx[e->a] -= dx * f; fy[e->a] -= dy * f;
-    fx[e->b] += dx * f; fy[e->b] += dy * f;
+    float f = 0.2f * weight;               /* per-dx factor: force = 0.2·w·d */
+    float fa = f / (float)da, fb = f / (float)db;
+    fx[e->a] -= dx * fa; fy[e->a] -= dy * fa;
+    fx[e->b] += dx * fb; fy[e->b] += dy * fb;
   }
+  /* The degree-normalized springs are asymmetric — the two endpoints of an
+     edge feel different magnitudes — so the internal forces aren't equal-and-
+     opposite and inject a little net momentum and torque every step; damping
+     balances the injection into a slow permanent drift/spin of the whole map.
+     Remove the rigid translation and rotation modes from the internal force
+     field (the gravity below still recenters legitimately). */
+  if (n > 1) {
+    float mfx = 0.0f, mfy = 0.0f, mx = 0.0f, my = 0.0f;
+    for (int i = 0; i < n; i++) {
+      mfx += fx[i]; mfy += fy[i];
+      mx += g_nodes[i].x; my += g_nodes[i].y;
+    }
+    mfx /= (float)n; mfy /= (float)n;
+    mx /= (float)n;  my /= (float)n;
+    float tau = 0.0f, inertia = 0.0f;
+    for (int i = 0; i < n; i++) {
+      float rx = g_nodes[i].x - mx, ry = g_nodes[i].y - my;
+      tau += rx * (fy[i] - mfy) - ry * (fx[i] - mfx);
+      inertia += rx * rx + ry * ry;
+    }
+    float omega = inertia > 1.0f ? tau / inertia : 0.0f;
+    for (int i = 0; i < n; i++) {
+      float rx = g_nodes[i].x - mx, ry = g_nodes[i].y - my;
+      fx[i] -= mfx - ry * omega;
+      fy[i] -= mfy + rx * omega;
+    }
+  }
+
   /* center gravity + damped integration */
   float max_move = 0.0f;
   float vcap = k * 0.35f;
@@ -224,6 +288,9 @@ float graph_layout_step(float w, float h) {
     float vy = (g_nodes[i].vy + fy[i] * DT * 60.0f) * DAMP;
     float v = sqrtf(vx * vx + vy * vy);
     if (v > vcap) { vx *= vcap / v; vy *= vcap / v; v = vcap; }
+    /* sleep snap: sub-pixel motion is invisible, but a marginal micro-limit-
+       cycle would keep the sim awake at 60fps forever — freeze it dead */
+    if (v < 0.75f) { vx = 0.0f; vy = 0.0f; v = 0.0f; }
     g_nodes[i].vx = vx;
     g_nodes[i].vy = vy;
     g_nodes[i].x += vx;

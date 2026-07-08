@@ -179,6 +179,95 @@ static void test_graph_layout_stays_near_window(void) {
   }
 }
 
+/* A degree-1 node must settle beside its only neighbor — clearly closer than
+   the graph's own internal spacing — instead of stranded across the layout
+   with an edge as long as the whole map. Exercised for every relation kind
+   (the weak DAY/OPENED springs used to lose to global repulsion). */
+static void test_graph_leaf_settles_beside_neighbor(void) {
+  graph_clear();
+  char name[16];
+  /* a 16-node connected core: ring + chords, all LINK */
+  for (int i = 0; i < 16; i++) { snprintf(name, sizeof name, "C%d", i); graph_add_node(name); }
+  for (int i = 0; i < 16; i++) graph_add_edge(i, (i + 1) % 16, GRAPH_EDGE_LINK);
+  for (int i = 0; i < 16; i += 4) graph_add_edge(i, (i + 8) % 16, GRAPH_EDGE_LINK);
+  int l_link = graph_add_node("L1"); graph_add_edge(l_link, 2,  GRAPH_EDGE_LINK);
+  int l_open = graph_add_node("L2"); graph_add_edge(l_open, 7,  GRAPH_EDGE_OPENED);
+  int l_day  = graph_add_node("L3"); graph_add_edge(l_day, 12, GRAPH_EDGE_DAY);
+
+  graph_layout_init(800, 600);
+  for (int i = 0; i < 800; i++) graph_layout_step(800, 600);
+
+  float core = 0.0f;
+  for (int i = 0; i < 16; i++) core += dist(i, (i + 1) % 16);
+  core /= 16.0f;
+  CHECK(dist(l_link, 2)  < core * 0.75f);
+  CHECK(dist(l_open, 7)  < core * 0.75f);
+  CHECK(dist(l_day, 12) < core * 0.75f);
+}
+
+/* Internal forces must never torque the map as a whole: the degree-normalized
+   springs are asymmetric (each endpoint feels a different magnitude), and on
+   a vault with a big same-day clique the injected torque used to spin the
+   settled layout slowly forever. The rigid rotation/translation modes are
+   removed from the force field, so the layout both stops rotating and truly
+   sleeps. */
+static void test_graph_layout_does_not_rotate(void) {
+  graph_clear();
+  char name[16];
+  int h1 = graph_add_node("H1"), h2 = graph_add_node("H2"), h3 = graph_add_node("H3");
+  graph_add_edge(h1, h2, GRAPH_EDGE_LINK);
+  graph_add_edge(h2, h3, GRAPH_EDGE_OPENED);
+  for (int i = 0; i < 10; i++) { snprintf(name, sizeof name, "A%d", i); graph_add_edge(h1, graph_add_node(name), GRAPH_EDGE_LINK); }
+  for (int i = 0; i < 5;  i++) { snprintf(name, sizeof name, "B%d", i); graph_add_edge(h2, graph_add_node(name), GRAPH_EDGE_DAY); }
+  for (int i = 0; i < 3;  i++) { snprintf(name, sizeof name, "C%d", i); graph_add_edge(h3, graph_add_node(name), GRAPH_EDGE_OPENED); }
+  int day[20];
+  for (int i = 0; i < 20; i++) { snprintf(name, sizeof name, "D%d", i); day[i] = graph_add_node(name); }
+  for (int i = 0; i < 20; i++)
+    for (int j = i + 1; j < 20; j++)
+      graph_add_edge(day[i], day[j], GRAPH_EDGE_DAY);
+  graph_add_edge(day[0], h1, GRAPH_EDGE_LINK);
+  graph_add_edge(day[3], h2, GRAPH_EDGE_LINK);
+
+  graph_layout_init(800, 600);
+  for (int i = 0; i < 2000; i++) graph_layout_step(800, 600);
+
+  float cx = 0, cy = 0;
+  int n = graph_node_count();
+  for (int i = 0; i < n; i++) { cx += graph_node(i)->x; cy += graph_node(i)->y; }
+  cx /= (float)n; cy /= (float)n;
+  float a0 = atan2f(graph_node(h1)->y - cy, graph_node(h1)->x - cx);
+
+  float move = 1e9f;
+  for (int i = 0; i < 1000; i++) move = graph_layout_step(800, 600);
+
+  cx = cy = 0;
+  for (int i = 0; i < n; i++) { cx += graph_node(i)->x; cy += graph_node(i)->y; }
+  cx /= (float)n; cy /= (float)n;
+  float a1 = atan2f(graph_node(h1)->y - cy, graph_node(h1)->x - cx);
+
+  CHECK(fabsf(a1 - a0) < 0.05f);     /* no rigid spin */
+  CHECK(move < 0.02f);               /* and it really goes to sleep */
+}
+
+/* A hub with many satellites must actually go to sleep: the summed spring
+   stiffness on the hub used to flip it in a period-2 oscillation at the
+   velocity cap, so the sim never settled (and burned 60fps forever). */
+static void test_graph_hub_star_settles(void) {
+  graph_clear();
+  char name[16];
+  int hub = graph_add_node("Hub");
+  for (int i = 1; i < 30; i++) {
+    snprintf(name, sizeof name, "G%d", i);
+    graph_add_edge(hub, graph_add_node(name), GRAPH_EDGE_LINK);
+  }
+  graph_layout_init(800, 600);
+  float move = 1e9f;
+  for (int i = 0; i < 2000; i++) move = graph_layout_step(800, 600);
+  CHECK(move < 0.02f);               /* below the overlay's sleep threshold */
+  for (int i = 1; i < 30; i++)
+    CHECK(dist(hub, i) < 400.0f);    /* satellites orbit the hub, not the map */
+}
+
 /* ---------------------------------------------------------------- hit test */
 
 static void test_graph_node_at(void) {
@@ -287,6 +376,9 @@ void suite_graph(void) {
   RUN(test_graph_layout_attracts_linked);
   RUN(test_graph_layout_repels_and_settles);
   RUN(test_graph_layout_stays_near_window);
+  RUN(test_graph_leaf_settles_beside_neighbor);
+  RUN(test_graph_hub_star_settles);
+  RUN(test_graph_layout_does_not_rotate);
   RUN(test_graph_node_at);
   RUN(test_graph_bounds);
   RUN(test_graph_backlinks_from_scans);
