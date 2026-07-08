@@ -148,6 +148,28 @@ static void test_graph_day_group(void) {
     CHECK((graph_edge(i)->kinds & GRAPH_EDGE_DAY) != 0);
 }
 
+/* Only note-shaped wikilink targets become nodes: bare names ([[My Note]])
+   and note extensions ([[My Note.md]]) count; media/attachment links
+   ([[photo.jpg]], [[doc.pdf]]) stay off the map. A trailing ".5" is a
+   version number, not a file ending — an ending must contain a letter. */
+static void test_graph_scan_links_skips_media(void) {
+  graph_clear();
+  int a = graph_add_node("A");
+  graph_scan_links(a,
+      "[[photo.jpg]] [[scan.PNG]] [[paper.pdf]] [[clip.mov]] "
+      "[[My Note]] [[Other.md]] [[Plain.txt]] [[Release 1.3.5]] [[Mrs. Smith]]");
+  CHECK_IEQ(graph_find("photo.jpg"), -1);
+  CHECK_IEQ(graph_find("scan.PNG"), -1);
+  CHECK_IEQ(graph_find("paper.pdf"), -1);
+  CHECK_IEQ(graph_find("clip.mov"), -1);
+  CHECK(graph_find("My Note") >= 0);
+  CHECK(graph_find("Other") >= 0);
+  CHECK(graph_find("Plain") >= 0);
+  CHECK(graph_find("Release 1.3.5") >= 0);
+  CHECK(graph_find("Mrs. Smith") >= 0);
+  CHECK_IEQ(graph_node_count(), 6);        /* A + the five notes */
+}
+
 /* ---------------------------------------------------------------- layout */
 
 static float dist(int a, int b) {
@@ -184,6 +206,22 @@ static void test_graph_layout_large_graph(void) {
       }
     }
   }
+}
+
+/* Big graphs lay out relaxed: the center gravity is softened past the exact-
+   path threshold so the vault spreads into an airy field with visible
+   cluster structure instead of compressing into one dense ball. */
+static void test_graph_large_layout_relaxed(void) {
+  graph_clear();
+  char name[32];
+  for (int i = 0; i < 1200; i++) { snprintf(name, sizeof name, "R%d", i); graph_add_node(name); }
+  for (int i = 0; i < 1200; i += 13) graph_add_edge(i, (i * 7 + 1) % 1200, GRAPH_EDGE_LINK);
+  graph_layout_init(800, 600);
+  float move = 1e9f;
+  for (int i = 0; i < 3000 && move >= 0.02f; i++) move = graph_layout_step(800, 600);
+  float x0, y0, x1, y1;
+  CHECK(graph_bounds(&x0, &y0, &x1, &y1));
+  CHECK(x1 - x0 > 3600.0f);                /* was ~3070 at full gravity */
 }
 
 /* Big-gas convergence: the grid-approximated repulsion has a noise floor
@@ -475,6 +513,8 @@ void suite_graph(void) {
   RUN(test_graph_edge_rejects_self_and_bogus);
   RUN(test_graph_scan_links);
   RUN(test_graph_scan_links_ignores_multiline_and_nested);
+  RUN(test_graph_scan_links_skips_media);
+  RUN(test_graph_large_layout_relaxed);
   RUN(test_graph_no_node_cap);
   RUN(test_graph_no_edge_cap);
   RUN(test_graph_day_group);

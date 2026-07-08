@@ -12,10 +12,12 @@
    node index — so the same vault always lays out the same way. */
 #include "graph.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* Storage grows on demand — a vault of thousands of notes is one graph, no
    caps. Buffers are kept across graph_clear so a rebuild doesn't churn. */
@@ -133,6 +135,29 @@ unsigned graph_edge_kinds_between(int a, int b) {
   return 0;
 }
 
+/* Does a [[target]] name a note? Bare names ([[My Note]]) and note
+   extensions ([[My Note.md]]) do; media/attachment links ([[photo.jpg]],
+   [[doc.pdf]]) don't — they stay off the map. A file ending must contain a
+   letter, so "[[Release 1.3.5]]" (a version number) still counts as a note;
+   spaces or other punctuation after the last dot also mean it's just a name
+   ("[[Mrs. Smith]]"). */
+static int wikilink_target_is_note(const char *name) {
+  const char *dot = strrchr(name, '.');
+  if (!dot || dot == name) return 1;
+  const char *ext = dot + 1;
+  size_t len = strlen(ext);
+  if (len == 0 || len > 9) return 1;       /* trailing dot / long tail: a name */
+  int has_alpha = 0;
+  for (size_t i = 0; i < len; i++) {
+    unsigned char c = (unsigned char)ext[i];
+    if (!isalnum(c)) return 1;             /* not extension-shaped */
+    if (isalpha(c)) has_alpha = 1;
+  }
+  if (!has_alpha) return 1;                /* ".5" — version, not an ending */
+  return strcasecmp(ext, "md") == 0 || strcasecmp(ext, "markdown") == 0 ||
+         strcasecmp(ext, "txt") == 0;
+}
+
 void graph_scan_links(int from, const char *text) {
   if (from < 0 || from >= g_node_count || !text) return;
   /* one backlink per distinct target per scan — a note that writes [[X]]
@@ -163,7 +188,7 @@ void graph_scan_links(int from, const char *text) {
         char name[256];
         memcpy(name, s, (size_t)len);
         name[len] = '\0';
-        int to = graph_add_node(name);
+        int to = wikilink_target_is_note(name) ? graph_add_node(name) : -1;
         if (to >= 0 && to != from) {
           graph_add_edge(from, to, GRAPH_EDGE_LINK);
           if (to < credited_cap && !credited[to]) {
@@ -480,9 +505,13 @@ float graph_layout_step(float w, float h) {
   float temp = g_temp < 0.02f ? 0.02f : g_temp;
   float vcap = k * 0.35f * temp;
   g_temp *= 0.9965f;
+  /* big vaults get softened gravity: the full pull compresses thousands of
+     notes into one dense ball; a gentler center lets the field spread and
+     the cluster structure show */
+  float grav = n > GRAPH_EXACT_MAX ? GRAV * 0.375f : GRAV;
   for (int i = 0; i < n; i++) {
-    fx[i] += (cx - g_nodes[i].x) * GRAV;
-    fy[i] += (cy - g_nodes[i].y) * GRAV;
+    fx[i] += (cx - g_nodes[i].x) * grav;
+    fy[i] += (cy - g_nodes[i].y) * grav;
     float vx = (g_nodes[i].vx + fx[i] * DT * 60.0f) * DAMP;
     float vy = (g_nodes[i].vy + fy[i] * DT * 60.0f) * DAMP;
     float v = sqrtf(vx * vx + vy * vy);

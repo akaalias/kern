@@ -1788,6 +1788,41 @@ static int stub_has_rect_rgba(int r, int g, int b, int lo, int hi) {
   return 0;
 }
 
+/* Zoomed way out, nodes draw as fine dots — the minimum drawn radius is
+   small enough that a dense vault reads as a starfield with gaps, not a
+   solid ball of 6px discs. */
+static void test_graph_far_zoom_draws_small_dots(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char g[512]; snprintf(g, sizeof g, "%s/Gamma.md", dir);
+  buf_save_text(a, "see [[Gamma]]\n", 14);
+  buf_save_text(g, "gamma\n", 6);
+  tv_begin(); load("see [[Gamma]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  SDL_Event w; memset(&w, 0, sizeof w);
+  w.type = SDL_MOUSEWHEEL; w.wheel.y = -1;
+  for (int i = 0; i < 40; i++) editor_handle_event(&w);   /* deep zoom-out */
+  stub_reset();
+  editor_tick();
+  /* every plain-note disc (168,174,184) is drawn tiny */
+  int found = 0, oversized = 0;
+  for (int i = 0; i < stub_rect_count; i++) {
+    Color c = stub_rects[i].color;
+    if (c.r == 168 && c.g == 174 && c.b == 184) {
+      found = 1;
+      if (stub_rects[i].rect.w > 4) oversized = 1;
+    }
+  }
+  CHECK_IEQ(found, 1);
+  CHECK_IEQ(oversized, 0);
+  key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
 /* A ghost node (a wikilink target with no file on disk yet) draws as a gray
    outline ring, not a filled disc — real notes keep the filled gray. */
 static void test_graph_ghost_node_outlined(void) {
@@ -2020,6 +2055,7 @@ void suite_textview(void) {
   RUN(test_graph_opens_fitted);
   RUN(test_graph_labels_fade_with_zoom);
   RUN(test_graph_ghost_node_outlined);
+  RUN(test_graph_far_zoom_draws_small_dots);
   RUN(test_graph_edges_fade_with_zoom);
   RUN(test_graph_node_size_reflects_backlinks);
 

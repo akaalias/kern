@@ -3271,7 +3271,7 @@ static void draw_graph_overlay(void) {
     int sx, sy;
     graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
     float rad = graph_node_radius(i) * graph_scale;
-    if (rad < 3.0f) rad = 3.0f;
+    if (rad < 1.5f) rad = 1.5f;   /* far zoom: fine dots, not a ball of discs */
     int ghost = !graph_node(i)->file[0];
     if (ghost && i != graph_current && i != graph_hover) {
       /* ring: a closed AA polyline around the disc (segments, not a texture,
