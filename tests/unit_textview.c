@@ -1601,7 +1601,9 @@ static void test_cx_g_opens_graph_view(void) {
   type("x");
   EXPECT_LINE(0, "see [[Beta]]");
 
-  key(0, SDLK_ESCAPE);
+  key(0, SDLK_ESCAPE);                /* the "x" went to the search box… */
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  key(0, SDLK_ESCAPE);                /* …so the second Esc closes */
   CHECK_IEQ(tv_test_graph_active(), 0);
   buf_set_documents_dir("");
 }
@@ -1857,6 +1859,52 @@ static void test_graph_label_above_node(void) {
   CHECK_IEQ(found, 1);
   CHECK(label_y < ny);                       /* above the node center */
   key(0, SDLK_ESCAPE);
+  buf_set_documents_dir("");
+}
+
+/* The graph search box: typing while the overlay is up builds a query (echoed
+   top-left), matches highlight in red — filled for real notes, ring for
+   ghosts — Backspace edits, Esc clears the query first and only then closes
+   the overlay. */
+static void test_graph_search_highlights_matches(void) {
+  char dir[256]; fresh_docs_dir(dir, sizeof dir);
+  char a[512]; snprintf(a, sizeof a, "%s/Alpha.md", dir);
+  char b[512]; snprintf(b, sizeof b, "%s/Beta.md", dir);
+  buf_save_text(a, "see [[Beta]] and [[Ghostly]]\n", 29);
+  buf_save_text(b, "beta\n", 5);
+  tv_begin(); load("see [[Beta]] and [[Ghostly]]");
+  snprintf(ED->filepath, sizeof ED->filepath, "%s", a);
+  ED->filename = "Alpha.md";
+
+  key(KMOD_CTRL, SDLK_x); key(0, SDLK_g);
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  VS->suppress_next_text = 0;             /* the chord's own text suppression */
+
+  type("bet");                            /* case-insensitive substring */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("bet"), 1);                       /* query echoed */
+  CHECK_IEQ(stub_has_rect_rgba(235, 80, 80, 200, 255), 1);  /* Beta filled red */
+  EXPECT_LINE(0, "see [[Beta]] and [[Ghostly]]");           /* buffer untouched */
+
+  key(0, SDLK_BACKSPACE); key(0, SDLK_BACKSPACE); key(0, SDLK_BACKSPACE);
+  type("ghostl");                         /* the ghost node */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(235, 80, 80, 200, 255), 1);  /* red ring strokes */
+
+  type("zzz");                            /* no match anymore */
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_rect_rgba(235, 80, 80, 200, 255), 0);
+
+  key(0, SDLK_ESCAPE);                    /* first Esc clears the query */
+  CHECK_IEQ(tv_test_graph_active(), 1);
+  stub_reset();
+  editor_tick();
+  CHECK_IEQ(stub_has_text("ghostlzzz"), 0);
+  key(0, SDLK_ESCAPE);                    /* second Esc closes */
+  CHECK_IEQ(tv_test_graph_active(), 0);
   buf_set_documents_dir("");
 }
 
@@ -2182,6 +2230,7 @@ void suite_textview(void) {
   RUN(test_graph_ghost_node_outlined);
   RUN(test_graph_far_zoom_draws_small_dots);
   RUN(test_graph_label_above_node);
+  RUN(test_graph_search_highlights_matches);
   RUN(test_graph_no_hint_banner);
   RUN(test_graph_legend_toggles_edge_kind);
   RUN(test_graph_edges_fade_with_zoom);

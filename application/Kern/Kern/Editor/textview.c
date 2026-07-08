@@ -2,6 +2,7 @@
    not to redefine main / expect SDL_main. */
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2936,6 +2937,22 @@ static int   graph_user_view;     /* wheel touched the zoom — stop auto-fittin
 static float graph_energy;        /* last layout step's max movement */
 static unsigned graph_kind_mask = GRAPH_EDGE_LINK | GRAPH_EDGE_DAY | GRAPH_EDGE_OPENED;
 static Rect  graph_legend_rects[3];  /* click-toggle hit zones, set by the draw */
+static char  graph_query[128];       /* live search: matches highlight in red */
+static int   graph_query_len;
+
+/* Case-insensitive (ASCII) substring test for the graph search. */
+static int graph_ci_contains(const char *hay, const char *needle) {
+  size_t nl = strlen(needle);
+  if (!nl) return 0;
+  for (const char *p = hay; *p; p++) {
+    size_t i = 0;
+    while (i < nl && p[i] &&
+           tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i]))
+      i++;
+    if (i == nl) return 1;
+  }
+  return 0;
+}
 
 /* Node labels fade in with zoom (Obsidian-style): hidden at/below LO, fully
    opaque at/above HI. The hovered and current nodes' labels always show. */
@@ -3125,6 +3142,8 @@ static void cmd_toggle_graph(void) {
   graph_fit_view();                /* open with every node on screen */
   graph_hover = graph_drag = -1;
   graph_pan = 0;
+  graph_query_len = 0;
+  graph_query[0] = '\0';
   graph_active = 1;
   nav_status_set(&g_vs, "Graph view: click a note to open it, drag to arrange, Esc to close");
 }
@@ -3142,7 +3161,21 @@ static int handle_graph_key(int sym, int ctrl) {
     }
     return 1;
   }
-  if (sym == SDLK_ESCAPE) graph_active = 0;
+  if (sym == SDLK_BACKSPACE && graph_query_len > 0) {
+    /* drop the last UTF-8 character (continuation bytes are 10xxxxxx) */
+    graph_query_len--;
+    while (graph_query_len > 0 &&
+           ((unsigned char)graph_query[graph_query_len] & 0xC0) == 0x80)
+      graph_query_len--;
+    graph_query[graph_query_len] = '\0';
+    return 1;
+  }
+  if ((sym == SDLK_ESCAPE || (ctrl && sym == SDLK_g)) && graph_query_len > 0) {
+    graph_query_len = 0;             /* first Esc clears the search… */
+    graph_query[0] = '\0';
+    return 1;
+  }
+  if (sym == SDLK_ESCAPE) graph_active = 0;   /* …the second closes */
   return 1;
 }
 
@@ -3291,16 +3324,21 @@ static void draw_graph_overlay(void) {
   /* nodes: the open note in the caret's read-only amber, the hovered one in
      caret cyan, ghosts (no file on disk yet) as a gray outline ring — the
      hollow disc marks "this note doesn't exist yet" at a glance */
+  int match_count = 0;
   for (int i = 0; i < graph_node_count(); i++) {
     int sx, sy;
     graph_to_screen(graph_node(i)->x, graph_node(i)->y, &sx, &sy);
     float rad = graph_node_radius(i) * graph_scale;
     if (rad < 1.5f) rad = 1.5f;   /* far zoom: fine dots, not a ball of discs */
     int ghost = !graph_node(i)->file[0];
+    int match = graph_query_len > 0 &&
+                graph_ci_contains(graph_node(i)->name, graph_query);
+    if (match) match_count++;
     if (ghost && i != graph_current && i != graph_hover) {
       /* ring: a closed AA polyline around the disc (segments, not a texture,
-         so the border stays hairline-thin at any radius) */
-      Color c = color(128, 133, 143, 210);
+         so the border stays hairline-thin at any radius); a search match
+         turns the border red */
+      Color c = match ? color(235, 80, 80, 235) : color(128, 133, 143, 210);
       int segs = 28;
       float px = (float)sx + rad, py = (float)sy;
       for (int k = 1; k <= segs; k++) {
@@ -3312,7 +3350,8 @@ static void draw_graph_overlay(void) {
       }
       continue;
     }
-    Color c = (i == graph_current) ? color(250, 165, 70, 255)
+    Color c = match                ? color(235, 80, 80, 255)
+            : (i == graph_current) ? color(250, 165, 70, 255)
             : (i == graph_hover)   ? color(90, 200, 250, 255)
                                    : color(168, 174, 184, 255);
     r_draw_circle((float)sx, (float)sy, rad, c);
@@ -3325,7 +3364,9 @@ static void draw_graph_overlay(void) {
   if (labelf > 1.0f) labelf = 1.0f;
   r_set_font_scale(0.6f);
   for (int i = 0; i < graph_node_count(); i++) {
-    int focus = (i == graph_hover || i == graph_current);
+    int focus = (i == graph_hover || i == graph_current) ||
+                (graph_query_len > 0 &&
+                 graph_ci_contains(graph_node(i)->name, graph_query));
     if (labelf <= 0.0f && !focus) continue;
     const char *name = graph_node(i)->name;
     int sx, sy;
@@ -3364,6 +3405,26 @@ static void draw_graph_overlay(void) {
       graph_legend_rects[i] = rect(x0 - 4, ly - 6, lx - x0 + 8, fh + 12);
       lx += 22;
     }
+  }
+
+  /* search box (top left): type to filter, matches turn red (filled = real
+     note, red ring = ghost). Esc clears, then closes. The prefix and the
+     query are separate draws (dim label, bright query). */
+  {
+    const char *prefix = "search: ";
+    char body[176];
+    if (graph_query_len > 0)
+      snprintf(body, sizeof body, "%s \xC2\xB7 %d", graph_query, match_count);
+    else
+      snprintf(body, sizeof body, "type to filter");
+    int pw = r_get_text_width(prefix, (int)strlen(prefix));
+    int bw = r_get_text_width(body, (int)strlen(body));
+    r_draw_round_rect(rect(14, 12, pw + bw + 20, fh + 12), 6,
+                      color(24, 26, 30, 220));
+    r_draw_text(prefix, vec2(24, 18), color(120, 125, 133, 160));
+    Color tc = graph_query_len > 0 ? color(225, 228, 232, 235)
+                                   : color(120, 125, 133, 160);
+    r_draw_text(body, vec2(24 + pw, 18), tc);
   }
   r_set_font_scale(1.0f);
   r_set_font_style(saved);
@@ -3600,7 +3661,15 @@ void editor_handle_event(const SDL_Event *ev) {
       if (g_vs.suppress_next_text) { g_vs.suppress_next_text = 0; break; }
       if (SDL_GetModState() & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) break;
       if (pub_state != PUB_NONE) break;      /* overlay swallows typing */
-      if (graph_active) break;               /* graph view swallows typing too */
+      if (graph_active) {                    /* graph view: typing searches */
+        int tlen = (int)strlen(e.text.text);
+        if (graph_query_len + tlen < (int)sizeof(graph_query)) {
+          memcpy(graph_query + graph_query_len, e.text.text, (size_t)tlen);
+          graph_query_len += tlen;
+          graph_query[graph_query_len] = '\0';
+        }
+        break;
+      }
       if (mn_active) {                       /* typing a margin note */
         int tlen = strlen(e.text.text);
         if (mn_len + tlen < (int)sizeof(mn_text) - 1) {
@@ -4345,6 +4414,7 @@ void tv_test_reset(void) {
   graph_scale = 1.0f; graph_cx = graph_cy = 0.0f;
   graph_kind_mask = GRAPH_EDGE_LINK | GRAPH_EDGE_DAY | GRAPH_EDGE_OPENED;
   memset(graph_legend_rects, 0, sizeof graph_legend_rects);
+  graph_query_len = 0; graph_query[0] = '\0';
   graph_user_view = 0; graph_energy = 0.0f;
   graph_clear();
   pub_state = PUB_NONE; pub_kind = 0; pub_result = 0;

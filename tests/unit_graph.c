@@ -205,6 +205,25 @@ static void test_graph_scan_links_heading(void) {
   CHECK_IEQ(graph_node_count(), 4);   /* A + 3 files; [[#Local]] is no node */
 }
 
+/* Node identity is Obsidian-like: case-insensitive and whitespace-trimmed —
+   [[read to feed]] and [[Countries I have lived in ]] must not spawn ghost
+   duplicates of "Read to Feed.md" / "Countries I have lived in.md". Junk
+   targets (empty, whitespace-only, control characters) never become nodes. */
+static void test_graph_node_identity_case_and_trim(void) {
+  graph_clear();
+  int a = graph_add_node("Read to Feed.md");
+  CHECK_IEQ(graph_add_node("read to feed"), a);        /* case-insensitive */
+  CHECK_IEQ(graph_add_node("  Read to Feed  "), a);    /* trimmed */
+  CHECK_IEQ(graph_find("READ TO FEED"), a);
+  CHECK_SEQ(graph_node(a)->name, "Read to Feed");      /* first casing wins */
+  CHECK_SEQ(graph_open_target(a), "Read to Feed.md");
+
+  int src = graph_add_node("Src");
+  graph_scan_links(src, "[[ ]] [[  \t ]] [[\x12junk]] [[Read to Feed ]]");
+  CHECK_IEQ(graph_node_count(), 2);                    /* no junk nodes */
+  CHECK((graph_edge_kinds_between(src, a) & GRAPH_EDGE_LINK) != 0);
+}
+
 /* ---------------------------------------------------------------- layout */
 
 static float dist(int a, int b) {
@@ -551,6 +570,7 @@ void suite_graph(void) {
   RUN(test_graph_scan_links_skips_media);
   RUN(test_graph_scan_links_alias);
   RUN(test_graph_scan_links_heading);
+  RUN(test_graph_node_identity_case_and_trim);
   RUN(test_graph_large_layout_relaxed);
   RUN(test_graph_no_node_cap);
   RUN(test_graph_no_edge_cap);

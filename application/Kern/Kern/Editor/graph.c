@@ -63,12 +63,22 @@ static int note_ext_len(const char *name) {
   return 0;
 }
 
-/* `name` minus any note extension — the node identity ("Foo.md" ≡ "Foo"). */
+/* `name` minus any note extension, whitespace-trimmed — the node identity
+   ("Foo.md" ≡ "Foo" ≡ " foo "; comparisons are case-insensitive like
+   Obsidian's, see graph_find). A name containing control characters is junk
+   (mis-parsed link) and yields an empty key so it never becomes a node. */
 static void node_key(const char *name, char *out, int outsz) {
-  int n = (int)strlen(name) - note_ext_len(name);
+  while (*name == ' ' || *name == '\t') name++;
+  char tmp[256];
+  snprintf(tmp, sizeof tmp, "%s", name);
+  int n = (int)strlen(tmp);
+  for (int i = 0; i < n; i++)
+    if ((unsigned char)tmp[i] < 0x20) { out[0] = '\0'; return; }
+  while (n > 0 && (tmp[n - 1] == ' ' || tmp[n - 1] == '\t')) tmp[--n] = '\0';
+  n -= note_ext_len(tmp);
   if (n > outsz - 1) n = outsz - 1;
   if (n < 0) n = 0;
-  memcpy(out, name, (size_t)n);
+  memcpy(out, tmp, (size_t)n);
   out[n] = '\0';
 }
 
@@ -76,8 +86,9 @@ int graph_find(const char *name) {
   if (!name) return -1;
   char key[256];
   node_key(name, key, sizeof key);
+  if (!key[0]) return -1;
   for (int i = 0; i < g_node_count; i++)
-    if (strcmp(g_nodes[i].name, key) == 0) return i;
+    if (strcasecmp(g_nodes[i].name, key) == 0) return i;
   return -1;
 }
 
