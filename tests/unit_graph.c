@@ -293,6 +293,16 @@ static void test_graph_large_layout_cools_to_sleep(void) {
   for (int i = 0; i < 3000 && move >= 0.02f; i++) move = graph_layout_step(800, 600);
   CHECK(move < 0.02f);                     /* actually goes to sleep */
 
+  /* That first sleep can be transient (a node whose velocity cancelled its
+     force snaps to zero, then wakes on the bare force next step) and it lands
+     within a few dozen steps of the cooling floor — on which side shifts
+     with the platform's float rounding (FMA contraction on arm64, none on
+     x86-64, the CI runner). Run the schedule out: once the cooled cap is
+     below the 0.75px sleep snap every node freezes regardless of force, so
+     the cold check below tests the floor, not that day's settle time. */
+  for (int i = 0; i < 1500; i++) move = graph_layout_step(800, 600);
+  CHECK(move < 0.02f);                     /* provably asleep once cooled */
+
   /* cold, a displaced node stays frozen; a reheat wakes the sim up */
   graph_node(0)->x += 500.0f;
   float cold = graph_layout_step(800, 600);
